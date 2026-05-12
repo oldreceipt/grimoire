@@ -69,6 +69,25 @@ const DEFAULT_BROWSE_UI: BrowseUiState = {
   categoryId: 'all',
 };
 
+// Cached page state: lets the Browse tab resume exactly where the user left
+// it (same loaded mods, same page count, same scroll position) when they
+// navigate away and back. In-memory only — we don't persist this across app
+// restarts because a stale list of mods could be misleading on next launch.
+//
+// Import shape from gamebanana types is awkward to wire here, so the cache
+// stores opaque `unknown` and Browse.tsx asserts the type at the boundary.
+export interface BrowseSessionCache {
+  mods: unknown[];
+  page: number;
+  hasMore: boolean;
+  totalCount: number;
+  scrollTop: number;
+  /** Stamp of the filter state these mods belong to. If any filter changes
+   *  while Browse is unmounted (impossible today, but defensive), we'll
+   *  refetch instead of restoring stale results. */
+  stamp: string;
+}
+
 interface AppState {
   // Settings
   settings: AppSettings | null;
@@ -88,6 +107,10 @@ interface AppState {
 
   // Browse-page UI state (preserved across page nav)
   browseUi: BrowseUiState;
+
+  // Cached fetched mods + scroll position so the Browse tab resumes where
+  // the user left it instead of refetching + scrolling to top.
+  browseSession: BrowseSessionCache | null;
 
   // Actions
   loadSettings: () => Promise<void>;
@@ -112,6 +135,9 @@ interface AppState {
   // Browse UI state
   setBrowseUi: (partial: Partial<BrowseUiState>) => void;
   resetBrowseUi: () => void;
+
+  // Browse session cache (loaded mods + scroll position)
+  setBrowseSession: (cache: BrowseSessionCache | null) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -125,6 +151,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   downloadCountsCache: new Map(),
   soundVolume: 0.7,
   browseUi: { ...DEFAULT_BROWSE_UI },
+  browseSession: null,
 
   // Load settings from backend
   loadSettings: async () => {
@@ -294,6 +321,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   resetBrowseUi: () => {
     set({ browseUi: { ...DEFAULT_BROWSE_UI } });
+  },
+
+  setBrowseSession: (cache: BrowseSessionCache | null) => {
+    set({ browseSession: cache });
   },
 }));
 
