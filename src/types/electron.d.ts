@@ -150,6 +150,9 @@ export interface MultiVpkPickData {
     requestId: string;
     modName: string;
     vpkFileNames: string[];
+    /** filename → human-readable label derived from VPK contents. Missing
+     *  entries fall back to the filename in the picker. */
+    vpkLabels?: Record<string, string>;
 }
 
 export interface SyncProgressData {

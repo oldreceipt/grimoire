@@ -463,6 +463,7 @@ interface MultiVpkPickData {
     requestId: string;
     modName: string;
     vpkFileNames: string[];
+    vpkLabels?: Record<string, string>;
 }
 
 interface GameBananaModsResponse {

@@ -95,6 +95,7 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                     <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1">
                         {data.vpkFileNames.map((vpk) => {
                             const isChecked = selected.has(vpk);
+                            const label = data.vpkLabels?.[vpk];
                             return (
                                 <label
                                     key={vpk}
@@ -111,7 +112,16 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                                         className="w-4 h-4 accent-accent cursor-pointer flex-shrink-0"
                                     />
                                     <FileArchive className="w-4 h-4 flex-shrink-0 opacity-70" />
-                                    <span className="font-mono text-xs truncate flex-1" title={vpk}>{vpk}</span>
+                                    <div className="min-w-0 flex-1">
+                                        {label ? (
+                                            <>
+                                                <div className="text-sm font-medium truncate" title={label}>{label}</div>
+                                                <div className="font-mono text-[11px] text-text-secondary/80 truncate" title={vpk}>{vpk}</div>
+                                            </>
+                                        ) : (
+                                            <span className="font-mono text-xs truncate block" title={vpk}>{vpk}</span>
+                                        )}
+                                    </div>
                                 </label>
                             );
                         })}

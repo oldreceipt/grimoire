@@ -10,6 +10,7 @@ import { fetchModDetails, GameBananaModDetails } from './gamebanana';
 import { getUsedPriorities, scanMods, disableMod } from './mods';
 import { validateDownloadUrl, validateFileSize } from './security';
 import { loadSettings } from './settings';
+import { getVpkLabels } from './vpk';
 import https from 'https';
 import http from 'http';
 
@@ -576,10 +577,14 @@ async function executeDownload(
             installedVpks.sort((a, b) => a.localeCompare(b));
             if (installedVpks.length > 1) {
                 const pickRequestId = randomUUID();
+                const vpkLabels = getVpkLabels(
+                    installedVpks.map((vpk) => ({ fileName: vpk, absPath: join(targetPath, vpk) }))
+                );
                 const pick = await awaitMultiVpkPick(
                     pickRequestId,
                     details.name ?? fileName,
                     installedVpks,
+                    vpkLabels,
                     mainWindow
                 );
                 if (!pick || pick.selected.length === 0) {
@@ -716,6 +721,7 @@ function awaitMultiVpkPick(
     requestId: string,
     modName: string,
     vpkFileNames: string[],
+    vpkLabels: Record<string, string>,
     mainWindow: BrowserWindow | null
 ): Promise<{ selected: string[] } | null> {
     return new Promise((resolve) => {
@@ -724,6 +730,7 @@ function awaitMultiVpkPick(
             requestId,
             modName,
             vpkFileNames,
+            vpkLabels,
         });
     });
 }
@@ -953,10 +960,14 @@ async function executeOneClickDownload(
         installedVpks.sort((a, b) => a.localeCompare(b));
         if (installedVpks.length > 1) {
             const pickRequestId = randomUUID();
+            const vpkLabels = getVpkLabels(
+                installedVpks.map((vpk) => ({ fileName: vpk, absPath: join(targetPath, vpk) }))
+            );
             const pick = await awaitMultiVpkPick(
                 pickRequestId,
                 enriched?.name ?? fileName,
                 installedVpks,
+                vpkLabels,
                 mainWindow
             );
             if (!pick || pick.selected.length === 0) {
