@@ -273,19 +273,12 @@ export default function VariantPickerModal({
                                                     className="w-full bg-bg-secondary border border-accent/50 rounded px-2 py-1 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent"
                                                 />
                                             ) : (
-                                                <div className="flex items-center gap-2 min-w-0">
-                                                    <span
-                                                        className={`truncate ${showSecondaryFileName ? 'text-sm text-text-primary font-medium' : 'font-mono text-sm text-text-primary'}`}
-                                                        title={primaryTitle}
-                                                    >
-                                                        {primaryTitle}
-                                                    </span>
-                                                    {isActive && (
-                                                        <span className="text-[10px] uppercase tracking-wide bg-accent/20 text-accent rounded px-1.5 py-0.5 flex-shrink-0">
-                                                            Active
-                                                        </span>
-                                                    )}
-                                                </div>
+                                                <span
+                                                    className={`block truncate ${showSecondaryFileName ? 'text-sm text-text-primary font-medium' : 'font-mono text-sm text-text-primary'}`}
+                                                    title={primaryTitle}
+                                                >
+                                                    {primaryTitle}
+                                                </span>
                                             )}
                                             <div className="flex items-center gap-2 text-xs text-text-secondary mt-0.5 min-w-0">
                                                 <span className="flex-shrink-0">{formatBytes(v.size)}</span>
