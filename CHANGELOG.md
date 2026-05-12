@@ -14,6 +14,7 @@ All notable changes to this project are documented here. Format is loosely based
 - **"Enable now" affordance** when a freshly-downloaded mod lands disabled — appears on the sidebar download-complete toast *and* as a yellow Enable pill in the Browse mod-details file row, so users don't have to bounce to Installed to flip it on
 - **Ignore conflicts.** Conflicts page gains a per-card Ignore action and an "Ignored (N)" panel at the bottom with Unignore. Pairs persist in app settings and are stripped by the backend detector
 - **Sibling-variant auto-disable toast** with a *View* action — previously silent on re-download, easy to mistake for data loss. Gated behind a new `autoDisableSiblingVariants` setting (default on)
+- **"Update all" button** on the Installed page header — visible when one or more mods carry the Update badge. Re-downloads each flagged mod serially through the existing download queue and restores each one's pre-update enabled state (downloads always land disabled by default). Per-item failures are caught so one bad mod doesn't halt the rest
 
 ### Changed
 - **Mod Details modal redesign.** Single-row header (status + category + title + date/download metadata + close), responsive two-column body at lg+ with independently scrollable image and content columns, vertical preview stack so users scroll naturally through every screenshot, click-to-zoom lightbox using GameBanana's full-resolution asset, and visually separated Files / Comments sections. Modal grows to `max-w-6xl` on wide screens so it stops leaving dark gutters on 1080p+ displays

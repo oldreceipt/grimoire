@@ -195,6 +195,13 @@ export default function Installed() {
   // Map of mod id → true if a newer version exists on GameBanana.
   const [updatesAvailable, setUpdatesAvailable] = useState<Set<string>>(new Set());
 
+  // "Update all" confirm + progress. Progress is null when idle, otherwise
+  // { done, total } so the button can render "Updating 2/5…" and stay disabled
+  // for the duration of the run.
+  const [updateAllConfirmOpen, setUpdateAllConfirmOpen] = useState(false);
+  const [updateAllProgress, setUpdateAllProgress] = useState<{ done: number; total: number } | null>(null);
+  const [updateAllError, setUpdateAllError] = useState<string | null>(null);
+
   const openModDetails = async (m: typeof mods[number]) => {
     if (!m.gameBananaId) return;
     const section = m.sourceSection ?? 'Mod';
@@ -262,6 +269,65 @@ export default function Installed() {
       loadMods();
     } catch (err) {
       setDetailsError(String(err));
+    }
+  };
+
+  /**
+   * Bulk-update every mod currently flagged in updatesAvailable. Snapshots
+   * pre-update enabled state per mod and re-applies it after the new install
+   * lands — downloads always go to the disabled folder by default, so without
+   * this restore step the user would have to manually re-enable each one.
+   * Failures are caught per-item so one bad mod doesn't halt the rest.
+   */
+  const handleUpdateAll = async () => {
+    setUpdateAllConfirmOpen(false);
+    setUpdateAllError(null);
+    const snapshots = mods
+      .filter((m) => updatesAvailable.has(m.id) && m.gameBananaId && typeof m.gameBananaFileId === 'number')
+      .map((m) => ({
+        oldId: m.id,
+        gameBananaId: m.gameBananaId!,
+        gameBananaFileId: m.gameBananaFileId!,
+        fileName: m.fileName,
+        section: m.sourceSection ?? 'Mod',
+        categoryId: m.categoryId ?? 0,
+        wasEnabled: m.enabled,
+      }));
+    if (snapshots.length === 0) return;
+    setUpdateAllProgress({ done: 0, total: snapshots.length });
+    const failures: string[] = [];
+    for (let i = 0; i < snapshots.length; i++) {
+      const s = snapshots[i];
+      try {
+        await deleteMod(s.oldId);
+        await downloadMod(s.gameBananaId, s.gameBananaFileId, s.fileName, s.section, s.categoryId);
+      } catch (err) {
+        failures.push(`${s.fileName}: ${String(err)}`);
+      }
+      setUpdateAllProgress({ done: i + 1, total: snapshots.length });
+    }
+    // Refresh once so the new installs are in the store with their new ids,
+    // then re-enable anything that was enabled before. Match-by GB ids; the
+    // local mod id changes on reinstall.
+    await loadMods();
+    const refreshed = useAppStore.getState().mods;
+    for (const s of snapshots) {
+      if (!s.wasEnabled) continue;
+      const newMod = refreshed.find(
+        (m) => m.gameBananaId === s.gameBananaId && m.gameBananaFileId === s.gameBananaFileId,
+      );
+      if (newMod && !newMod.enabled) {
+        try {
+          await toggleMod(newMod.id);
+        } catch (err) {
+          failures.push(`re-enable ${s.fileName}: ${String(err)}`);
+        }
+      }
+    }
+    setUpdateAllProgress(null);
+    if (failures.length > 0) {
+      setUpdateAllError(`${failures.length} mod${failures.length === 1 ? '' : 's'} failed to update. See console for details.`);
+      console.warn('[Update all] failures:', failures);
     }
   };
 
@@ -758,6 +824,19 @@ export default function Installed() {
                 {conflictMap.size / 2} conflicts
               </Button>
             )}
+            {(updatesAvailable.size > 0 || updateAllProgress) && (
+              <Button
+                variant="primary"
+                onClick={() => setUpdateAllConfirmOpen(true)}
+                icon={Download}
+                isLoading={!!updateAllProgress}
+                title="Re-download every mod with a newer version on GameBanana and restore each one's enabled state"
+              >
+                {updateAllProgress
+                  ? `Updating ${updateAllProgress.done}/${updateAllProgress.total}…`
+                  : `Update all (${updatesAvailable.size})`}
+              </Button>
+            )}
             <Button
               variant="secondary"
               onClick={() => setImportOpen(true)}
@@ -844,6 +923,37 @@ export default function Installed() {
           >
             {visibleDisabled.map((entry) => renderEntryCard(entry, 'disabled'))}
           </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        isOpen={updateAllConfirmOpen}
+        title={`Update all (${updatesAvailable.size})?`}
+        message={
+          <>
+            Re-download every mod flagged with an available update. Each one's enabled state
+            will be restored after the install finishes. Downloads run one at a time and may
+            take a while.
+          </>
+        }
+        confirmLabel={`Update ${updatesAvailable.size}`}
+        variant="primary"
+        onConfirm={handleUpdateAll}
+        onCancel={() => setUpdateAllConfirmOpen(false)}
+      />
+
+      {updateAllError && (
+        <div className="fixed bottom-4 right-4 z-50 max-w-md bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg px-4 py-3 shadow-lg flex items-start gap-3">
+          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 text-sm">{updateAllError}</div>
+          <button
+            type="button"
+            onClick={() => setUpdateAllError(null)}
+            className="text-red-300 hover:text-red-100 p-1 -m-1 cursor-pointer"
+            aria-label="Dismiss"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
