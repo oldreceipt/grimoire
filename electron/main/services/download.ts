@@ -545,16 +545,51 @@ async function executeDownload(
                 }
             }
         } else if (!isMidnightMina) {
-            // Standard behavior: keep only the first VPK
+            // Multi-VPK archive (Warden Remodel et al). Previously kept only
+            // the alphabetically-first VPK and silently unlinked the rest —
+            // user feedback flagged that as data-loss-feeling. Now we prompt
+            // when there's more than one and let the user pick which to keep.
             installedVpks.sort((a, b) => a.localeCompare(b));
-            const [primaryVpk, ...extraVpks] = installedVpks;
-            installedVpks = primaryVpk ? [primaryVpk] : [];
-            for (const extraVpk of extraVpks) {
-                const extraPath = join(targetPath, extraVpk);
-                if (existsSync(extraPath)) {
-                    await fs.unlink(extraPath);
+            if (installedVpks.length > 1) {
+                const pickRequestId = randomUUID();
+                const pick = await awaitMultiVpkPick(
+                    pickRequestId,
+                    details.name ?? fileName,
+                    installedVpks,
+                    mainWindow
+                );
+                if (!pick || pick.selected.length === 0) {
+                    // Cancelled — wipe everything we extracted plus the archive.
+                    for (const vpk of installedVpks) {
+                        const extraPath = join(targetPath, vpk);
+                        if (existsSync(extraPath)) {
+                            await fs.unlink(extraPath).catch(() => { });
+                        }
+                    }
+                    if (existsSync(downloadPath)) {
+                        await fs.unlink(downloadPath).catch(() => { });
+                    }
+                    installedVpks = [];
+                    mainWindow?.webContents.send('download-error', {
+                        modId,
+                        fileId,
+                        errorCode: 'CANCELLED_BY_USER',
+                        message: 'Install cancelled.',
+                    });
+                    throw new Error('User cancelled multi-VPK pick');
                 }
+                const selectedSet = new Set(pick.selected);
+                for (const vpk of installedVpks) {
+                    if (!selectedSet.has(vpk)) {
+                        const extraPath = join(targetPath, vpk);
+                        if (existsSync(extraPath)) {
+                            await fs.unlink(extraPath);
+                        }
+                    }
+                }
+                installedVpks = installedVpks.filter((vpk) => selectedSet.has(vpk));
             }
+            // Single-VPK case: nothing to do — keep as-is.
         }
 
         // Clean up archive
@@ -626,6 +661,47 @@ export function resolveSuspiciousFileDecision(requestId: string, accepted: boole
         resolver(accepted);
         pendingSuspiciousDecisions.delete(requestId);
     }
+}
+
+// Multi-VPK picker decisions. The user picks which of N extracted VPKs to
+// keep when an archive (e.g. Warden Remodel) contains more than one. Null
+// means "cancel — discard everything".
+const pendingVpkPicks = new Map<
+    string,
+    (decision: { selected: string[] } | null) => void
+>();
+
+/** Renderer-facing IPC entry point for multi-VPK picker responses. */
+export function resolveMultiVpkPick(
+    requestId: string,
+    decision: { selected: string[] } | null
+): void {
+    const resolver = pendingVpkPicks.get(requestId);
+    if (resolver) {
+        resolver(decision);
+        pendingVpkPicks.delete(requestId);
+    }
+}
+
+/**
+ * Ask the renderer which VPKs from a multi-VPK archive to keep. Returns the
+ * subset the user wants to install, or null if they cancelled. Modal is
+ * driven by a `multi-vpk-pick` event keyed on requestId.
+ */
+function awaitMultiVpkPick(
+    requestId: string,
+    modName: string,
+    vpkFileNames: string[],
+    mainWindow: BrowserWindow | null
+): Promise<{ selected: string[] } | null> {
+    return new Promise((resolve) => {
+        pendingVpkPicks.set(requestId, resolve);
+        mainWindow?.webContents.send('multi-vpk-pick', {
+            requestId,
+            modName,
+            vpkFileNames,
+        });
+    });
 }
 
 function awaitSuspiciousDecision(
@@ -835,16 +911,47 @@ async function executeOneClickDownload(
 
         installedVpks = await renameVpksToAvoidConflicts(deadlockPath, targetPath, extractedVpks);
 
-        // Standard 1-Click behavior: keep only the first VPK to avoid
-        // accidentally enabling many slots from a single archive.
+        // Multi-VPK 1-Click archive: prompt the user instead of silently
+        // dropping all but the first entry. Same shape as the regular
+        // download path so behavior is consistent across install entry points.
         installedVpks.sort((a, b) => a.localeCompare(b));
-        const [primaryVpk, ...extraVpks] = installedVpks;
-        installedVpks = primaryVpk ? [primaryVpk] : [];
-        for (const extraVpk of extraVpks) {
-            const extraPath = join(targetPath, extraVpk);
-            if (existsSync(extraPath)) {
-                await fs.unlink(extraPath);
+        if (installedVpks.length > 1) {
+            const pickRequestId = randomUUID();
+            const pick = await awaitMultiVpkPick(
+                pickRequestId,
+                enriched?.name ?? fileName,
+                installedVpks,
+                mainWindow
+            );
+            if (!pick || pick.selected.length === 0) {
+                for (const vpk of installedVpks) {
+                    const extraPath = join(targetPath, vpk);
+                    if (existsSync(extraPath)) {
+                        await fs.unlink(extraPath).catch(() => { });
+                    }
+                }
+                if (existsSync(downloadPath)) {
+                    await fs.unlink(downloadPath).catch(() => { });
+                }
+                installedVpks = [];
+                mainWindow?.webContents.send('download-error', {
+                    modId,
+                    fileId,
+                    errorCode: 'CANCELLED_BY_USER',
+                    message: 'Install cancelled.',
+                });
+                throw new Error('User cancelled multi-VPK pick');
             }
+            const selectedSet = new Set(pick.selected);
+            for (const vpk of installedVpks) {
+                if (!selectedSet.has(vpk)) {
+                    const extraPath = join(targetPath, vpk);
+                    if (existsSync(extraPath)) {
+                        await fs.unlink(extraPath);
+                    }
+                }
+            }
+            installedVpks = installedVpks.filter((vpk) => selectedSet.has(vpk));
         }
 
         if (existsSync(downloadPath)) {

@@ -81,6 +81,11 @@ export interface ElectronAPI {
         requestId: string,
         accepted: boolean
     ) => Promise<void>;
+    onMultiVpkPick: (callback: (data: MultiVpkPickData) => void) => () => void;
+    respondToMultiVpkPick: (
+        requestId: string,
+        selected: string[] | null
+    ) => Promise<void>;
 
     // Conflicts
     getConflicts: () => Promise<ModConflict[]>;
@@ -450,6 +455,12 @@ interface OneClickSuspiciousFilesData {
     files: string[];
 }
 
+interface MultiVpkPickData {
+    requestId: string;
+    modName: string;
+    vpkFileNames: string[];
+}
+
 interface GameBananaModsResponse {
     records: unknown[];
     totalCount: number;
@@ -762,6 +773,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     respondToOneClickSuspiciousFiles: (requestId: string, accepted: boolean) =>
         ipcRenderer.invoke('one-click-suspicious-response', { requestId, accepted }),
+
+    onMultiVpkPick: (callback: (data: MultiVpkPickData) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, data: MultiVpkPickData) => callback(data);
+        ipcRenderer.on('multi-vpk-pick', handler);
+        return () => ipcRenderer.removeListener('multi-vpk-pick', handler);
+    },
+
+    respondToMultiVpkPick: (requestId: string, selected: string[] | null) =>
+        ipcRenderer.invoke('multi-vpk-pick-response', { requestId, selected }),
 
     // Conflicts
     getConflicts: () => ipcRenderer.invoke('get-conflicts'),

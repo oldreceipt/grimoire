@@ -146,6 +146,12 @@ export interface OneClickSuspiciousFilesData {
     files: string[];
 }
 
+export interface MultiVpkPickData {
+    requestId: string;
+    modName: string;
+    vpkFileNames: string[];
+}
+
 export interface SyncProgressData {
     section: string;
     currentPage: number;
@@ -315,6 +321,11 @@ export interface ElectronAPI {
     respondToOneClickSuspiciousFiles: (
         requestId: string,
         accepted: boolean
+    ) => Promise<void>;
+    onMultiVpkPick: (callback: (data: MultiVpkPickData) => void) => () => void;
+    respondToMultiVpkPick: (
+        requestId: string,
+        selected: string[] | null
     ) => Promise<void>;
 
     // Conflicts

@@ -43,8 +43,16 @@ export default function Sidebar() {
   const [stashStatus, setStashStatus] = useState<VanillaStashStatus>({ active: false });
   const [launchPending, setLaunchPending] = useState<'modded' | 'vanilla' | null>(null);
   const [restorePending, setRestorePending] = useState(false);
-  const [toast, setToast] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
+  // Toasts can carry an optional action button — used for "Enable" after a
+  // fresh download and "Re-enable" after a sibling auto-disable. The action
+  // closes the toast when invoked.
+  const [toast, setToast] = useState<{
+    kind: 'info' | 'error';
+    text: string;
+    action?: { label: string; onClick: () => void | Promise<void> };
+  } | null>(null);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const toggleMod = useAppStore((state) => state.toggleMod);
 
   const refreshStashStatus = useCallback(async () => {
     try {
@@ -115,7 +123,10 @@ export default function Sidebar() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 6000);
+    // Stickier when there's an action — give the user time to actually
+    // notice and tap it.
+    const lifetime = toast.action ? 10000 : 6000;
+    const t = setTimeout(() => setToast(null), lifetime);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -130,12 +141,50 @@ export default function Sidebar() {
       const tail = names.length > 2 ? ` and ${names.length - 2} more` : '';
       setToast({
         kind: 'info',
-        text: `Disabled older variant${names.length === 1 ? '' : 's'}: ${head}${tail}. Re-enable in Installed if you want to keep both.`,
+        text: `Disabled older variant${names.length === 1 ? '' : 's'}: ${head}${tail}.`,
+        action: {
+          label: 'View',
+          onClick: () => navigate('/'),
+        },
       });
       loadMods();
     });
     return unsub;
-  }, [loadMods]);
+  }, [loadMods, navigate]);
+
+  // Post-download "Enable now" toast. Users complained that finished downloads
+  // dropped them on Browse with the new mod silently sitting in disabled/ —
+  // they had to navigate to Installed and toggle it themselves. This surfaces
+  // an Enable button right where they are so the round-trip isn't needed.
+  useEffect(() => {
+    const unsub = window.electronAPI.onDownloadComplete(async (data) => {
+      // Wait one tick so the loadMods() chained off download-complete in
+      // Browse/Installed has time to refresh the store. Otherwise the mod
+      // we just downloaded won't be in `mods` yet.
+      await new Promise((r) => setTimeout(r, 250));
+      const fresh = useAppStore.getState().mods;
+      const justInstalled = fresh.find(
+        (m) =>
+          m.gameBananaId === data.modId &&
+          m.gameBananaFileId === data.fileId
+      );
+      if (!justInstalled) return;
+      // If it landed enabled (rare — only happens on rapid re-download of an
+      // already-enabled mod), nothing to do.
+      if (justInstalled.enabled) return;
+      setToast({
+        kind: 'info',
+        text: `Installed “${justInstalled.name}” (disabled).`,
+        action: {
+          label: 'Enable now',
+          onClick: async () => {
+            await toggleMod(justInstalled.id);
+          },
+        },
+      });
+    });
+    return unsub;
+  }, [toggleMod]);
 
   const navItems = useMemo(() => {
     type BadgeTone = 'muted' | 'warning';
@@ -307,7 +356,29 @@ export default function Sidebar() {
                 : 'border border-accent/40 bg-accent/10 text-accent'
             }`}
           >
-            {toast.text}
+            <div>{toast.text}</div>
+            {toast.action && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const action = toast.action;
+                  if (!action) return;
+                  // Dismiss immediately so a slow handler doesn't leave a
+                  // stale toast on screen.
+                  setToast(null);
+                  try {
+                    await action.onClick();
+                  } catch (err) {
+                    console.warn('[Sidebar] toast action failed:', err);
+                  }
+                }}
+                className={`mt-1.5 text-xs font-medium underline-offset-2 hover:underline cursor-pointer ${
+                  toast.kind === 'error' ? 'text-red-200' : 'text-accent-hover'
+                }`}
+              >
+                {toast.action.label}
+              </button>
+            )}
           </div>
         )}
 

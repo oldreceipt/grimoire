@@ -780,6 +780,16 @@ export default function Browse() {
         return;
       }
 
+      // When a mod has more than one downloadable file (different versions,
+      // variant builds, etc.) we used to silently pick whichever had the
+      // highest download count. Forum feedback flagged that — surface the
+      // details modal so the user can choose which file to install.
+      if (details.files.length > 1) {
+        setSelectedMod(details);
+        setSelectedModDates({ dateAdded: mod.dateAdded, dateModified: mod.dateModified });
+        return;
+      }
+
       const file = getPrimaryFile(details.files);
 
       // If nothing is currently downloading, set this as the active download
