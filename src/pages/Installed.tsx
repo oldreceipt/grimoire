@@ -377,19 +377,52 @@ export default function Installed() {
   };
 
   /**
-   * Swap a variant with its picker-neighbor in load order. The picker shows
-   * a group's variants sorted by priority, so "up" = lower priority slot =
-   * loads earlier, "down" = higher slot = loads later (and wins overlapping
-   * file conflicts). Only allowed when the neighbor shares the variant's
-   * enabled state: cross-section swaps would implicitly flip a variant's
-   * on/off status, which the user didn't ask for. The picker disables the
-   * button in those cases.
+   * Reorder a variant relative to one of its picker-siblings. Used by both
+   * the chevron up/down buttons and the picker's drag-and-drop. Returns
+   * early when the neighbor lives in a different section — cross-section
+   * moves would silently flip a variant's on/off status, which the picker
+   * UI explicitly blocks.
    *
-   * Implementation: find the variant and its neighbor inside the same
-   * section list (enabledMods or disabledMods), swap their indices, then
-   * pass the full reordered filename list to reorderMods. The backend
-   * renumbers densely 1..N within each section, so the swap manifests as a
-   * pak##_ filename rename on disk.
+   * The picker shows a group's variants sorted by priority, so the
+   * before/after semantics match what the user sees: drop "before" puts
+   * the source at the neighbor's slot (loads earlier); drop "after" puts
+   * it just past the neighbor (loads later, wins overlapping files).
+   *
+   * Implementation: splice the source out of its section list, re-find the
+   * neighbor's index (it may have shifted when source was removed), splice
+   * the source back in before/after the neighbor, then pass the full
+   * filename list to reorderMods. The backend renumbers densely 1..N
+   * inside each section, so the index changes manifest as pak##_ renames
+   * on disk.
+   */
+  const reorderVariantTo = async (
+    source: Mod,
+    neighbor: Mod,
+    position: DropPosition
+  ) => {
+    if (source.id === neighbor.id) return;
+    if (source.enabled !== neighbor.enabled) return;
+
+    const section = source.enabled ? enabledMods : disabledMods;
+    const next = section.slice();
+    const srcIdx = next.findIndex((m) => m.id === source.id);
+    if (srcIdx === -1) return;
+    next.splice(srcIdx, 1);
+    const neighborIdx = next.findIndex((m) => m.id === neighbor.id);
+    if (neighborIdx === -1) return;
+    const insertAt = position === 'before' ? neighborIdx : neighborIdx + 1;
+    next.splice(insertAt, 0, source);
+
+    const full = source.enabled
+      ? [...next, ...disabledMods]
+      : [...enabledMods, ...next];
+    await reorderMods(full.map((m) => m.fileName));
+  };
+
+  /**
+   * Convenience wrapper for the chevron buttons in the variant picker.
+   * "Up" / "down" map to swapping with the picker-neighbor in the obvious
+   * direction; reorderVariantTo handles the section-safety check.
    */
   const moveVariant = async (
     group: Extract<ModEntry, { kind: 'group' }>,
@@ -401,18 +434,7 @@ export default function Installed() {
     const neighborIdx = direction === 'up' ? idxInPicker - 1 : idxInPicker + 1;
     if (neighborIdx < 0 || neighborIdx >= group.variants.length) return;
     const neighbor = group.variants[neighborIdx];
-    if (neighbor.enabled !== target.enabled) return;
-
-    const section = target.enabled ? enabledMods : disabledMods;
-    const sectionNext = section.slice();
-    const a = sectionNext.findIndex((m) => m.id === target.id);
-    const b = sectionNext.findIndex((m) => m.id === neighbor.id);
-    if (a === -1 || b === -1) return;
-    [sectionNext[a], sectionNext[b]] = [sectionNext[b], sectionNext[a]];
-    const next = target.enabled
-      ? [...sectionNext, ...disabledMods]
-      : [...enabledMods, ...sectionNext];
-    await reorderMods(next.map((m) => m.fileName));
+    await reorderVariantTo(target, neighbor, direction === 'up' ? 'before' : 'after');
   };
 
   // Auto-scroll the main content container while drag-reordering. Native HTML
@@ -1050,6 +1072,9 @@ export default function Installed() {
             variants={liveEntry.variants}
             onToggle={(target) => toggleVariant(target)}
             onMoveVariant={(target, direction) => moveVariant(liveEntry, target, direction)}
+            onReorderVariantTo={(source, neighbor, position) =>
+              reorderVariantTo(source, neighbor, position)
+            }
             onDisableAll={() => disableEntireGroup(liveEntry)}
             onDeleteVariant={(variant) => deleteMod(variant.id)}
             onRenameVariant={(variant, label) => setVariantLabel(variant.id, label)}

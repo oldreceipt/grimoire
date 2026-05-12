@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, Check, Trash2, Power, PowerOff, Info, Pencil, ChevronUp, ChevronDown } from 'lucide-react';
+import { X, Check, Trash2, Power, PowerOff, Info, Pencil, ChevronUp, ChevronDown, GripVertical } from 'lucide-react';
 import type { Mod } from '../types/mod';
 import { Button } from './common/ui';
+
+type DropPosition = 'before' | 'after';
 
 interface Props {
     /** Display name shared by the variants (use primary.name). */
@@ -16,6 +18,11 @@ interface Props {
      *  for refusing cross-section swaps; this picker just disables the
      *  button when the neighbor isn't in the same enabled state. */
     onMoveVariant: (target: Mod, direction: 'up' | 'down') => Promise<void> | void;
+    /** Drag-drop reorder. Drops source before or after neighbor in load
+     *  order. Same cross-section constraint as onMoveVariant — the picker
+     *  refuses to set dropTargetId when source and target are in different
+     *  enabled states, so this handler can assume same-section. */
+    onReorderVariantTo: (source: Mod, neighbor: Mod, position: DropPosition) => Promise<void> | void;
     /** Called when the user disables every currently-enabled variant. */
     onDisableAll: () => Promise<void> | void;
     /** Called when the user requests deletion of a single variant. */
@@ -55,6 +62,7 @@ export default function VariantPickerModal({
     variants,
     onToggle,
     onMoveVariant,
+    onReorderVariantTo,
     onDisableAll,
     onDeleteVariant,
     onRenameVariant,
@@ -66,6 +74,21 @@ export default function VariantPickerModal({
     // working draft text; null when no row is in edit mode.
     const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
     const editInputRef = useRef<HTMLInputElement | null>(null);
+    // Drag-and-drop state. dropPosition is computed from cursor Y vs row
+    // midpoint; the visual indicator (top/bottom border on the target row)
+    // matches the position the source will land in. handleDownRef gates the
+    // drag to the grip icon so clicks on toggle/rename/delete/chevrons don't
+    // accidentally start one.
+    const [draggingId, setDraggingId] = useState<string | null>(null);
+    const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+    const [dropPosition, setDropPosition] = useState<DropPosition | null>(null);
+    const handleDownRef = useRef(false);
+    const resetDrag = () => {
+        setDraggingId(null);
+        setDropTargetId(null);
+        setDropPosition(null);
+        handleDownRef.current = false;
+    };
 
     // Focus + select when the editing target changes (entering edit mode
     // for a new row). Driven by the id alone so we don't re-focus on every
@@ -208,6 +231,8 @@ export default function VariantPickerModal({
                         const showReorder = variants.length > 1;
                         const isMoveUpPending = pending === `move:${v.id}:up`;
                         const isMoveDownPending = pending === `move:${v.id}:down`;
+                        const isDragging = draggingId === v.id;
+                        const isDropTarget = dropTargetId === v.id;
                         // Title precedence: user rename wins, else the
                         // GameBanana file header the author set (e.g. "Gold
                         // w/ alt candle"), else the original GB filename
@@ -227,12 +252,85 @@ export default function VariantPickerModal({
                         return (
                             <div
                                 key={v.id}
-                                className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                                draggable={showReorder && !isEditing && !pending}
+                                onDragStart={(e) => {
+                                    if (!handleDownRef.current) {
+                                        e.preventDefault();
+                                        return;
+                                    }
+                                    handleDownRef.current = false;
+                                    e.dataTransfer.effectAllowed = 'move';
+                                    try {
+                                        e.dataTransfer.setData('text/plain', v.id);
+                                    } catch {
+                                        // Firefox is picky about setData; ignore failures.
+                                    }
+                                    setDraggingId(v.id);
+                                }}
+                                onDragOver={(e) => {
+                                    if (!draggingId || draggingId === v.id) return;
+                                    const source = variants.find((x) => x.id === draggingId);
+                                    if (!source || source.enabled !== v.enabled) return;
+                                    e.preventDefault();
+                                    e.dataTransfer.dropEffect = 'move';
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const midY = rect.top + rect.height / 2;
+                                    const pos: DropPosition = e.clientY < midY ? 'before' : 'after';
+                                    setDropTargetId(v.id);
+                                    setDropPosition(pos);
+                                }}
+                                onDragLeave={(e) => {
+                                    // Children fire dragleave on the row; only clear when the
+                                    // cursor actually exits the row's bounding box.
+                                    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                                    if (dropTargetId === v.id) {
+                                        setDropTargetId(null);
+                                        setDropPosition(null);
+                                    }
+                                }}
+                                onDrop={async (e) => {
+                                    e.preventDefault();
+                                    const sourceId = draggingId;
+                                    const pos = dropPosition;
+                                    resetDrag();
+                                    if (!sourceId || sourceId === v.id || !pos) return;
+                                    const source = variants.find((x) => x.id === sourceId);
+                                    if (!source || source.enabled !== v.enabled) return;
+                                    setPending(`move:${sourceId}:drag`);
+                                    try {
+                                        await onReorderVariantTo(source, v, pos);
+                                    } finally {
+                                        setPending(null);
+                                    }
+                                }}
+                                onDragEnd={resetDrag}
+                                className={`relative flex items-center gap-3 p-3 rounded-lg border transition-colors ${
                                     isActive
                                         ? 'border-accent/40 bg-accent/5'
                                         : 'border-border bg-bg-tertiary hover:bg-white/5'
-                                }`}
+                                } ${isDragging ? 'opacity-50' : ''}`}
                             >
+                                {isDropTarget && dropPosition && (
+                                    <span
+                                        aria-hidden
+                                        className={`absolute left-2 right-2 ${dropPosition === 'before' ? '-top-[3px]' : '-bottom-[3px]'} h-[3px] bg-accent pointer-events-none rounded-full`}
+                                    />
+                                )}
+                                {showReorder && (
+                                    <div
+                                        onMouseDown={() => {
+                                            handleDownRef.current = true;
+                                        }}
+                                        onMouseUp={() => {
+                                            handleDownRef.current = false;
+                                        }}
+                                        className="flex-shrink-0 p-1 text-text-secondary hover:text-text-primary cursor-grab active:cursor-grabbing select-none"
+                                        title="Drag to reorder"
+                                        aria-label="Drag to reorder"
+                                    >
+                                        <GripVertical className="w-4 h-4" />
+                                    </div>
+                                )}
                                 <button
                                     type="button"
                                     onClick={() => pick(v)}
