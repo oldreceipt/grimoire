@@ -122,6 +122,7 @@ interface AppState {
   setModPriority: (modId: string, priority: number) => Promise<void>;
   swapModPriority: (modIdA: string, modIdB: string) => Promise<void>;
   reorderMods: (orderedFileNames: string[]) => Promise<void>;
+  setVariantLabel: (modId: string, label: string) => Promise<void>;
   importCustomMod: (args: { vpkPath: string; name: string; thumbnailDataUrl?: string; nsfw?: boolean }) => Promise<void>;
 
   // Download counts cache actions
@@ -260,6 +261,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (err) {
       set({ modsError: String(err) });
       get().loadMods();
+    }
+  },
+
+  setVariantLabel: async (modId: string, label: string) => {
+    try {
+      const updated = await api.setVariantLabel(modId, label);
+      set({
+        mods: get().mods.map((m) => (m.id === modId ? updated : m)),
+      });
+    } catch (err) {
+      set({ modsError: String(err) });
     }
   },
 

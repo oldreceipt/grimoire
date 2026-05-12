@@ -14,6 +14,7 @@ export interface ElectronAPI {
     enableMod: (modId: string) => Promise<Mod>;
     disableMod: (modId: string) => Promise<Mod>;
     deleteMod: (modId: string) => Promise<void>;
+    setVariantLabel: (modId: string, label: string) => Promise<Mod>;
     setModPriority: (modId: string, priority: number) => Promise<Mod>;
     reorderMods: (orderedFileNames: string[]) => Promise<Mod[]>;
     swapModPriority: (modIdA: string, modIdB: string) => Promise<Mod[]>;
@@ -666,6 +667,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     enableMod: (modId: string) => ipcRenderer.invoke('enable-mod', modId),
     disableMod: (modId: string) => ipcRenderer.invoke('disable-mod', modId),
     deleteMod: (modId: string) => ipcRenderer.invoke('delete-mod', modId),
+    setVariantLabel: (modId: string, label: string) =>
+        ipcRenderer.invoke('set-variant-label', modId, label),
     setModPriority: (modId: string, priority: number) =>
         ipcRenderer.invoke('set-mod-priority', modId, priority),
     reorderMods: (orderedFileNames: string[]) =>

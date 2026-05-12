@@ -55,6 +55,10 @@ export async function deleteMod(modId: string): Promise<void> {
   return window.electronAPI.deleteMod(modId);
 }
 
+export async function setVariantLabel(modId: string, label: string): Promise<Mod> {
+  return window.electronAPI.setVariantLabel(modId, label);
+}
+
 export async function setModPriority(modId: string, priority: number): Promise<Mod> {
   return window.electronAPI.setModPriority(modId, priority);
 }

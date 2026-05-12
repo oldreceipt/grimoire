@@ -24,10 +24,12 @@ import { useAppStore } from '../stores/appStore';
 import { getActiveDeadlockPath } from '../lib/appSettings';
 import { getConflicts, openModsFolder, readImageDataUrl, showOpenDialog, getModDetails, downloadMod } from '../lib/api';
 import type { ModConflict } from '../lib/api';
+import type { Mod } from '../types/mod';
 import type { GameBananaModDetails } from '../types/gamebanana';
 import ModThumbnail from '../components/ModThumbnail';
 import AudioPreviewPlayer from '../components/AudioPreviewPlayer';
 import ModDetailsModal from '../components/ModDetailsModal';
+import VariantPickerModal from '../components/VariantPickerModal';
 import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition } from '../lib/lockerUtils';
 import { Button, Tag } from '../components/common/ui';
 import { PageHeader, ViewModeToggle, EmptyState, ConfirmModal, SectionHeader, type ViewMode } from '../components/common/PageComponents';
@@ -42,6 +44,92 @@ function formatBytes(bytes: number): string {
 
 type DropPosition = 'before' | 'after';
 
+/**
+ * Rows on the Installed page are either standalone mods or groups of variants
+ * sharing the same GameBanana mod (e.g. five preset VPKs from one skin pack).
+ * Grouped entries collapse to a single card with a "N variants" badge; the
+ * picker modal handles per-variant select/delete.
+ */
+type ModEntry =
+  | { kind: 'single'; mod: Mod; key: string }
+  | {
+      kind: 'group';
+      gameBananaId: number;
+      variants: Mod[];
+      /** Currently-enabled variant in the group. Null when the whole group
+       *  is disabled. Mutual exclusion: only one variant is active at a time. */
+      active: Mod | null;
+      /** Mod we render visuals from (thumbnail, name, category). The active
+       *  variant when one's enabled, else the first variant by filename. */
+      primary: Mod;
+      /** Sum of variant sizes — shown as the card's "size" field. */
+      totalSize: number;
+      key: string;
+    };
+
+function buildModEntries(mods: Mod[]): ModEntry[] {
+  const byGb = new Map<number, Mod[]>();
+  const singles: Mod[] = [];
+  for (const m of mods) {
+    if (typeof m.gameBananaId === 'number' && m.gameBananaId > 0) {
+      const arr = byGb.get(m.gameBananaId) ?? [];
+      arr.push(m);
+      byGb.set(m.gameBananaId, arr);
+    } else {
+      singles.push(m);
+    }
+  }
+  // Singletons (only one mod for a given GB id) collapse back to single
+  // entries — the group concept only matters when there are 2+ variants.
+  for (const [gb, variants] of Array.from(byGb.entries())) {
+    if (variants.length === 1) {
+      singles.push(variants[0]);
+      byGb.delete(gb);
+    }
+  }
+
+  const entries: ModEntry[] = [];
+  for (const m of singles) {
+    entries.push({ kind: 'single', mod: m, key: `single:${m.id}` });
+  }
+  for (const [gameBananaId, variants] of byGb) {
+    // Sort variants by current priority so drag-reorder lines up with the
+    // user's mental model ("which slot is this in?") and the picker shows
+    // them in the same order as the addons folder.
+    variants.sort((a, b) => a.priority - b.priority);
+    const active = variants.find((v) => v.enabled) ?? null;
+    const primary = active ?? variants[0];
+    const totalSize = variants.reduce((sum, v) => sum + v.size, 0);
+    entries.push({
+      kind: 'group',
+      gameBananaId,
+      variants,
+      active,
+      primary,
+      totalSize,
+      key: `group:${gameBananaId}`,
+    });
+  }
+  return entries;
+}
+
+/** A group is considered "enabled" when it has a currently-active variant. */
+function isEntryEnabled(entry: ModEntry): boolean {
+  return entry.kind === 'single' ? entry.mod.enabled : entry.active !== null;
+}
+
+/** Sort key for ordering enabled/disabled sections. Uses the primary's
+ *  priority for groups so reorder math stays consistent with the existing
+ *  per-mod priority system. */
+function entrySortPriority(entry: ModEntry): number {
+  return entry.kind === 'single' ? entry.mod.priority : entry.primary.priority;
+}
+
+/** Searchable display name for an entry (the visible card title). */
+function entryName(entry: ModEntry): string {
+  return entry.kind === 'single' ? entry.mod.name : entry.primary.name;
+}
+
 export default function Installed() {
   const navigate = useNavigate();
   const {
@@ -54,20 +142,27 @@ export default function Installed() {
     toggleMod,
     deleteMod,
     reorderMods,
+    setVariantLabel,
     importCustomMod,
     soundVolume,
   } = useAppStore();
   const activeDeadlockPath = getActiveDeadlockPath(settings);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     const stored = localStorage.getItem('installedViewMode');
-    return stored === 'grid' || stored === 'compact' || stored === 'list' ? stored : 'list';
+    return stored === 'grid' || stored === 'compact' || stored === 'list' ? stored : 'grid';
   });
   useEffect(() => {
     localStorage.setItem('installedViewMode', viewMode);
   }, [viewMode]);
   const [search, setSearch] = useState('');
   const [conflictMap, setConflictMap] = useState<Map<string, ModConflict[]>>(new Map());
-  const [modToDelete, setModToDelete] = useState<{ id: string; name: string } | null>(null);
+  // Delete confirmation. `ids` is a list so the same prompt can drive both
+  // single-mod and "all variants in this group" deletions.
+  const [modToDelete, setModToDelete] = useState<{ ids: string[]; name: string; isGroup: boolean } | null>(null);
+  // GB id of the group whose picker is open, or null. The actual entry is
+  // derived from live `mods` each render so per-variant deletes inside the
+  // picker reflect immediately without juggling a separate snapshot.
+  const [pickerGroupId, setPickerGroupId] = useState<number | null>(null);
   const [importOpen, setImportOpen] = useState(false);
 
   // Drag-and-drop reorder state. `draggingSection` scopes drops so dragging
@@ -150,9 +245,49 @@ export default function Installed() {
   };
 
   const handleDeleteConfirm = async () => {
-    if (modToDelete) {
-      await deleteMod(modToDelete.id);
-      setModToDelete(null);
+    if (!modToDelete) return;
+    // Sequential to keep priority renames coherent — parallel deletes have
+    // raced renameVpks before.
+    for (const id of modToDelete.ids) {
+      await deleteMod(id);
+    }
+    setModToDelete(null);
+  };
+
+  /**
+   * Switch the active variant in a group. Disables every other variant in
+   * the group first (sequential, so the priority bookkeeping stays sane),
+   * then enables the target. If the target is already enabled this is a
+   * no-op. Mutual exclusion is enforced here rather than in the store so the
+   * existing toggleMod action stays single-mod.
+   */
+  const setActiveVariant = async (group: Extract<ModEntry, { kind: 'group' }>, target: Mod) => {
+    for (const v of group.variants) {
+      if (v.id !== target.id && v.enabled) {
+        await toggleMod(v.id);
+      }
+    }
+    if (!target.enabled) {
+      await toggleMod(target.id);
+    }
+  };
+
+  const disableEntireGroup = async (group: Extract<ModEntry, { kind: 'group' }>) => {
+    for (const v of group.variants) {
+      if (v.enabled) {
+        await toggleMod(v.id);
+      }
+    }
+  };
+
+  /** Top-level toggle on a grouped card. If anything's active, disable it;
+   *  otherwise enable the first variant by filename order (which becomes
+   *  the primary when nothing else is active). */
+  const handleGroupToggle = async (group: Extract<ModEntry, { kind: 'group' }>) => {
+    if (group.active) {
+      await toggleMod(group.active.id);
+    } else if (group.variants.length > 0) {
+      await toggleMod(group.variants[0].id);
     }
   };
 
@@ -310,14 +445,24 @@ export default function Installed() {
     disabledMods.some((m, i) => m.priority !== enabledMods.length + i + 1);
   const conflictCount = conflictMap.size > 0 ? new Set([...conflictMap.keys()]).size : 0;
 
+  // Group variants sharing a GB mod id under a single card. Singletons and
+  // custom imports (no GB id) keep their old card behavior.
+  const allEntries = buildModEntries(mods);
+  const enabledEntries = allEntries
+    .filter(isEntryEnabled)
+    .sort((a, b) => entrySortPriority(a) - entrySortPriority(b));
+  const disabledEntries = allEntries
+    .filter((e) => !isEntryEnabled(e))
+    .sort((a, b) => entrySortPriority(a) - entrySortPriority(b));
+
   // Filter by search query (case-insensitive substring on name). Drag-and-drop
   // reorder is still correct because it targets the full enabled list order,
   // not the filtered view.
   const searchNeedle = search.trim().toLowerCase();
-  const matchesSearch = (m: typeof mods[number]) =>
-    !searchNeedle || m.name.toLowerCase().includes(searchNeedle);
-  const visibleEnabled = enabledMods.filter(matchesSearch);
-  const visibleDisabled = disabledMods.filter(matchesSearch);
+  const matchesSearchEntry = (entry: ModEntry) =>
+    !searchNeedle || entryName(entry).toLowerCase().includes(searchNeedle);
+  const visibleEnabled = enabledEntries.filter(matchesSearchEntry);
+  const visibleDisabled = disabledEntries.filter(matchesSearchEntry);
   const totalMatches = visibleEnabled.length + visibleDisabled.length;
 
   const resetDragState = () => {
@@ -327,6 +472,19 @@ export default function Installed() {
     setDropPosition(null);
   };
 
+  /** Locate the entry that holds a given mod id within a section's entries. */
+  const findEntryForModId = (entries: ModEntry[], id: string): ModEntry | undefined => {
+    return entries.find((e) =>
+      e.kind === 'single' ? e.mod.id === id : e.variants.some((v) => v.id === id)
+    );
+  };
+
+  /**
+   * Entry-aware drag reorder. Singles move one mod; groups move all their
+   * variants as a block, keeping internal priority order. After the reshuffle
+   * we flatten back to a filename list and hand it to reorderMods, which
+   * renames pak##_ prefixes to lock in new priorities.
+   */
   const applyReorder = (
     sourceId: string,
     targetId: string,
@@ -334,21 +492,27 @@ export default function Installed() {
     section: 'enabled' | 'disabled'
   ) => {
     if (sourceId === targetId) return;
-    const list = section === 'enabled' ? enabledMods : disabledMods;
-    const sourceIdx = list.findIndex((m) => m.id === sourceId);
-    if (sourceIdx === -1) return;
+    const entries = section === 'enabled' ? enabledEntries : disabledEntries;
+    const sourceEntry = findEntryForModId(entries, sourceId);
+    const targetEntry = findEntryForModId(entries, targetId);
+    if (!sourceEntry || !targetEntry || sourceEntry.key === targetEntry.key) return;
 
-    const working = list.slice();
-    const [moved] = working.splice(sourceIdx, 1);
-    const adjustedTargetIdx = working.findIndex((m) => m.id === targetId);
-    if (adjustedTargetIdx === -1) return;
-    const insertAt = position === 'before' ? adjustedTargetIdx : adjustedTargetIdx + 1;
-    working.splice(insertAt, 0, moved);
+    const working = entries.slice();
+    const sourceIdx = working.indexOf(sourceEntry);
+    working.splice(sourceIdx, 1);
+    const targetIdx = working.indexOf(targetEntry);
+    if (targetIdx === -1) return;
+    const insertAt = position === 'before' ? targetIdx : targetIdx + 1;
+    working.splice(insertAt, 0, sourceEntry);
 
-    const unchanged = working.every((m, i) => m.id === list[i].id);
+    const flatten = (es: ModEntry[]) =>
+      es.flatMap((e) => (e.kind === 'single' ? [e.mod] : e.variants));
+    const next = flatten(working);
+    const prev = flatten(entries);
+    const unchanged = next.every((m, i) => m.id === prev[i]?.id);
     if (unchanged) return;
 
-    reorderMods(working.map((m) => m.fileName));
+    reorderMods(next.map((m) => m.fileName));
   };
 
   const compactPriorities = () => {
@@ -357,6 +521,147 @@ export default function Installed() {
     const ordered = [...enabledMods, ...disabledMods];
     if (ordered.length === 0) return;
     reorderMods(ordered.map((m) => m.fileName));
+  };
+
+  /**
+   * Render a single entry as a ModCard. Centralizes both the "single mod"
+   * and "grouped variants" paths so the enabled/disabled sections don't
+   * each carry a 40-line inline JSX block.
+   *
+   * Group cards:
+   *   - Drag-reorder is disabled (the underlying VPKs span multiple priority
+   *     slots; meaningful group-level reorder needs more design).
+   *   - Toggle hits the active variant (or enables the first variant when
+   *     the group is fully disabled).
+   *   - Delete asks the user to confirm removing every variant.
+   *   - Card body click opens the variant picker modal.
+   *   - Conflicts shown are the union of conflicts on currently-enabled
+   *     variants (typically just one under mutual exclusion).
+   */
+  const renderEntryCard = (entry: ModEntry, section: 'enabled' | 'disabled') => {
+    if (entry.kind === 'single') {
+      const mod = entry.mod;
+      return (
+        <ModCard
+          key={entry.key}
+          mod={mod}
+          viewMode={viewMode}
+          hideNsfwPreviews={settings?.hideNsfwPreviews ?? false}
+          conflicts={conflictMap.get(mod.id) || []}
+          soundVolume={soundVolume}
+          updateAvailable={updatesAvailable.has(mod.id)}
+          onOpenDetails={mod.gameBananaId ? () => openModDetails(mod) : undefined}
+          onToggle={() => toggleMod(mod.id)}
+          onDelete={() => setModToDelete({ ids: [mod.id], name: mod.name, isGroup: false })}
+          draggable={!searchNeedle}
+          isDragging={draggingId === mod.id}
+          isDropTarget={dropTargetId === mod.id}
+          dropPosition={dropTargetId === mod.id ? dropPosition : null}
+          onDragStart={() => {
+            setDraggingId(mod.id);
+            setDraggingSection(section);
+          }}
+          onDragOver={(pos) => {
+            if (!draggingId || draggingId === mod.id) return;
+            if (draggingSection !== section) return;
+            setDropTargetId(mod.id);
+            setDropPosition(pos);
+          }}
+          onDragLeaveCard={() => {
+            if (dropTargetId === mod.id) {
+              setDropTargetId(null);
+              setDropPosition(null);
+            }
+          }}
+          onDrop={() => {
+            if (draggingId && dropTargetId && dropPosition && draggingSection === section) {
+              applyReorder(draggingId, dropTargetId, dropPosition, section);
+            }
+            resetDragState();
+          }}
+          onDragEnd={resetDragState}
+        />
+      );
+    }
+    // Group entry. Stand-in `mod` is the primary so the card visuals look
+    // right; the `group` prop tells ModCard to swap filename for variant
+    // count and route clicks to the picker.
+    const aggregateConflicts: ModConflict[] = [];
+    for (const v of entry.variants) {
+      if (v.enabled) {
+        const c = conflictMap.get(v.id);
+        if (c) aggregateConflicts.push(...c);
+      }
+    }
+    const anyUpdateAvailable = entry.variants.some((v) => updatesAvailable.has(v.id));
+    // Drag uses the primary's mod id as the representative for the whole
+    // group. applyReorder maps this id back to the entry and moves the
+    // whole variant block.
+    const dragRepId = entry.primary.id;
+    return (
+      <ModCard
+        key={entry.key}
+        mod={{
+          ...entry.primary,
+          // Group's overall enable state is "active variant exists", not
+          // the primary's individual flag (matches sort + section choice).
+          enabled: entry.active !== null,
+          // Card meta shows total size across variants.
+          size: entry.totalSize,
+        }}
+        viewMode={viewMode}
+        hideNsfwPreviews={settings?.hideNsfwPreviews ?? false}
+        conflicts={aggregateConflicts}
+        soundVolume={soundVolume}
+        updateAvailable={anyUpdateAvailable}
+        onOpenDetails={() => setPickerGroupId(entry.gameBananaId)}
+        onToggle={() => handleGroupToggle(entry)}
+        onDelete={() =>
+          setModToDelete({
+            ids: entry.variants.map((v) => v.id),
+            name: entry.primary.name,
+            isGroup: true,
+          })
+        }
+        draggable={!searchNeedle}
+        isDragging={draggingId === dragRepId}
+        isDropTarget={dropTargetId === dragRepId}
+        dropPosition={dropTargetId === dragRepId ? dropPosition : null}
+        onDragStart={() => {
+          setDraggingId(dragRepId);
+          setDraggingSection(section);
+        }}
+        onDragOver={(pos) => {
+          if (!draggingId || draggingId === dragRepId) return;
+          if (draggingSection !== section) return;
+          setDropTargetId(dragRepId);
+          setDropPosition(pos);
+        }}
+        onDragLeaveCard={() => {
+          if (dropTargetId === dragRepId) {
+            setDropTargetId(null);
+            setDropPosition(null);
+          }
+        }}
+        onDrop={() => {
+          if (draggingId && dropTargetId && dropPosition && draggingSection === section) {
+            applyReorder(draggingId, dropTargetId, dropPosition, section);
+          }
+          resetDragState();
+        }}
+        onDragEnd={resetDragState}
+        group={{
+          variantCount: entry.variants.length,
+          // Display the active variant's user-given label when set; falls
+          // back to the VPK filename. Lets the user see "Red preset" on
+          // the card instead of "pak06_dir.vpk".
+          activeFileName: entry.active
+            ? (entry.active.variantLabel ?? entry.active.fileName)
+            : null,
+          onOpenPicker: () => setPickerGroupId(entry.gameBananaId),
+        }}
+      />
+    );
   };
 
   // No mods at all
@@ -493,47 +798,7 @@ export default function Installed() {
                   : 'space-y-2'
             }
           >
-            {visibleEnabled.map((mod) => (
-              <ModCard
-                key={mod.id}
-                mod={mod}
-                viewMode={viewMode}
-                hideNsfwPreviews={settings?.hideNsfwPreviews ?? false}
-                conflicts={conflictMap.get(mod.id) || []}
-                soundVolume={soundVolume}
-                updateAvailable={updatesAvailable.has(mod.id)}
-                onOpenDetails={mod.gameBananaId ? () => openModDetails(mod) : undefined}
-                onToggle={() => toggleMod(mod.id)}
-                onDelete={() => setModToDelete({ id: mod.id, name: mod.name })}
-                draggable={!searchNeedle}
-                isDragging={draggingId === mod.id}
-                isDropTarget={dropTargetId === mod.id}
-                dropPosition={dropTargetId === mod.id ? dropPosition : null}
-                onDragStart={() => {
-                  setDraggingId(mod.id);
-                  setDraggingSection('enabled');
-                }}
-                onDragOver={(pos) => {
-                  if (!draggingId || draggingId === mod.id) return;
-                  if (draggingSection !== 'enabled') return;
-                  setDropTargetId(mod.id);
-                  setDropPosition(pos);
-                }}
-                onDragLeaveCard={() => {
-                  if (dropTargetId === mod.id) {
-                    setDropTargetId(null);
-                    setDropPosition(null);
-                  }
-                }}
-                onDrop={() => {
-                  if (draggingId && dropTargetId && dropPosition && draggingSection === 'enabled') {
-                    applyReorder(draggingId, dropTargetId, dropPosition, 'enabled');
-                  }
-                  resetDragState();
-                }}
-                onDragEnd={resetDragState}
-              />
-            ))}
+            {visibleEnabled.map((entry) => renderEntryCard(entry, 'enabled'))}
           </div>
         </div>
       )}
@@ -550,62 +815,31 @@ export default function Installed() {
                   : 'space-y-2'
             }
           >
-            {visibleDisabled.map((mod) => (
-              <ModCard
-                key={mod.id}
-                mod={mod}
-                viewMode={viewMode}
-                hideNsfwPreviews={settings?.hideNsfwPreviews ?? false}
-                conflicts={conflictMap.get(mod.id) || []}
-                soundVolume={soundVolume}
-                updateAvailable={updatesAvailable.has(mod.id)}
-                onOpenDetails={mod.gameBananaId ? () => openModDetails(mod) : undefined}
-                onToggle={() => toggleMod(mod.id)}
-                onDelete={() => setModToDelete({ id: mod.id, name: mod.name })}
-                draggable={!searchNeedle}
-                isDragging={draggingId === mod.id}
-                isDropTarget={dropTargetId === mod.id}
-                dropPosition={dropTargetId === mod.id ? dropPosition : null}
-                onDragStart={() => {
-                  setDraggingId(mod.id);
-                  setDraggingSection('disabled');
-                }}
-                onDragOver={(pos) => {
-                  if (!draggingId || draggingId === mod.id) return;
-                  if (draggingSection !== 'disabled') return;
-                  setDropTargetId(mod.id);
-                  setDropPosition(pos);
-                }}
-                onDragLeaveCard={() => {
-                  if (dropTargetId === mod.id) {
-                    setDropTargetId(null);
-                    setDropPosition(null);
-                  }
-                }}
-                onDrop={() => {
-                  if (draggingId && dropTargetId && dropPosition && draggingSection === 'disabled') {
-                    applyReorder(draggingId, dropTargetId, dropPosition, 'disabled');
-                  }
-                  resetDragState();
-                }}
-                onDragEnd={resetDragState}
-              />
-            ))}
+            {visibleDisabled.map((entry) => renderEntryCard(entry, 'disabled'))}
           </div>
         </div>
       )}
 
       <ConfirmModal
         isOpen={!!modToDelete}
-        title="Delete Mod?"
+        title={modToDelete?.isGroup ? `Delete ${modToDelete.ids.length} variants?` : 'Delete Mod?'}
         message={
-          <>
-            Are you sure you want to delete{' '}
-            <span className="font-medium text-text-primary">{modToDelete?.name}</span>? This action
-            cannot be undone.
-          </>
+          modToDelete?.isGroup ? (
+            <>
+              Delete all {modToDelete.ids.length} variants of{' '}
+              <span className="font-medium text-text-primary">{modToDelete.name}</span>? This
+              removes every VPK in the group. To keep some, cancel and use the variant picker
+              instead.
+            </>
+          ) : (
+            <>
+              Are you sure you want to delete{' '}
+              <span className="font-medium text-text-primary">{modToDelete?.name}</span>? This
+              action cannot be undone.
+            </>
+          )
         }
-        confirmLabel="Delete"
+        confirmLabel={modToDelete?.isGroup ? `Delete ${modToDelete.ids.length}` : 'Delete'}
         variant="danger"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setModToDelete(null)}
@@ -619,6 +853,42 @@ export default function Installed() {
           }}
         />
       )}
+
+      {(() => {
+        if (pickerGroupId === null) return null;
+        // Derive the live entry from current mods so deletes inside the
+        // picker reflect immediately. If the group has disappeared (all
+        // variants deleted or moved), auto-close the picker.
+        const liveEntry = allEntries.find(
+          (e) => e.kind === 'group' && e.gameBananaId === pickerGroupId
+        ) as Extract<ModEntry, { kind: 'group' }> | undefined;
+        if (!liveEntry) {
+          // Defer close to avoid setState during render warnings.
+          queueMicrotask(() => setPickerGroupId(null));
+          return null;
+        }
+        return (
+          <VariantPickerModal
+            modName={liveEntry.primary.name}
+            variants={liveEntry.variants}
+            onSelect={(target) => setActiveVariant(liveEntry, target)}
+            onDisableAll={() => disableEntireGroup(liveEntry)}
+            onDeleteVariant={(variant) => deleteMod(variant.id)}
+            onRenameVariant={(variant, label) => setVariantLabel(variant.id, label)}
+            onOpenModDetails={
+              liveEntry.primary.gameBananaId
+                ? () => {
+                    // Stash the picker so the user can return to it after
+                    // closing the details modal.
+                    setPickerGroupId(null);
+                    openModDetails(liveEntry.primary);
+                  }
+                : undefined
+            }
+            onClose={() => setPickerGroupId(null)}
+          />
+        );
+      })()}
 
       {detailsLoading && (
         <div
@@ -759,6 +1029,17 @@ interface ModCardProps {
   onDragLeaveCard?: () => void;
   onDrop?: () => void;
   onDragEnd?: () => void;
+  /** Present when this card represents a grouped set of variants (same
+   *  GameBanana mod, multiple VPKs). Swaps the filename meta for a variants
+   *  count and routes the card-body click to the picker modal. */
+  group?: {
+    variantCount: number;
+    /** Filename of the currently-active variant, or null if the group is
+     *  fully disabled. Shown in small text so the user can tell at a glance
+     *  which preset is live. */
+    activeFileName: string | null;
+    onOpenPicker: () => void;
+  };
 }
 
 function ModCard({
@@ -780,9 +1061,11 @@ function ModCard({
   onDragLeaveCard,
   onDrop,
   onDragEnd,
+  group,
 }: ModCardProps) {
   const hasConflicts = conflicts.length > 0;
   const handleDownRef = useRef<boolean>(false);
+  const isGroupCard = !!group;
 
   const indicatorClasses = (() => {
     if (!isDropTarget || !dropPosition) return '';
@@ -916,8 +1199,8 @@ function ModCard({
                 }}
                 disabled={!onOpenDetails}
                 className="absolute inset-0 w-full h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer"
-                title={onOpenDetails ? 'View mod details' : undefined}
-                aria-label={onOpenDetails ? `View details for ${mod.name}` : undefined}
+                title={onOpenDetails ? (isGroupCard ? 'Pick variant' : 'View mod details') : undefined}
+                aria-label={onOpenDetails ? (isGroupCard ? `Pick a variant for ${mod.name}` : `View details for ${mod.name}`) : undefined}
               >
                 {heroRenderUrl ? (
                   <>
@@ -969,8 +1252,8 @@ function ModCard({
             }}
             disabled={!onOpenDetails}
             className="group relative w-full aspect-video bg-bg-tertiary rounded-md overflow-hidden block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer"
-            title={onOpenDetails ? 'View mod details' : undefined}
-            aria-label={onOpenDetails ? `View details for ${mod.name}` : undefined}
+            title={onOpenDetails ? (isGroupCard ? 'Pick variant' : 'View mod details') : undefined}
+            aria-label={onOpenDetails ? (isGroupCard ? `Pick a variant for ${mod.name}` : `View details for ${mod.name}`) : undefined}
           >
             <ModThumbnail
               src={mod.thumbnailUrl}
@@ -1045,12 +1328,26 @@ function ModCard({
               <span className="flex-shrink-0 px-1.5 py-0.5 bg-bg-tertiary rounded text-xs">{mod.categoryName}</span>
             )}
             <span className="flex-shrink-0">{formatBytes(mod.size)}</span>
-            <span
-              className="font-mono truncate opacity-60 hover:opacity-100 cursor-help min-w-0"
-              title={mod.fileName}
-            >
-              {mod.fileName}
-            </span>
+            {group ? (
+              <span className="flex-shrink-0 px-1.5 py-0.5 bg-accent/15 text-accent rounded text-xs font-medium" title="Click the card to pick a variant">
+                {group.variantCount} variants
+              </span>
+            ) : (
+              <span
+                className="font-mono truncate opacity-60 hover:opacity-100 cursor-help min-w-0"
+                title={mod.fileName}
+              >
+                {mod.fileName}
+              </span>
+            )}
+            {group?.activeFileName && (
+              <span
+                className="font-mono truncate opacity-60 hover:opacity-100 cursor-help min-w-0"
+                title={`Active: ${group.activeFileName}`}
+              >
+                {group.activeFileName}
+              </span>
+            )}
           </div>
         </div>
 
@@ -1078,8 +1375,8 @@ function ModCard({
                 onOpenDetails();
               }}
               className="p-1 text-text-secondary hover:text-accent transition-colors cursor-pointer"
-              title="View mod details"
-              aria-label={`View details for ${mod.name}`}
+              title={isGroupCard ? 'Pick variant' : 'View mod details'}
+              aria-label={isGroupCard ? `Pick a variant for ${mod.name}` : `View details for ${mod.name}`}
             >
               <Info className="w-4 h-4" />
             </button>

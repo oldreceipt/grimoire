@@ -12,6 +12,7 @@ export interface ModMetadata {
     sourceSection?: string;
     nsfw?: boolean;
     isMinaPreset?: boolean; // Flag for Mina presets we extracted from the 7z
+    variantLabel?: string;  // User-provided label to disambiguate variants of the same mod
 }
 
 export type ModMetadataMap = Record<string, ModMetadata>;
