@@ -632,7 +632,7 @@ export default function Stats() {
                                                 <p className="text-text-secondary mb-4">Social stats not loaded</p>
                                                 <button
                                                     onClick={() => selectedAccountId && loadSocialStats(selectedAccountId)}
-                                                    className="px-4 py-2 bg-accent rounded-lg text-white hover:bg-accent/80 transition-colors"
+                                                    className="px-4 py-2 rounded-lg border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary transition-colors cursor-pointer"
                                                 >
                                                     Load Social Stats
                                                 </button>
@@ -780,7 +780,7 @@ export default function Stats() {
                                                 <p className="text-text-secondary mb-4">Browse community builds</p>
                                                 <button
                                                     onClick={() => loadBuilds({ limit: 50 })}
-                                                    className="px-4 py-2 bg-accent rounded-lg text-white hover:bg-accent/80 transition-colors"
+                                                    className="px-4 py-2 rounded-lg border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary transition-colors cursor-pointer"
                                                 >
                                                     Load Builds
                                                 </button>

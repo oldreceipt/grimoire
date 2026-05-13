@@ -173,6 +173,12 @@ export default function Settings() {
     }
   };
 
+  const handleIgnoreConflictsByDefaultChange = async (checked: boolean) => {
+    if (settings) {
+      await saveSettings({ ...settings, ignoreConflictsByDefault: checked });
+    }
+  };
+
   const handleDevModeChange = async (checked: boolean) => {
     if (!settings) return;
     if (checked) {
@@ -436,7 +442,7 @@ export default function Settings() {
         </Card>
 
         {/* Updates */}
-        <Card title="Updates" icon={Download}>
+        <Card title="Updates" icon={Download} className="lg:col-span-2">
           <div className="space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -548,6 +554,15 @@ export default function Settings() {
 
             <div className="h-px bg-white/5" />
 
+            <Toggle
+              checked={settings?.ignoreConflictsByDefault ?? false}
+              onChange={handleIgnoreConflictsByDefaultChange}
+              label="Ignore conflicts by default"
+              description="Hide every detected mod conflict instead of surfacing it in the Conflicts page. Turn off to bring them back."
+            />
+
+            <div className="h-px bg-white/5" />
+
             <div>
               <Toggle
                 checked={isDevMode}
@@ -591,7 +606,7 @@ export default function Settings() {
         </Card>
 
         {/* Maintenance */}
-        <Card title="Maintenance" icon={Wrench}>
+        <Card title="Maintenance" icon={Wrench} className="lg:col-span-2">
           <div className="space-y-6">
             <div className="flex justify-between items-start gap-4">
               <div>

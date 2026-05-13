@@ -401,7 +401,7 @@ export default function Crosshair() {
                                             <div className="flex gap-1">
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); handleApplyPreset(preset.id); }}
-                                                    className="p-1.5 bg-accent hover:bg-accent-hover rounded-md text-white cursor-pointer"
+                                                    className="p-1.5 border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 rounded-md text-text-primary cursor-pointer transition-colors"
                                                     title="Apply to Game"
                                                 >
                                                     <Play className="w-3 h-3" />

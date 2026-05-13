@@ -53,4 +53,5 @@ export interface AppSettings {
   experimentalCrosshair: boolean;
   hasCompletedSetup: boolean;
   ignoredConflicts: string[];
+  ignoreConflictsByDefault: boolean;
 }

@@ -586,9 +586,6 @@ export default function Installed() {
 
   const enabledMods = mods.filter((m) => m.enabled).sort((a, b) => a.priority - b.priority);
   const disabledMods = mods.filter((m) => !m.enabled).sort((a, b) => a.priority - b.priority);
-  const hasPriorityGap =
-    enabledMods.some((m, i) => m.priority !== i + 1) ||
-    disabledMods.some((m, i) => m.priority !== enabledMods.length + i + 1);
   const conflictCount = conflictMap.size > 0 ? new Set([...conflictMap.keys()]).size : 0;
 
   // Group variants sharing a GB mod id under a single card. Singletons and
@@ -661,9 +658,7 @@ export default function Installed() {
     reorderMods(next.map((m) => m.fileName));
   };
 
-  const compactPriorities = () => {
-    // Renumber every installed mod sequentially (enabled first, then disabled)
-    // so priority slots are tight 1..N with no gaps from prior delete/disable.
+  const fixOrder = () => {
     const ordered = [...enabledMods, ...disabledMods];
     if (ordered.length === 0) return;
     reorderMods(ordered.map((m) => m.fileName));
@@ -935,7 +930,7 @@ export default function Installed() {
           <p className="mb-2">No installed mods match &ldquo;{search}&rdquo;</p>
           <button
             onClick={() => setSearch('')}
-            className="mt-1 px-3 py-1.5 bg-accent hover:bg-accent-hover text-white rounded-lg transition-colors cursor-pointer text-sm"
+            className="mt-1 px-3 py-1.5 border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary rounded-lg transition-colors cursor-pointer text-sm"
           >
             Clear search
           </button>
@@ -946,14 +941,14 @@ export default function Installed() {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-3">
             <SectionHeader count={visibleEnabled.length} className="!mb-0">Enabled</SectionHeader>
-            {hasPriorityGap && !searchNeedle && (
+            {!searchNeedle && (
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={compactPriorities}
-                title="Renumber all installed mods 1, 2, 3, … to remove gaps from disable/delete"
+                onClick={fixOrder}
+                title="Renumber all installed mods 1, 2, 3, … to tidy priority slots"
               >
-                Compact priorities
+                Fix Order
               </Button>
             )}
           </div>
@@ -1914,7 +1909,7 @@ function ImportCustomModModal({ onClose, onImport }: ImportCustomModModalProps) 
           <button
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="px-4 py-2 bg-accent hover:bg-accent-hover text-black rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-4 py-2 border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
             Import

@@ -5,7 +5,7 @@ interface CardProps {
     children: ReactNode;
     className?: string;
     contentClassName?: string;
-    title?: string;
+    title?: ReactNode;
     icon?: LucideIcon;
     description?: string;
     action?: ReactNode;
@@ -223,7 +223,7 @@ export function Button({
     const baseStyles = 'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-bg-primary disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
     const variants = {
-        primary: 'bg-accent hover:bg-accent-hover text-black focus:ring-accent',
+        primary: 'border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary focus:ring-accent',
         secondary: 'bg-bg-tertiary hover:bg-white/10 text-text-primary border border-white/5 focus:ring-white/60',
         danger: 'bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 focus:ring-red-500',
         success: 'bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/20 focus:ring-green-500',

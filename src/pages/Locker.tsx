@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Layers, Shield, Star, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Layers, Shield, Star } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import {
   applyMinaVariant,
@@ -15,6 +16,7 @@ import type { Mod } from '../types/mod';
 import { PageHeader, ViewModeToggle, EmptyState, SectionHeader } from '../components/common/PageComponents';
 import { Skeleton } from '../components/common/Skeleton';
 import {
+  FAVORITE_HEROES_KEY,
   MINA_ARCHIVE_DEFAULT,
   buildHeroList,
   buildMinaPresets,
@@ -26,6 +28,7 @@ import {
   getHeroWikiUrl,
   groupModsByCategory,
   parseMinaVariant,
+  readStoredFavorites,
   type HeroCategory,
   type MinaPreset,
   type MinaSelection,
@@ -43,11 +46,13 @@ export default function Locker() {
     const stored = localStorage.getItem('lockerViewMode');
     return stored === 'list' ? 'list' : 'gallery';
   });
-  const [activeHeroId, setActiveHeroId] = useState<number | null>(null);
-  const [selectedHero, setSelectedHero] = useState<HeroCategory | null>(null);
-  const [overlayVisible, setOverlayVisible] = useState(false);
-  const [cardRect, setCardRect] = useState<DOMRect | null>(null);
-  const [favoriteHeroes, setFavoriteHeroes] = useState<number[]>([]);
+  // Seed from localStorage synchronously so the value is present on the very
+  // first render. A useEffect-driven load would race against the save effect
+  // under StrictMode: the save closure captures `[]`, clobbers localStorage,
+  // and StrictMode's replayed load reads the empty value and wins.
+  const [favoriteHeroes, setFavoriteHeroes] = useState<number[]>(() =>
+    readStoredFavorites()
+  );
   const [minaArchivePath, setMinaArchivePath] = useState(() => {
     return localStorage.getItem('minaArchivePath') || MINA_ARCHIVE_DEFAULT;
   });
@@ -103,21 +108,7 @@ export default function Locker() {
   }, []);
 
   useEffect(() => {
-    const stored = localStorage.getItem('lockerFavorites');
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          setFavoriteHeroes(parsed.filter((id) => typeof id === 'number'));
-        }
-      } catch {
-        setFavoriteHeroes([]);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem('lockerFavorites', JSON.stringify(favoriteHeroes));
+    localStorage.setItem(FAVORITE_HEROES_KEY, JSON.stringify(favoriteHeroes));
   }, [favoriteHeroes]);
 
   useEffect(() => {
@@ -128,40 +119,11 @@ export default function Locker() {
     localStorage.setItem('lockerViewMode', viewMode);
   }, [viewMode]);
 
-  // Open hero overlay
-  const openHeroOverlay = useCallback((hero: HeroCategory, rect: DOMRect) => {
-    setSelectedHero(hero);
-    setActiveHeroId(hero.id);
-    setCardRect(rect);
-    // Small delay to trigger animation
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        setOverlayVisible(true);
-      });
-    });
-  }, []);
-
-  // Close hero overlay
-  const closeHeroOverlay = useCallback(() => {
-    setOverlayVisible(false);
-    // Unmount after fade completes (600ms + small buffer)
-    setTimeout(() => {
-      setSelectedHero(null);
-      setActiveHeroId(null);
-      setCardRect(null);
-    }, 700);
-  }, []);
-
-  // Escape key to close overlay
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && selectedHero) {
-        closeHeroOverlay();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedHero, closeHeroOverlay]);
+  const navigate = useNavigate();
+  const goToHero = useCallback(
+    (hero: HeroCategory) => navigate(`/locker/hero/${hero.id}`),
+    [navigate]
+  );
 
   // Build basic hero list first (needed for mod categorization)
   const baseHeroList = useMemo(() => buildHeroList(categories), [categories]);
@@ -215,6 +177,25 @@ export default function Locker() {
         actions.push(toggleMod(mod.id));
       }
     }
+    await Promise.all(actions);
+  };
+
+  // Toggle one variant within a group. Disables enabled mods from other groups
+  // for the hero (so switching groups still feels exclusive), but leaves the
+  // target's siblings alone so users can co-enable e.g. a model + voice VPK.
+  const toggleHeroVariant = async (heroId: number, modId: string) => {
+    const list = heroMods.map.get(heroId) ?? [];
+    const target = list.find((m) => m.id === modId);
+    if (!target) return;
+    const groupKey = target.gameBananaId ? `gb:${target.gameBananaId}` : `mod:${target.id}`;
+    const actions: Promise<void>[] = [];
+    for (const mod of list) {
+      if (mod.id === modId) continue;
+      if (!mod.enabled) continue;
+      const otherKey = mod.gameBananaId ? `gb:${mod.gameBananaId}` : `mod:${mod.id}`;
+      if (otherKey !== groupKey) actions.push(toggleMod(mod.id));
+    }
+    actions.push(toggleMod(modId));
     await Promise.all(actions);
   };
 
@@ -343,8 +324,7 @@ export default function Locker() {
               hero={hero}
               skinCount={heroMods.map.get(hero.id)?.length ?? 0}
               isFavorite={favoriteHeroes.includes(hero.id)}
-              isActive={activeHeroId === hero.id}
-              onNavigate={(rect) => openHeroOverlay(hero, rect)}
+              onNavigate={() => goToHero(hero)}
               onToggleFavorite={() =>
                 setFavoriteHeroes((prev) =>
                   prev.includes(hero.id)
@@ -363,6 +343,7 @@ export default function Locker() {
               hero={hero}
               mods={heroMods.map.get(hero.id) ?? []}
               onSelect={(modId) => setActiveSkin(hero.id, modId)}
+              onToggleVariant={(modId) => toggleHeroVariant(hero.id, modId)}
               isFavorite={favoriteHeroes.includes(hero.id)}
               onToggleFavorite={() =>
                 setFavoriteHeroes((prev) =>
@@ -424,294 +405,16 @@ export default function Locker() {
         </div>
       )}
 
-      {/* Hero Detail Overlay */}
-      {selectedHero && (
-        <HeroOverlay
-          hero={selectedHero}
-          visible={overlayVisible}
-          onClose={closeHeroOverlay}
-          cardRect={cardRect}
-          mods={heroMods.map.get(selectedHero.id) ?? []}
-          onSelectSkin={(modId) => setActiveSkin(selectedHero.id, modId)}
-          isFavorite={favoriteHeroes.includes(selectedHero.id)}
-          onToggleFavorite={() =>
-            setFavoriteHeroes((prev) =>
-              prev.includes(selectedHero.id)
-                ? prev.filter((id) => id !== selectedHero.id)
-                : [...prev, selectedHero.id]
-            )
-          }
-          hideNsfwPreviews={settings?.hideNsfwPreviews ?? false}
-          onRefreshMods={loadMods}
-          minaPresets={selectedHero.name === 'Mina' ? minaPresets : []}
-          activeMinaPreset={selectedHero.name === 'Mina' ? activeMinaPreset : undefined}
-          minaTextures={selectedHero.name === 'Mina' ? minaTextures : []}
-          onApplyMinaPreset={selectedHero.name === 'Mina' ? applyMinaPreset : undefined}
-          minaArchivePath={selectedHero.name === 'Mina' ? minaArchivePath : undefined}
-          onMinaArchivePathChange={selectedHero.name === 'Mina' ? setMinaArchivePath : undefined}
-          minaVariants={selectedHero.name === 'Mina' ? minaVariants : []}
-          minaVariantsLoading={selectedHero.name === 'Mina' ? minaVariantsLoading : false}
-          minaVariantsError={selectedHero.name === 'Mina' ? minaVariantsError : null}
-          onLoadMinaVariants={selectedHero.name === 'Mina' ? loadMinaVariants : undefined}
-          minaSelection={selectedHero.name === 'Mina' ? minaSelection : undefined}
-          onMinaSelectionChange={selectedHero.name === 'Mina' ? setMinaSelection : undefined}
-          selectedMinaVariant={selectedHero.name === 'Mina' ? selectedMinaVariant : undefined}
-          onApplyMinaVariant={selectedHero.name === 'Mina' ? applyMinaVariantSelection : undefined}
-        />
-      )}
     </div>
   );
 }
 
-interface HeroOverlayProps {
-  hero: HeroCategory;
-  visible: boolean;
-  onClose: () => void;
-  cardRect: DOMRect | null;
-  mods: Mod[];
-  onSelectSkin: (modId: string) => void;
-  isFavorite: boolean;
-  onToggleFavorite: () => void;
-  hideNsfwPreviews: boolean;
-  onRefreshMods: () => void;
-  minaPresets: MinaPreset[];
-  activeMinaPreset?: MinaPreset;
-  minaTextures: Mod[];
-  onApplyMinaPreset?: (presetFileName: string) => void;
-  minaArchivePath?: string;
-  onMinaArchivePathChange?: (path: string) => void;
-  minaVariants: MinaVariant[];
-  minaVariantsLoading: boolean;
-  minaVariantsError: string | null;
-  onLoadMinaVariants?: () => void;
-  minaSelection?: MinaSelection;
-  onMinaSelectionChange?: (selection: MinaSelection) => void;
-  selectedMinaVariant?: MinaVariant;
-  onApplyMinaVariant?: () => void;
-}
-
-function HeroOverlay({
-  hero,
-  visible,
-  onClose,
-  cardRect: _cardRect,
-  mods,
-  onSelectSkin,
-  isFavorite,
-  onToggleFavorite,
-  hideNsfwPreviews,
-  onRefreshMods,
-  minaPresets,
-  activeMinaPreset,
-  minaTextures,
-  onApplyMinaPreset,
-  minaArchivePath,
-  onMinaArchivePathChange,
-  minaVariants,
-  minaVariantsLoading,
-  minaVariantsError,
-  onLoadMinaVariants,
-  minaSelection,
-  onMinaSelectionChange,
-  selectedMinaVariant,
-  onApplyMinaVariant,
-}: HeroOverlayProps) {
-  const [renderSrc, setRenderSrc] = useState(() => getHeroRenderPath(hero.name));
-  const [renderFallbackStep, setRenderFallbackStep] = useState(0);
-  const [nameFailed, setNameFailed] = useState(false);
-  const [prevHero, setPrevHero] = useState(hero);
-
-  if (prevHero !== hero) {
-    setPrevHero(hero);
-    setRenderSrc(getHeroRenderPath(hero.name));
-    setRenderFallbackStep(0);
-    setNameFailed(false);
-  }
-
-  const handleRenderError = () => {
-    if (renderFallbackStep === 0) {
-      setRenderSrc(getHeroWikiUrl(hero.name));
-      setRenderFallbackStep(1);
-      return;
-    }
-    if (renderFallbackStep === 1 && hero.iconUrl) {
-      setRenderSrc(hero.iconUrl);
-      setRenderFallbackStep(2);
-      return;
-    }
-    setRenderSrc('');
-    setRenderFallbackStep(3);
-  };
-
-  // Opening: expand from card. Closing: simple fade out (no shrink).
-  // Respects prefers-reduced-motion for accessibility
-  const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const getImageStyle = (): React.CSSProperties => {
-    if (visible) {
-      // Expanded state
-      return {
-        opacity: 1,
-        transform: 'translate(0, 0) scale(1)',
-        transition: prefersReducedMotion
-          ? 'opacity 150ms ease'
-          : 'transform 600ms cubic-bezier(0.16, 1, 0.3, 1), opacity 500ms ease',
-      };
-    }
-
-    // Closing: just fade out smoothly, no transform back to card
-    return {
-      opacity: 0,
-      transform: 'translate(0, 0) scale(1)', // Keep in place
-      transition: prefersReducedMotion
-        ? 'opacity 150ms ease'
-        : 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)',
-    };
-  };
-
-  return (
-    <div
-      className={`fixed inset-0 z-50 ${visible ? 'pointer-events-auto' : 'pointer-events-none'
-        }`}
-    >
-      {/* Background */}
-      <div
-        className={`absolute inset-0 bg-bg-primary ${visible ? 'opacity-100' : 'opacity-0'}`}
-        style={{ transition: 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)' }}
-      />
-
-      {/* Hero Portrait - Expand on open, fade on close */}
-      <div
-        className="fixed inset-0 z-10 overflow-hidden will-change-transform will-change-[opacity]"
-        style={getImageStyle()}
-      >
-        {renderSrc ? (
-          <img
-            src={renderSrc}
-            alt={hero.name}
-            className="h-full w-full object-contain object-right"
-            onError={handleRenderError}
-          />
-        ) : (
-          <div className="h-full w-full flex items-center justify-center text-text-secondary text-4xl">
-            {hero.name}
-          </div>
-        )}
-      </div>
-
-      {/* Hero Name - Fade in/out */}
-      <div
-        className="fixed z-20"
-        style={{
-          top: 'clamp(1.5rem, 4vh, 3rem)',
-          left: 'clamp(1.5rem, 4vw, 3rem)',
-          opacity: visible ? 1 : 0,
-          transition: visible ? 'opacity 500ms ease 200ms' : 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)',
-        }}
-      >
-        {nameFailed ? (
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white drop-shadow-[0_4px_24px_rgba(0,0,0,0.8)]">
-            {hero.name}
-          </h1>
-        ) : (
-          <img
-            src={getHeroNamePath(hero.name)}
-            alt={hero.name}
-            className="h-10 sm:h-14 lg:h-16 w-auto object-contain drop-shadow-[0_4px_24px_rgba(0,0,0,0.8)]"
-            onError={() => setNameFailed(true)}
-          />
-        )}
-        <div
-          className={`mt-2 text-sm sm:text-base lg:text-lg text-white/70 drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] ${visible ? 'opacity-100' : 'opacity-0'}`}
-          style={{ transition: 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)', transitionDelay: visible ? '300ms' : '0ms' }}
-        >
-          {mods.length > 0 ? `${mods.length} skin${mods.length !== 1 ? 's' : ''}` : 'No skins installed'}
-        </div>
-      </div>
-
-      {/* Close button */}
-      <button
-        type="button"
-        onClick={onClose}
-        className="fixed z-20 p-3 sm:p-4 rounded-full bg-black/40 text-white/80 hover:text-white hover:bg-black/60 backdrop-blur-sm"
-        style={{
-          top: 'clamp(1.5rem, 4vh, 3rem)',
-          right: 'clamp(1.5rem, 4vw, 3rem)',
-          opacity: visible ? 1 : 0,
-          transition: visible ? 'opacity 500ms ease 250ms' : 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)',
-        }}
-      >
-        <X className="w-5 h-5 sm:w-6 sm:h-6" />
-      </button>
-
-      {/* Favorite button */}
-      <button
-        type="button"
-        onClick={onToggleFavorite}
-        className={`fixed z-20 flex items-center gap-2 rounded-full border px-3 sm:px-4 py-2 text-sm sm:text-base font-semibold backdrop-blur-sm ${isFavorite
-          ? 'border-yellow-400/60 bg-yellow-400/20 text-yellow-300'
-          : 'border-white/30 bg-black/40 text-white/80 hover:text-white hover:bg-black/60'
-          }`}
-        style={{
-          top: 'clamp(1.5rem, 4vh, 3rem)',
-          right: 'clamp(5rem, 10vw, 7rem)',
-          opacity: visible ? 1 : 0,
-          transition: visible ? 'opacity 500ms ease 250ms' : 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)',
-        }}
-      >
-        <Star className="w-4 h-4 sm:w-5 sm:h-5" />
-        {isFavorite ? 'Favorited' : 'Favorite'}
-      </button>
-
-      {/* Floating Skin Selection Card - Center left */}
-      <div
-        className="fixed top-1/2 z-20 -translate-y-1/2 overflow-y-auto rounded-2xl border border-white/10 bg-black/95 shadow-2xl"
-        style={{
-          left: 'clamp(1rem, 3vw, 2rem)',
-          width: 'clamp(320px, 28vw, 420px)',
-          maxHeight: '75vh',
-          opacity: visible ? 1 : 0,
-          transition: visible ? 'opacity 500ms ease 150ms' : 'opacity 600ms cubic-bezier(0.4, 0, 0.2, 1)',
-        }}
-      >
-        <div className="p-4 sm:p-5 lg:p-6 space-y-4">
-          <div className="text-xs sm:text-sm uppercase tracking-wider text-white/50">Skins</div>
-          <HeroSkinsPanel
-            mods={mods}
-            onSelect={onSelectSkin}
-            hideNsfwPreviews={hideNsfwPreviews}
-            categoryId={hero.id}
-            onRefreshMods={onRefreshMods}
-            minaPresets={minaPresets}
-            activeMinaPreset={activeMinaPreset}
-            minaTextures={minaTextures}
-            onApplyMinaPreset={onApplyMinaPreset}
-            minaArchivePath={minaArchivePath}
-            onMinaArchivePathChange={onMinaArchivePathChange}
-            minaVariants={minaVariants}
-            minaVariantsLoading={minaVariantsLoading}
-            minaVariantsError={minaVariantsError}
-            onLoadMinaVariants={onLoadMinaVariants}
-            minaSelection={minaSelection}
-            onMinaSelectionChange={onMinaSelectionChange}
-            selectedMinaVariant={selectedMinaVariant}
-            onApplyMinaVariant={onApplyMinaVariant}
-          />
-        </div>
-      </div>
-
-      {/* Click anywhere to close (but not on the card) */}
-      <div
-        className={`absolute inset-0 z-10 ${visible ? '' : 'pointer-events-none'}`}
-        onClick={onClose}
-      />
-    </div>
-  );
-}
 
 interface HeroCardProps {
   hero: HeroCategory;
   mods: Mod[];
   onSelect: (modId: string) => void;
+  onToggleVariant: (modId: string) => void;
   isFavorite: boolean;
   onToggleFavorite: () => void;
   hideNsfwPreviews: boolean;
@@ -735,8 +438,7 @@ interface HeroGalleryCardProps {
   hero: HeroCategory;
   skinCount: number;
   isFavorite: boolean;
-  isActive: boolean;
-  onNavigate: (rect: DOMRect) => void;
+  onNavigate: () => void;
   onToggleFavorite: () => void;
 }
 
@@ -757,7 +459,6 @@ function HeroGalleryCard({
   hero,
   skinCount,
   isFavorite,
-  isActive,
   onNavigate,
   onToggleFavorite,
 }: HeroGalleryCardProps) {
@@ -772,12 +473,12 @@ function HeroGalleryCard({
   const [nameLoaded, setNameLoaded] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
-  // Card is visible once the active hero changes to it, an IntersectionObserver
-  // sees it scroll into view, or the platform lacks IntersectionObserver entirely
-  // (in which case eager-render). Derived rather than chained setState-in-effects.
+  // Card art loads once IntersectionObserver sees it scroll into view, or
+  // immediately on platforms without IntersectionObserver. Derived rather
+  // than chained setState-in-effects.
   const supportsIntersectionObserver =
     typeof window !== 'undefined' && 'IntersectionObserver' in window;
-  const isVisible = isActive || hasIntersected || !supportsIntersectionObserver;
+  const isVisible = hasIntersected || !supportsIntersectionObserver;
 
   const renderSrc = !isVisible
     ? ''
@@ -819,18 +520,11 @@ function HeroGalleryCard({
     setFallbackStep(3);
   };
 
-  const handleClick = () => {
-    if (cardRef.current) {
-      onNavigate(cardRef.current.getBoundingClientRect());
-    }
-  };
-
   return (
     <div
-      onClick={handleClick}
+      onClick={onNavigate}
       ref={cardRef}
-      className={`group relative w-full overflow-hidden rounded-2xl border border-border bg-bg-secondary text-left shadow-sm transition-transform duration-300 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 cursor-pointer ${isActive ? 'z-10 scale-[1.04] shadow-2xl' : ''
-        }`}
+      className="group relative w-full overflow-hidden rounded-2xl border border-border bg-bg-secondary text-left shadow-sm transition-transform duration-300 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 cursor-pointer"
       style={{ contentVisibility: 'auto', containIntrinsicSize: '0 200px' }}
     >
       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-80" />
@@ -848,11 +542,11 @@ function HeroGalleryCard({
           <img
             src={renderSrc}
             alt={hero.name}
-            className={`absolute inset-0 h-full w-full object-cover will-change-transform backface-visibility-hidden group-hover:scale-[1.06] ${isActive ? 'scale-[1.12]' : 'scale-100'} ${renderLoaded ? 'opacity-100' : 'opacity-0'} transition-[opacity,transform] duration-500`}
+            className={`absolute inset-0 h-full w-full object-cover will-change-transform backface-visibility-hidden group-hover:scale-[1.06] scale-100 ${renderLoaded ? 'opacity-100' : 'opacity-0'} transition-[opacity,transform] duration-500`}
             style={{
               objectPosition: `${facePositionX}% 20%`,
               imageRendering: 'auto',
-              transform: isActive ? undefined : 'translateZ(0)',
+              transform: 'translateZ(0)',
             }}
             decoding="async"
             onLoad={() => setRenderLoaded(true)}
@@ -865,20 +559,27 @@ function HeroGalleryCard({
           </div>
         )}
       </div>
-      {isFavorite && (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onToggleFavorite();
-          }}
-          className="absolute right-2 top-2 flex items-center justify-center rounded-full border border-yellow-400/60 bg-yellow-400/20 p-1 text-yellow-300 transition-colors"
-          title="Unfavorite"
-        >
-          <Star className="w-3 h-3 fill-current" />
-        </button>
-      )}
+      {/* Favorite toggle. Favorited cards keep a pinned filled star so the
+          state reads at a glance in the sorted grid. Un-favorited cards keep
+          the same slot but reveal a softer outline-star on hover, restoring
+          the hover-to-favorite affordance. */}
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleFavorite();
+        }}
+        aria-label={isFavorite ? 'Unfavorite' : 'Favorite'}
+        title={isFavorite ? 'Unfavorite' : 'Favorite'}
+        className={`absolute right-2 top-2 z-20 flex items-center justify-center rounded-full border p-1 transition-opacity ${
+          isFavorite
+            ? 'border-yellow-400/60 bg-yellow-400/20 text-yellow-300 opacity-100'
+            : 'border-white/30 bg-black/40 text-white/85 backdrop-blur-sm opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-black/60'
+        }`}
+      >
+        <Star className={`w-3 h-3 ${isFavorite ? 'fill-current' : ''}`} />
+      </button>
       <div className="absolute bottom-0 left-0 right-0 p-2 sm:p-3 flex flex-col items-end text-right">
         {nameFailed ? (
           <div className="text-sm font-semibold text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)]">{hero.name}</div>
@@ -890,8 +591,8 @@ function HeroGalleryCard({
             <img
               src={namePath}
               alt={hero.name}
-              className={`absolute inset-0 w-full h-full object-contain object-right drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] will-change-transform backface-visibility-hidden group-hover:scale-105 ${isActive ? 'scale-110' : 'scale-100'} ${nameLoaded ? 'opacity-100' : 'opacity-0'} transition-[opacity,transform] duration-500`}
-              style={{ transform: isActive ? undefined : 'translateZ(0)' }}
+              className={`absolute inset-0 w-full h-full object-contain object-right drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] will-change-transform backface-visibility-hidden group-hover:scale-105 scale-100 ${nameLoaded ? 'opacity-100' : 'opacity-0'} transition-[opacity,transform] duration-500`}
+              style={{ transform: 'translateZ(0)' }}
               decoding="async"
               onLoad={() => setNameLoaded(true)}
               onError={() => setNameFailed(true)}
@@ -912,6 +613,7 @@ function HeroCard({
   hero,
   mods,
   onSelect,
+  onToggleVariant,
   isFavorite,
   onToggleFavorite,
   hideNsfwPreviews,
@@ -981,6 +683,7 @@ function HeroCard({
         <HeroSkinsPanel
           mods={mods}
           onSelect={onSelect}
+          onToggleVariant={onToggleVariant}
           hideNsfwPreviews={hideNsfwPreviews}
           minaPresets={minaPresets}
           activeMinaPreset={activeMinaPreset}

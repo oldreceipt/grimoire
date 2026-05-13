@@ -1,5 +1,6 @@
 import { app, BrowserWindow, shell, session } from 'electron';
 import { join, resolve } from 'path';
+import { pathToFileURL } from 'url';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import {
     GRIMOIRE_PROTOCOL,
@@ -61,6 +62,33 @@ function createWindow(): void {
     mainWindow.webContents.setWindowOpenHandler((details) => {
         shell.openExternal(details.url);
         return { action: 'deny' };
+    });
+
+    // Catch in-place navigations (bare `<a href="https://...">` clicks in
+    // user content like mod descriptions and comments). Without this, those
+    // links replace the React app with a webpage and the user has no back
+    // button to recover. setWindowOpenHandler only covers target="_blank".
+    // We restrict the allowlist to the renderer's own directory (the dev
+    // server origin or the packaged renderer folder); anything else,
+    // including any other file:// URL a malicious mod description might
+    // smuggle in, ships out to the user's default browser via
+    // shell.openExternal. HashRouter routes change the URL fragment via
+    // history.pushState and don't trigger will-navigate, so the renderer's
+    // own SPA navigation is unaffected by this filter.
+    const rendererSourceUrl = is.dev && process.env['ELECTRON_RENDERER_URL']
+        ? process.env['ELECTRON_RENDERER_URL']
+        : pathToFileURL(join(__dirname, '../renderer/index.html')).href;
+    const rendererBase = (() => {
+        const parsed = new URL(rendererSourceUrl);
+        parsed.search = '';
+        parsed.hash = '';
+        parsed.pathname = parsed.pathname.replace(/[^/]*$/, '');
+        return parsed.href;
+    })();
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+        if (url.startsWith(rendererBase)) return;
+        event.preventDefault();
+        shell.openExternal(url);
     });
 
     // Debug: log renderer errors

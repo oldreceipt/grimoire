@@ -48,14 +48,14 @@ export default function CrosshairPresetCard({
                 <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                     <button
                         onClick={() => onLoad(preset)}
-                        className="p-2 rounded-full bg-bg-tertiary hover:bg-accent text-text-primary hover:text-white transition-colors cursor-pointer"
+                        className="p-2 rounded-full bg-bg-tertiary hover:bg-accent/20 hover:border-accent/60 border border-transparent text-text-primary transition-colors cursor-pointer"
                         title="Load into editor"
                     >
                         <Edit3 className="w-4 h-4" />
                     </button>
                     <button
                         onClick={() => onApply(preset.id)}
-                        className="p-2 rounded-full bg-accent hover:bg-accent/80 text-white transition-colors cursor-pointer"
+                        className="p-2 rounded-full border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary transition-colors cursor-pointer"
                         title="Apply to game"
                     >
                         <Play className="w-4 h-4" />

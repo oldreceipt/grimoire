@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AlertTriangle, CheckCircle, RefreshCw, X, EyeOff, Eye } from 'lucide-react';
 import {
   getConflicts,
@@ -23,7 +24,7 @@ interface ModWithThumbnail {
 
 function ConflictsSkeleton() {
   return (
-    <div className="p-6 animate-fade-in" aria-busy="true" aria-live="polite">
+    <div className="p-6 max-w-5xl mx-auto animate-fade-in" aria-busy="true" aria-live="polite">
       <div className="flex items-end justify-between gap-4 pb-4 border-b border-border mb-6">
         <div className="space-y-2">
           <div className="skeleton-shimmer bg-bg-tertiary rounded-md h-9 w-56" />
@@ -73,6 +74,19 @@ export default function Conflicts() {
   // that row's buttons during the round-trip without freezing the whole page.
   const [pendingPair, setPendingPair] = useState<string | null>(null);
   const { loadMods } = useAppStore();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // location.key is the literal string "default" on the very first entry to the
+  // app (no prior history). In every other case there's a route to go back to.
+  const canGoBack = useRef(location.key !== 'default');
+
+  const returnToPreviousScreen = () => {
+    if (canGoBack.current) {
+      navigate(-1);
+    } else {
+      navigate('/');
+    }
+  };
 
   const loadConflicts = async () => {
     setLoading(true);
@@ -111,13 +125,17 @@ export default function Conflicts() {
       setIgnored(new Set(next));
       // Backend filters ignored pairs from get-conflicts, so dropping locally
       // keeps the UI consistent without a second round-trip.
-      setConflicts((prev) =>
-        prev.filter((c) => conflictPairKey(c.modA, c.modB) !== key)
+      const remaining = conflicts.filter(
+        (c) => conflictPairKey(c.modA, c.modB) !== key
       );
+      setConflicts(remaining);
       // Sidebar's badge count is derived from getConflicts() and only refreshes
       // on mods-list changes. Ignore/unignore don't touch mods, so notify the
       // Sidebar explicitly — otherwise the badge stays stale until restart.
       window.dispatchEvent(new CustomEvent('grimoire:conflicts-changed'));
+      if (remaining.length === 0) {
+        returnToPreviousScreen();
+      }
     } catch (err) {
       setError(String(err));
     } finally {
@@ -160,6 +178,9 @@ export default function Conflicts() {
       // Single event after the whole batch — the Sidebar badge re-fetches
       // once instead of N times during the loop.
       window.dispatchEvent(new CustomEvent('grimoire:conflicts-changed'));
+      if (failures.length === 0) {
+        returnToPreviousScreen();
+      }
     } finally {
       setIgnoringAll(false);
       setIgnoreAllConfirmOpen(false);
@@ -243,7 +264,7 @@ export default function Conflicts() {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-6 max-w-5xl mx-auto">
       <PageHeader
         title={`Conflicts (${conflicts.length})`}
         description={

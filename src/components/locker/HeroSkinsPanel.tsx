@@ -1,15 +1,59 @@
+import { useMemo } from 'react';
+import { ChevronDown } from 'lucide-react';
 import type { Mod } from '../../types/mod';
 import type { MinaPreset, MinaSelection, MinaVariant } from '../../lib/lockerUtils';
 import ModThumbnail from '../ModThumbnail';
 import DownloadableSkinsSection from './DownloadableSkinsSection';
 import { Skeleton } from '../common/Skeleton';
 
+interface SkinGroup {
+  key: string;
+  variants: Mod[];
+  primary: Mod;
+}
+
+// Match the Installed VariantPickerModal fallback chain so pill labels read
+// the same as the picker (e.g. "Huge Eyes Updated!!!" from fileDescription)
+// instead of the raw pak##_*.vpk filename.
+function variantPillLabel(mod: Mod): string {
+  return (
+    mod.variantLabel ??
+    mod.fileDescription ??
+    mod.sourceFileName ??
+    mod.fileName
+  );
+}
+
+function groupVariants(mods: Mod[]): SkinGroup[] {
+  const byKey = new Map<string, Mod[]>();
+  for (const mod of mods) {
+    // Mods sharing a gameBananaId are variants of the same upload. Mods
+    // without a gameBananaId (custom imports, legacy installs) get their own
+    // singleton group keyed by mod id so they still render.
+    const key = mod.gameBananaId ? `gb:${mod.gameBananaId}` : `mod:${mod.id}`;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key)!.push(mod);
+  }
+  return Array.from(byKey.entries()).map(([key, variants]) => {
+    variants.sort((a, b) => a.priority - b.priority);
+    const primary = variants.find((v) => v.enabled) ?? variants[0];
+    return { key, variants, primary };
+  });
+}
+
 interface HeroSkinsPanelProps {
   mods: Mod[];
+  /** Set the active group/skin for this hero. Cross-group exclusive — selecting
+   *  one disables every other enabled mod for the hero. Used for single-variant
+   *  groups and the group header. */
   onSelect: (modId: string) => void;
+  /** Toggle a single variant within an expanded multi-variant group. Disables
+   *  enabled mods from other groups for the hero but preserves sibling variants
+   *  in the same group, so a model VPK + voice-lines VPK can both stay on.
+   *  Falls back to onSelect when not provided. */
+  onToggleVariant?: (modId: string) => void;
   hideNsfwPreviews?: boolean;
   categoryId?: number;
-  onRefreshMods?: () => void;
   minaPresets?: MinaPreset[];
   activeMinaPreset?: MinaPreset;
   minaTextures?: Mod[];
@@ -29,9 +73,9 @@ interface HeroSkinsPanelProps {
 export default function HeroSkinsPanel({
   mods,
   onSelect,
+  onToggleVariant,
   hideNsfwPreviews = false,
   categoryId,
-  onRefreshMods,
   minaPresets = [],
   activeMinaPreset,
   minaTextures = [],
@@ -48,7 +92,7 @@ export default function HeroSkinsPanel({
   onApplyMinaVariant,
 }: HeroSkinsPanelProps) {
   const hasMods = mods.length > 0;
-  const activeMod = mods.find((mod) => mod.enabled);
+  const groups = useMemo(() => groupVariants(mods), [mods]);
 
   // TEMPORARY: Hide Mina variant customization UI until feature is stable
   const HIDE_MINA_VARIANTS = true;
@@ -120,7 +164,7 @@ export default function HeroSkinsPanel({
                     onMinaArchivePathChange?.('');
                   }
                 }}
-                className="w-full px-3 py-2 text-xs rounded-md bg-accent hover:bg-accent-hover text-white font-medium transition-colors cursor-pointer"
+                className="w-full px-3 py-2 text-xs rounded-md border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary font-medium transition-colors cursor-pointer"
               >
                 Download Outfit Presets (252MB)
               </button>
@@ -327,51 +371,125 @@ export default function HeroSkinsPanel({
       )}
 
       {hasMods ? (
-        mods.map((mod) => (
-          <button
-            key={mod.id}
-            onClick={() => onSelect(mod.id)}
-            className={`w-full flex items-center gap-2 rounded-md border px-2 py-2 text-left transition-colors cursor-pointer ${mod.enabled ? 'border-accent bg-bg-tertiary' : 'border-border hover:border-accent/60'
+        groups.map((group) => {
+          const isMulti = group.variants.length > 1;
+          const groupActive = group.variants.some((v) => v.enabled);
+          const enabledCount = group.variants.filter((v) => v.enabled).length;
+          const primary = group.primary;
+          return (
+            <div
+              key={group.key}
+              className={`rounded-md border transition-colors ${
+                groupActive
+                  ? 'border-accent/60 bg-white/[0.04] backdrop-blur-sm'
+                  : 'border-border bg-bg-secondary/70 hover:border-accent/60 hover:bg-bg-secondary/85'
               }`}
-            title={mod.enabled ? 'Active skin' : 'Set active'}
-          >
-            <div className="w-10 h-10 rounded-md overflow-hidden bg-bg-tertiary flex-shrink-0">
-              <ModThumbnail
-                src={mod.thumbnailUrl}
-                alt={mod.name}
-                nsfw={mod.nsfw}
-                hideNsfw={hideNsfwPreviews}
-                className="w-full h-full"
-                fallback={
-                  <div className="w-full h-full flex items-center justify-center text-text-secondary text-[10px]">
-                    No preview
-                  </div>
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isMulti) onSelect(primary.id);
+                }}
+                aria-disabled={isMulti}
+                className={`w-full flex items-center gap-3 px-3 py-3 text-left ${
+                  isMulti ? 'cursor-default' : 'cursor-pointer'
+                }`}
+                title={
+                  isMulti
+                    ? `${enabledCount}/${group.variants.length} variants enabled`
+                    : groupActive
+                      ? 'Active skin'
+                      : 'Set active'
                 }
-              />
+              >
+                <div className="w-20 h-20 rounded-md overflow-hidden bg-bg-tertiary flex-shrink-0">
+                  <ModThumbnail
+                    src={primary.thumbnailUrl}
+                    alt={primary.name}
+                    nsfw={primary.nsfw}
+                    hideNsfw={hideNsfwPreviews}
+                    className="w-full h-full"
+                    fallback={
+                      <div className="w-full h-full flex items-center justify-center text-text-secondary text-[10px]">
+                        No preview
+                      </div>
+                    }
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">{primary.name}</div>
+                  {isMulti ? (
+                    enabledCount === 0 ? (
+                      // Action prompt — the card itself isn't clickable for
+                      // multi-variant groups, so without this users see
+                      // "0/2 active" and have no idea what to do. The
+                      // chevron points at the pill row directly below.
+                      <div className="flex items-center gap-1 text-xs text-accent">
+                        <span>Pick a variant</span>
+                        <ChevronDown className="w-3 h-3" />
+                      </div>
+                    ) : (
+                      <div className="text-xs text-text-secondary truncate">
+                        {`${enabledCount}/${group.variants.length} active`}
+                      </div>
+                    )
+                  ) : (
+                    <div className="text-xs text-text-secondary truncate">
+                      {primary.fileName}
+                    </div>
+                  )}
+                </div>
+                {!isMulti && groupActive && (
+                  <span className="text-xs text-accent font-semibold">Active</span>
+                )}
+              </button>
+              {isMulti && (
+                <div
+                  className={`flex flex-wrap items-center gap-1.5 px-2.5 pb-2.5 pt-2 border-t ${
+                    enabledCount === 0 ? 'border-accent/30 bg-accent/[0.04]' : 'border-border/60'
+                  }`}
+                  role="group"
+                  aria-label="Variant toggles"
+                >
+                  {group.variants.map((variant) => {
+                    const label = variantPillLabel(variant);
+                    return (
+                      <button
+                        key={variant.id}
+                        type="button"
+                        onClick={() =>
+                          onToggleVariant
+                            ? onToggleVariant(variant.id)
+                            : onSelect(variant.id)
+                        }
+                        aria-pressed={variant.enabled}
+                        title={
+                          variant.enabled
+                            ? `Disable: ${label}`
+                            : `Enable: ${label}`
+                        }
+                        className={`px-2.5 py-1 rounded-full border text-xs font-medium transition-colors cursor-pointer max-w-[220px] truncate ${
+                          variant.enabled
+                            ? 'border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary'
+                            : 'border-border bg-bg-secondary text-text-primary/80 hover:border-accent/70 hover:text-text-primary'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <div className="min-w-0">
-              <div className="font-medium truncate">{mod.name}</div>
-              <div className="text-xs text-text-secondary truncate">{mod.fileName}</div>
-            </div>
-            {activeMod?.id === mod.id && (
-              <span className="ml-auto text-xs text-accent font-semibold">Active</span>
-            )}
-          </button>
-        ))
+          );
+        })
       ) : (
         <div className="text-xs text-text-secondary">
           Download a skin for this hero to manage it here.
         </div>
       )}
 
-      {categoryId && onRefreshMods && (
-        <DownloadableSkinsSection
-          categoryId={categoryId}
-          installedModIds={mods.map((m) => m.gameBananaId).filter((id): id is number => id !== undefined)}
-          hideNsfwPreviews={hideNsfwPreviews}
-          onDownloadComplete={onRefreshMods}
-        />
-      )}
+      {categoryId && <DownloadableSkinsSection categoryId={categoryId} />}
     </div>
   );
 }

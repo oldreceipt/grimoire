@@ -8,6 +8,29 @@ export type HeroCategory = {
   iconUrl?: string;
 };
 
+export const FAVORITE_HEROES_KEY = 'lockerFavorites';
+
+/**
+ * Synchronous loader for the persisted favorites list. Used as the lazy
+ * initializer for `useState` in both Locker and LockerHero so the value is
+ * present on the very first render. Doing the load inside a useEffect would
+ * race against the matching save effect under React StrictMode: the save's
+ * closure captures the empty initial state, writes "[]" back to localStorage,
+ * and StrictMode's replayed load then reads the clobbered empty value and
+ * wins, silently dropping the user's saved favorites.
+ */
+export function readStoredFavorites(): number[] {
+  try {
+    const stored = localStorage.getItem(FAVORITE_HEROES_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((id): id is number => typeof id === 'number');
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Per-hero portrait X positioning (percentage) for gallery cards based on face location.
  * The value represents where the face is located horizontally in the image.

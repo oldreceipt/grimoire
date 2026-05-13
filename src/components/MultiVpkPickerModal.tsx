@@ -136,7 +136,7 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                     <button
                         onClick={() => onConfirm(Array.from(selected))}
                         disabled={selected.size === 0}
-                        className="px-4 py-2 bg-accent hover:bg-accent-hover text-black rounded-lg font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        className="px-4 py-2 border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary rounded-lg font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                         <Check className="w-4 h-4" />
                         Install {selected.size > 0 ? `${selected.size}` : ''}

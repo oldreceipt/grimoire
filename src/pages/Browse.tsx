@@ -92,12 +92,17 @@ function flattenCategories(
   return results;
 }
 
-// Abbreviate counts (1234 -> 1.2k, 98765 -> 99k)
-function formatCount(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
-  return `${(n / 1_000_000).toFixed(1)}m`;
+// Abbreviate counts (1234 -> 1.2k, 98765 -> 99k). Falsy/non-finite inputs
+// render as "0" — without this, undefined slips past every `<` check
+// (NaN comparisons are always false) and falls through to the millions
+// branch, producing "NaNm" on mods with no recorded likes/views/downloads.
+function formatCount(n: number | null | undefined): string {
+  if (!Number.isFinite(n) || (n as number) <= 0) return '0';
+  const value = n as number;
+  if (value < 1000) return String(value);
+  if (value < 10_000) return `${(value / 1000).toFixed(1)}k`;
+  if (value < 1_000_000) return `${Math.round(value / 1000)}k`;
+  return `${(value / 1_000_000).toFixed(1)}m`;
 }
 
 // Treat Enter/Space as a click on role="button" divs (keyboard navigation).
@@ -1598,7 +1603,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
               <ModThumbnail src={thumbnail} alt={mod.name} nsfw={mod.nsfw} hideNsfw={hideNsfwPreviews} className="w-full h-full" />
             ) : (
               <div className="w-full h-full bg-gradient-to-br from-bg-tertiary via-bg-secondary to-bg-tertiary flex items-center justify-center">
-                <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-accent/80 text-white text-[10px] font-semibold">
+                <div className="flex items-center gap-1 px-2 py-1 rounded-full border border-accent/40 bg-accent/10 text-text-primary text-[10px] font-semibold">
                   <Volume2 className="w-3 h-3" />
                   SOUND
                 </div>
@@ -1632,7 +1637,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
             ) : (
               <button
                 onClick={(e) => { e.stopPropagation(); onQuickDownload(); }}
-                className="flex-shrink-0 flex items-center justify-center w-7 h-7 bg-accent hover:bg-accent-hover text-black rounded-full shadow-lg transition-colors cursor-pointer"
+                className="flex-shrink-0 flex items-center justify-center w-7 h-7 border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary rounded-full shadow-lg transition-colors cursor-pointer"
                 title="Install"
               >
                 <Download className="w-3.5 h-3.5" />
@@ -1722,7 +1727,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
             )}
             {!hasAudioPreview && (
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent/90 text-white font-medium shadow-lg ${isCompact ? 'text-xs px-2 py-1' : 'text-sm'}`}>
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-accent/40 bg-accent/10 text-text-primary font-medium shadow-lg backdrop-blur-sm ${isCompact ? 'text-xs px-2 py-1' : 'text-sm'}`}>
                   <Volume2 className={isCompact ? 'w-3 h-3' : 'w-4 h-4'} />
                   <span>SOUND</span>
                 </div>
@@ -1889,7 +1894,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); onQuickDownload(); }}
-            className={`flex items-center justify-center rounded-full bg-black/70 backdrop-blur-sm ring-1 ring-black/60 shadow-md text-accent hover:bg-accent hover:text-black hover:ring-black/70 transition-all cursor-pointer ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`}
+            className={`flex items-center justify-center rounded-full bg-black/70 backdrop-blur-sm ring-1 ring-black/60 shadow-md text-accent hover:bg-accent/20 hover:text-text-primary hover:ring-accent/60 transition-all cursor-pointer ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`}
             title="Install"
           >
             <Download className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />

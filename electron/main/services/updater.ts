@@ -11,6 +11,13 @@ log.transports.file.level = 'info';
 // Disable auto-download - we want to show changelog first
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+// Aggregate release notes from every GitHub release between the installed
+// version and the target version. Without this, electron-updater hands the
+// renderer only the latest release's body — users who skipped a few versions
+// would have no idea what changed in between. With fullChangelog = true,
+// releaseNotes comes back as `{ version, note }[]`; UpdateModal already
+// renders that shape per-version.
+autoUpdater.fullChangelog = true;
 
 let mainWindow: BrowserWindow | null = null;
 

@@ -41,11 +41,11 @@ interface ViewModeToggleProps {
 export function ViewModeToggle({ value, options, onChange, className = '' }: ViewModeToggleProps) {
     const anyIcon = options.some((o) => o.icon);
     return (
-        <div className={`flex items-center rounded-lg border border-border bg-bg-secondary p-1 text-sm ${className}`}>
+        <div className={`flex items-center rounded-lg border border-border bg-bg-secondary p-0.5 text-sm ${className}`}>
             {options.map((option) => {
                 const Icon = option.icon;
                 const active = value === option.value;
-                const baseCls = anyIcon ? 'p-2' : 'px-3 py-1.5';
+                const baseCls = anyIcon ? 'p-1.5' : 'px-3 py-1';
                 return (
                     <button
                         key={option.value}
@@ -54,8 +54,8 @@ export function ViewModeToggle({ value, options, onChange, className = '' }: Vie
                         title={option.label}
                         aria-label={option.label}
                         className={`${baseCls} rounded-md transition-colors cursor-pointer ${active
-                            ? 'bg-accent text-white'
-                            : 'text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
+                            ? 'border border-accent/40 bg-accent/10 text-text-primary'
+                            : 'border border-transparent text-text-secondary hover:text-text-primary hover:bg-bg-tertiary'
                             }`}
                     >
                         {Icon ? <Icon className="w-5 h-5" /> : option.label}
@@ -154,8 +154,8 @@ export function ConfirmModal({
     if (!isOpen) return null;
 
     const confirmClass = variant === 'danger'
-        ? 'bg-red-600 hover:bg-red-500 text-white focus-visible:ring-red-400'
-        : 'bg-accent hover:bg-accent-hover text-black focus-visible:ring-accent';
+        ? 'border border-red-500/40 bg-red-500/10 hover:bg-red-500/20 hover:border-red-500/60 text-red-400 focus-visible:ring-red-400'
+        : 'border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary focus-visible:ring-accent';
 
     return (
         <div
