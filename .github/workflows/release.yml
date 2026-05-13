@@ -237,3 +237,143 @@ jobs:
           fi
           git commit -m "Update to ${{ steps.meta.outputs.version }}"
           git push origin master
+
+  apt-publish:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') && inputs.draft != true
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: artifacts
+
+      - name: Install reprepro
+        run: sudo apt-get update && sudo apt-get install -y reprepro
+
+      - name: Import GPG signing key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APT_GPG_PRIVATE_KEY" ]; then
+            echo "ERROR: APT_GPG_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+          # Loopback so reprepro -> gpg works without a tty.
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+          gpgconf --kill gpg-agent || true
+          printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')
+          if [ -z "$KEY_ID" ]; then
+            echo "ERROR: no secret key found after import"
+            exit 1
+          fi
+          echo "GPG_KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+          echo "Imported signing key: $KEY_ID"
+
+      - name: Check out gh-pages branch (if it exists)
+        id: ghpages
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Initialize gh-pages working tree if missing
+        if: steps.ghpages.outcome != 'success'
+        run: |
+          rm -rf gh-pages
+          mkdir gh-pages
+          cd gh-pages
+          git init -b gh-pages
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Configure reprepro distribution
+        run: |
+          cd gh-pages
+          mkdir -p conf
+          cat > conf/distributions <<EOF
+          Origin: Grimoire
+          Label: Grimoire
+          Codename: stable
+          Architectures: amd64
+          Components: main
+          Description: Grimoire apt repository
+          SignWith: $GPG_KEY_ID
+          EOF
+
+      - name: Compute .deb path
+        id: deb
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DEB="artifacts/grimoire_${VERSION}_amd64.deb"
+          if [ ! -f "$DEB" ]; then
+            echo "ERROR: $DEB not found"
+            ls -la artifacts/
+            exit 1
+          fi
+          echo "path=$DEB" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Add .deb to apt repo (reprepro)
+        run: |
+          cd gh-pages
+          # reprepro refuses to re-include a package of the same version unless
+          # we remove it first — safe to ignore the not-present error.
+          reprepro --basedir . remove stable grimoire || true
+          reprepro --basedir . includedeb stable "../${{ steps.deb.outputs.path }}"
+
+      - name: Export public key
+        run: |
+          cd gh-pages
+          gpg --armor --export "$GPG_KEY_ID" > pubkey.asc
+
+      - name: Write index page
+        run: |
+          cd gh-pages
+          cat > index.html <<'EOF'
+          <!doctype html>
+          <html lang="en"><head><meta charset="utf-8">
+          <title>Grimoire apt repository</title>
+          <style>
+            body { font: 14px/1.5 system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #ddd; background: #111; }
+            pre { background: #1a1a1a; border: 1px solid #333; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+            a { color: #8af; }
+            h1 { margin-top: 0; }
+          </style>
+          </head><body>
+          <h1>Grimoire apt repository</h1>
+          <p>Install Grimoire on Debian/Ubuntu and derivatives:</p>
+          <pre>sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://slush97.github.io/grimoire/pubkey.asc \
+            | sudo tee /etc/apt/keyrings/grimoire.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/grimoire.asc] https://slush97.github.io/grimoire stable main" \
+            | sudo tee /etc/apt/sources.list.d/grimoire.list
+          sudo apt update
+          sudo apt install grimoire</pre>
+          <p>After install, future versions arrive through your normal <code>apt upgrade</code>.</p>
+          <p>Source: <a href="https://github.com/Slush97/grimoire">github.com/Slush97/grimoire</a></p>
+          </body></html>
+          EOF
+
+      - name: Commit and push gh-pages
+        run: |
+          cd gh-pages
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "Publish ${GITHUB_REF_NAME}"
+          git push origin HEAD:gh-pages
