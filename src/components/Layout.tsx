@@ -17,6 +17,7 @@ import MultiVpkPickerModal from './MultiVpkPickerModal';
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const outletKey = location.pathname.startsWith('/locker') ? '/locker' : location.pathname;
   const [showWelcome, setShowWelcome] = useState(false);
   const [loading, setLoading] = useState(true);
   const [gameinfoAlert, setGameinfoAlert] = useState<string | null>(null);
@@ -263,7 +264,7 @@ export default function Layout() {
             </div>
           </div>
         )}
-        <div key={location.pathname} className="animate-fade-in h-full">
+        <div key={outletKey} className="animate-fade-in h-full">
           <Outlet />
         </div>
       </main>
