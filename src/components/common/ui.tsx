@@ -2,7 +2,7 @@ import { type ReactNode } from 'react';
 import { type LucideIcon } from 'lucide-react';
 
 interface CardProps {
-    children: ReactNode;
+    children?: ReactNode;
     className?: string;
     contentClassName?: string;
     title?: ReactNode;
@@ -19,14 +19,15 @@ export function Card({ children, className = '', contentClassName = '', title, i
     const showHeader = !!(title || action);
     const edge: NonNullable<CardProps['accentEdge']> = accentEdge ?? (showHeader ? 'subtle' : 'none');
     const edgeClass = edge === 'active' ? 'w-[3px] bg-accent' : 'w-[2px] bg-accent/60';
+    const hasBody = children !== undefined && children !== null && children !== false;
     return (
         <div className={`bg-bg-secondary/50 backdrop-blur-sm border border-white/5 rounded-sm overflow-hidden relative ${className}`}>
             {edge !== 'none' && <span aria-hidden className={`absolute left-0 top-0 bottom-0 ${edgeClass}`} />}
-            {(title || action) && (
-                <div className="px-5 py-4 border-b border-white/5 flex flex-wrap items-center justify-between gap-4">
+            {showHeader && (
+                <div className={`px-5 py-4 flex flex-wrap items-center justify-between gap-4 ${hasBody ? 'border-b border-white/5' : ''}`}>
                     <div className="min-w-0">
                         {title && (
-                            <div className="flex items-center gap-2 mb-1">
+                            <div className={`flex items-center gap-2 ${description ? 'mb-1' : ''}`}>
                                 {Icon && <Icon className="w-4 h-4 text-accent" />}
                                 <h3 className="text-lg font-semibold text-text-primary tracking-wide font-reaver">{title}</h3>
                             </div>
@@ -38,7 +39,7 @@ export function Card({ children, className = '', contentClassName = '', title, i
                     {action && <div className="shrink-0">{action}</div>}
                 </div>
             )}
-            <div className={`p-5 ${contentClassName}`}>{children}</div>
+            {hasBody && <div className={`p-5 ${contentClassName}`}>{children}</div>}
         </div>
     );
 }

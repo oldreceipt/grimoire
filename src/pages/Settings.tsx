@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderOpen, Check, X, Loader2, RefreshCw, Database, Trash2, Shield, Wrench, HardDrive, Beaker, Download, Sparkles, ArrowDownCircle, Palette, Pipette } from 'lucide-react';
 import { HexColorPicker, HexColorInput } from 'react-colorful';
@@ -169,16 +169,12 @@ export default function Settings() {
     }
   };
 
-  // Custom color picker state. While the popover is open, picker drags only
+  // Custom color picker state. While the modal is open, picker drags only
   // update CSS vars + draft locally; the settings file is written once on
-  // commit (close or hex blur) so we don't hammer it 60x/sec mid-drag.
-  // The popover renders via a portal because Card has overflow-hidden, which
-  // would clip any in-tree absolute child.
+  // commit (Done, backdrop click, Escape) so we don't hammer it 60x/sec
+  // mid-drag.
   const [customPickerOpen, setCustomPickerOpen] = useState(false);
   const [customDraft, setCustomDraft] = useState<string | null>(null);
-  const [pickerAnchor, setPickerAnchor] = useState<{ top: number; left: number } | null>(null);
-  const customButtonRef = useRef<HTMLButtonElement>(null);
-  const customPopoverRef = useRef<HTMLDivElement>(null);
 
   const handleCustomDraft = (color: string) => {
     applyAccentColor(color);
@@ -194,31 +190,17 @@ export default function Settings() {
   }, [customDraft, settings, saveSettings]);
 
   const openCustomPicker = () => {
-    if (customButtonRef.current) {
-      const r = customButtonRef.current.getBoundingClientRect();
-      setPickerAnchor({ top: r.bottom + 8, left: r.left });
-    }
     setCustomDraft(settings?.accentColor ?? DEFAULT_ACCENT_COLOR);
     setCustomPickerOpen(true);
   };
 
   useEffect(() => {
     if (!customPickerOpen) return;
-    const onPointerDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (customPopoverRef.current?.contains(target)) return;
-      if (customButtonRef.current?.contains(target)) return;
-      void commitCustomDraft();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') void commitCustomDraft();
     };
-    const onScrollOrResize = () => void commitCustomDraft();
-    document.addEventListener('mousedown', onPointerDown);
-    window.addEventListener('resize', onScrollOrResize);
-    window.addEventListener('scroll', onScrollOrResize, true);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      window.removeEventListener('resize', onScrollOrResize);
-      window.removeEventListener('scroll', onScrollOrResize, true);
-    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
   }, [customPickerOpen, commitCustomDraft]);
 
   const handleHideNsfwChange = async (checked: boolean) => {
@@ -591,14 +573,11 @@ export default function Settings() {
         </Card>
 
         {/* Appearance */}
-        <Card title="Appearance" icon={Palette} className="lg:col-span-2">
-          <div className="flex items-center justify-between gap-6 flex-wrap">
-            <div className="min-w-0">
-              <h4 className="font-medium text-sm">Accent Color</h4>
-              <p className="text-xs text-text-secondary mt-1">
-                Sets the highlight color used for buttons, links, and active states across the app.
-              </p>
-            </div>
+        <Card
+          title="Appearance"
+          icon={Palette}
+          className="lg:col-span-2"
+          action={
             <div className="flex flex-wrap gap-2 items-center">
               {(() => {
                 const current = (settings?.accentColor ?? DEFAULT_ACCENT_COLOR).toLowerCase();
@@ -630,13 +609,12 @@ export default function Settings() {
                     })}
 
                     <button
-                      ref={customButtonRef}
                       type="button"
-                      onClick={() => (customPickerOpen ? void commitCustomDraft() : openCustomPicker())}
+                      onClick={openCustomPicker}
                       title="Pick a custom color"
                       aria-label="Accent: Custom"
                       aria-pressed={isCustomActive}
-                      aria-expanded={customPickerOpen}
+                      aria-haspopup="dialog"
                       className={`${swatchBase} ${
                         isCustomActive
                           ? 'border-white/40'
@@ -651,33 +629,64 @@ export default function Settings() {
                       <Pipette className="w-3.5 h-3.5 text-black/70 drop-shadow-[0_1px_0_rgba(255,255,255,0.5)]" />
                     </button>
 
-                    {customPickerOpen && pickerAnchor && createPortal(
+                    {customPickerOpen && createPortal(
                       <div
-                        ref={customPopoverRef}
-                        style={{ position: 'fixed', top: pickerAnchor.top, left: pickerAnchor.left, zIndex: 60 }}
-                        className="p-3 rounded-sm border border-white/10 bg-bg-secondary shadow-2xl space-y-3"
-                        role="dialog"
-                        aria-label="Custom accent color"
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in"
+                        onClick={() => void commitCustomDraft()}
+                        role="presentation"
                       >
-                        <HexColorPicker
-                          color={customDraft ?? settings?.accentColor ?? DEFAULT_ACCENT_COLOR}
-                          onChange={handleCustomDraft}
-                        />
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-text-secondary font-mono">#</span>
-                          <HexColorInput
-                            color={customDraft ?? settings?.accentColor ?? DEFAULT_ACCENT_COLOR}
-                            onChange={handleCustomDraft}
-                            className="w-24 bg-bg-tertiary border border-white/5 rounded-sm px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent uppercase"
-                          />
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={() => void commitCustomDraft()}
-                            className="ml-auto"
-                          >
-                            Done
-                          </Button>
+                        <div
+                          className="bg-bg-secondary border border-white/10 rounded-sm p-6 w-full max-w-sm relative overflow-hidden shadow-2xl"
+                          onClick={(e) => e.stopPropagation()}
+                          role="dialog"
+                          aria-modal="true"
+                          aria-label="Custom accent color"
+                        >
+                          <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[2px] bg-accent/60" />
+                          <h3 className="text-lg font-semibold text-text-primary tracking-wide font-reaver mb-4 flex items-center gap-2">
+                            <Pipette className="w-4 h-4 text-accent" />
+                            Custom Accent
+                          </h3>
+                          <div className="space-y-4">
+                            <HexColorPicker
+                              color={customDraft ?? settings?.accentColor ?? DEFAULT_ACCENT_COLOR}
+                              onChange={handleCustomDraft}
+                              style={{ width: '100%' }}
+                            />
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="block w-9 h-9 rounded-sm border border-white/10 shrink-0"
+                                style={{ backgroundColor: customDraft ?? settings?.accentColor ?? DEFAULT_ACCENT_COLOR }}
+                                aria-label="Selected color preview"
+                              />
+                              <span className="text-xs text-text-secondary font-mono">#</span>
+                              <HexColorInput
+                                color={customDraft ?? settings?.accentColor ?? DEFAULT_ACCENT_COLOR}
+                                onChange={handleCustomDraft}
+                                className="flex-1 bg-bg-tertiary border border-white/5 rounded-sm px-2 py-1.5 text-sm font-mono text-text-primary focus:outline-none focus:ring-1 focus:ring-accent uppercase"
+                              />
+                            </div>
+                            <div className="flex justify-end gap-2 pt-2">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  applyAccentColor(settings?.accentColor ?? DEFAULT_ACCENT_COLOR);
+                                  setCustomDraft(null);
+                                  setCustomPickerOpen(false);
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={() => void commitCustomDraft()}
+                              >
+                                Apply
+                              </Button>
+                            </div>
+                          </div>
                         </div>
                       </div>,
                       document.body
@@ -686,8 +695,8 @@ export default function Settings() {
                 );
               })()}
             </div>
-          </div>
-        </Card>
+          }
+        />
 
         {/* Preferences */}
         <Card title="Preferences" icon={Shield}>
