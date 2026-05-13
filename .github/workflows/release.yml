@@ -147,3 +147,93 @@ jobs:
           draft: ${{ inputs.draft || false }}
           generate_release_notes: true
           files: artifacts/*
+
+  aur-publish:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') && inputs.draft != true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-build
+          path: artifacts
+
+      - name: Compute version and .deb sha256
+        id: meta
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DEB="artifacts/grimoire_${VERSION}_amd64.deb"
+          if [ ! -f "$DEB" ]; then
+            echo "ERROR: $DEB not found in artifacts"
+            ls -la artifacts/
+            exit 1
+          fi
+          SHA="$(sha256sum "$DEB" | awk '{print $1}')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION sha=$SHA"
+
+      - name: Setup SSH for AUR
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$AUR_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org > ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<'EOF'
+          Host aur.archlinux.org
+            User aur
+            IdentityFile ~/.ssh/aur
+            IdentitiesOnly yes
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Clone AUR repo
+        run: git clone ssh://aur@aur.archlinux.org/grimoire-bin.git aur-repo
+
+      - name: Sync PKGBUILD from project and bump version/sha
+        shell: bash
+        run: |
+          cp aur/grimoire-bin/PKGBUILD aur-repo/PKGBUILD
+          cd aur-repo
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.meta.outputs.version }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s|^sha256sums=.*|sha256sums=('${{ steps.meta.outputs.sha }}')|" PKGBUILD
+          echo "=== Updated PKGBUILD ==="
+          cat PKGBUILD
+
+      - name: Regenerate .SRCINFO via archlinux container
+        shell: bash
+        run: |
+          docker run --rm -v "$PWD/aur-repo:/pkg:ro" archlinux:latest bash -c '
+            {
+              useradd -m builder
+              cp /pkg/PKGBUILD /tmp/PKGBUILD
+              chown builder:builder /tmp/PKGBUILD
+            } >&2
+            su builder -c "cd /tmp && makepkg --printsrcinfo"
+          ' > aur-repo/.SRCINFO
+          echo "=== .SRCINFO ==="
+          cat aur-repo/.SRCINFO
+
+      - name: Commit and push to AUR
+        shell: bash
+        run: |
+          cd aur-repo
+          git config user.name "esocidae"
+          git config user.email "slusheliott@gmail.com"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "No changes to push; AUR already matches."
+            exit 0
+          fi
+          git commit -m "Update to ${{ steps.meta.outputs.version }}"
+          git push origin master
