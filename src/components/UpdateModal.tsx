@@ -148,6 +148,11 @@ export default function UpdateModal({ onClose }: Props) {
                         <>
                             <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wider mb-3">
                                 What's new
+                                {Array.isArray(releaseNotes) && releaseNotes.length > 1 && (
+                                    <span className="ml-2 normal-case tracking-normal text-text-secondary/70">
+                                        ({releaseNotes.length} releases)
+                                    </span>
+                                )}
                             </h3>
                             {typeof releaseNotes === 'string' ? (
                                 <div
@@ -155,15 +160,17 @@ export default function UpdateModal({ onClose }: Props) {
                                     dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(releaseNotes) }}
                                 />
                             ) : (
-                                <div className="space-y-4">
+                                <div className="space-y-5 divide-y divide-white/5">
                                     {(releaseNotes as { version: string; note: string | null }[]).map((note, idx) => (
-                                        <div key={idx}>
-                                            <h4 className="font-semibold text-accent">v{note.version}</h4>
-                                            {note.note && (
+                                        <div key={`${note.version}-${idx}`} className={idx > 0 ? 'pt-5' : ''}>
+                                            <h4 className="font-semibold text-accent mb-2">v{note.version}</h4>
+                                            {note.note ? (
                                                 <div
-                                                    className="release-notes mt-1"
+                                                    className="release-notes"
                                                     dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(note.note) }}
                                                 />
+                                            ) : (
+                                                <p className="text-xs text-text-secondary italic">No release notes for this version.</p>
                                             )}
                                         </div>
                                     ))}
