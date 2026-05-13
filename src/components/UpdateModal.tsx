@@ -117,12 +117,7 @@ export default function UpdateModal({ onClose }: Props) {
                             <Package className="w-5 h-5 flex-shrink-0 mt-0.5 text-accent" />
                             <div className="text-sm text-text-secondary space-y-2">
                                 <p className="text-text-primary font-medium">Managed by your package manager.</p>
-                                <p>This install was provided through apt or AUR. Update with your usual system upgrade:</p>
-                                <pre className="bg-bg-primary border border-white/10 rounded-sm p-2 text-xs font-mono overflow-x-auto">{`# apt
-sudo apt update && sudo apt upgrade grimoire
-
-# AUR
-yay -Syu grimoire-bin`}</pre>
+                                <p>This install was provided through a system package. Update with your distro's usual tools (for example <code className="font-mono text-text-primary">yay -Syu grimoire-bin</code> on Arch). If you installed the <code className="font-mono text-text-primary">.deb</code> directly, re-download the latest release.</p>
                             </div>
                         </div>
                     )}

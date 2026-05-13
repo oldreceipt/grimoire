@@ -19,19 +19,6 @@
 - Linux: `.AppImage` or `.deb`
 - Arch Linux: `yay -S grimoire-bin` ([AUR](https://aur.archlinux.org/packages/grimoire-bin))
 
-Debian/Ubuntu (apt) for automatic updates:
-
-```bash
-sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://slush97.github.io/grimoire/pubkey.asc \
-  | sudo tee /etc/apt/keyrings/grimoire.asc > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/grimoire.asc] https://slush97.github.io/grimoire stable main" \
-  | sudo tee /etc/apt/sources.list.d/grimoire.list
-sudo apt update && sudo apt install grimoire
-```
-
-After install, `sudo apt upgrade` and `yay -Syu` pick up new releases automatically.
-
 Requires Deadlock installed via Steam.
 
 ## Features

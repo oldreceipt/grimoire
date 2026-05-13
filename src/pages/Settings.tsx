@@ -560,12 +560,11 @@ export default function Settings() {
             {installSource === 'managed' && (
               <div className="rounded-lg bg-bg-tertiary border border-white/10 p-3 text-sm text-text-secondary space-y-2">
                 <p className="text-text-primary font-medium">Updates are managed by your package manager.</p>
-                <p>Grimoire was installed via apt or AUR. Update with your usual system upgrade:</p>
-                <pre className="bg-bg-primary border border-white/10 rounded-sm p-2 text-xs font-mono overflow-x-auto">{`# apt
-sudo apt update && sudo apt upgrade grimoire
-
-# AUR
-yay -Syu grimoire-bin`}</pre>
+                <p>
+                  Grimoire was installed via a system package. Update with your distro's usual tools (for example{' '}
+                  <code className="font-mono text-text-primary">yay -Syu grimoire-bin</code> on Arch). If you installed the{' '}
+                  <code className="font-mono text-text-primary">.deb</code> directly, re-download the latest release.
+                </p>
               </div>
             )}
 
