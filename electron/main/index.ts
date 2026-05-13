@@ -36,6 +36,25 @@ import { runStartupRecovery } from './ipc/launch';
 
 let mainWindow: BrowserWindow | null = null;
 
+/** Schemes we'll hand to shell.openExternal. Restricted to web/email links
+ *  so a mod description (or any other untrusted content rendered in the
+ *  renderer) can't smuggle in file://, custom protocol handlers, or UNC
+ *  paths that would otherwise be opened by the user's default OS handler. */
+const SAFE_OPEN_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
+
+function openExternalSafe(rawUrl: string): void {
+    try {
+        const u = new URL(rawUrl);
+        if (SAFE_OPEN_SCHEMES.has(u.protocol)) {
+            void shell.openExternal(rawUrl);
+            return;
+        }
+        console.warn('[Main] blocked openExternal for scheme:', u.protocol);
+    } catch {
+        console.warn('[Main] blocked openExternal for malformed URL');
+    }
+}
+
 function createWindow(): void {
     mainWindow = new BrowserWindow({
         width: 1280,
@@ -60,7 +79,7 @@ function createWindow(): void {
     });
 
     mainWindow.webContents.setWindowOpenHandler((details) => {
-        shell.openExternal(details.url);
+        openExternalSafe(details.url);
         return { action: 'deny' };
     });
 
@@ -88,7 +107,7 @@ function createWindow(): void {
     mainWindow.webContents.on('will-navigate', (event, url) => {
         if (url.startsWith(rendererBase)) return;
         event.preventDefault();
-        shell.openExternal(url);
+        openExternalSafe(url);
     });
 
     // Debug: log renderer errors
