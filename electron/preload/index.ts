@@ -673,6 +673,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteMod: (modId: string) => ipcRenderer.invoke('delete-mod', modId),
     setVariantLabel: (modId: string, label: string) =>
         ipcRenderer.invoke('set-variant-label', modId, label),
+    backfillGameBananaFileId: (
+        modId: string,
+        payload: { gameBananaFileId: number; fileDescription?: string; sourceFileName?: string }
+    ) => ipcRenderer.invoke('backfill-gamebanana-file-id', modId, payload),
     setModPriority: (modId: string, priority: number) =>
         ipcRenderer.invoke('set-mod-priority', modId, priority),
     reorderMods: (orderedFileNames: string[]) =>

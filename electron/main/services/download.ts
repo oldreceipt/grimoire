@@ -39,6 +39,50 @@ function stripArchiveExtension(name: string): string {
     return name.replace(/\.(zip|7z|rar|vpk)$/i, '').trim();
 }
 
+/**
+ * GameBanana's per-file download URLs are `/dl/<fileId>` (or `/mmdl/<fileId>`).
+ * The trailing path segment IS the file id, so we can recover it deterministically
+ * from the archive URL handed to the 1-click protocol — no enrichment, no header
+ * parsing required. Returns undefined when the URL isn't shaped like a GB
+ * file-download endpoint.
+ */
+function extractGameBananaFileIdFromUrl(url: string): number | undefined {
+    try {
+        const parsed = new URL(url);
+        if (!parsed.hostname.endsWith('gamebanana.com')) return undefined;
+        const segments = parsed.pathname.split('/').filter(Boolean);
+        const last = segments[segments.length - 1];
+        if (!last) return undefined;
+        const id = parseInt(last, 10);
+        return Number.isFinite(id) && id > 0 ? id : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Pull the filename out of an HTTP Content-Disposition header. Handles both
+ * RFC 5987 `filename*=UTF-8''...` (preferred when present, supports unicode)
+ * and the older `filename="..."` form. Returns undefined if neither is
+ * present or the value is empty after decoding. Used by 1-click installs to
+ * recover the canonical archive name when the URL itself doesn't include it.
+ */
+function parseContentDispositionFilename(header: string): string | undefined {
+    const rfc5987 = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header);
+    if (rfc5987) {
+        try {
+            const decoded = decodeURIComponent(rfc5987[2].trim()).replace(/^"|"$/g, '');
+            if (decoded.length > 0) return decoded;
+        } catch { /* fall through */ }
+    }
+    const legacy = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
+    if (legacy) {
+        const value = legacy[1].trim();
+        if (value.length > 0) return value;
+    }
+    return undefined;
+}
+
 // Download queue to prevent race conditions with VPK priority assignment
 interface QueuedDownload {
     deadlockPath: string;
@@ -238,7 +282,8 @@ async function downloadFile(
     destPath: string,
     onProgress: (downloaded: number, total: number) => void,
     connectionTimeoutMs = 30000,
-    responseTimeoutMs = 600000 // 10 minutes for large files
+    responseTimeoutMs = 600000, // 10 minutes for large files
+    onResponseFilename?: (filename: string) => void
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         const protocol = url.startsWith('https') ? https : http;
@@ -264,7 +309,7 @@ async function downloadFile(
                             return;
                         }
                     }
-                    downloadFile(redirectUrl, destPath, onProgress, connectionTimeoutMs, responseTimeoutMs)
+                    downloadFile(redirectUrl, destPath, onProgress, connectionTimeoutMs, responseTimeoutMs, onResponseFilename)
                         .then(resolve)
                         .catch(reject);
                     return;
@@ -274,6 +319,16 @@ async function downloadFile(
             if (response.statusCode !== 200) {
                 reject(new Error(`Download failed with status ${response.statusCode}`));
                 return;
+            }
+
+            // GameBanana's /mmdl/<id> and /dl/<id> URLs don't carry the archive
+            // filename in the path, but the final response sets it via
+            // Content-Disposition. Surface it so 1-click installs can match the
+            // local archive against the GB file list by canonical name.
+            const disposition = response.headers['content-disposition'];
+            if (disposition && onResponseFilename) {
+                const parsed = parseContentDispositionFilename(disposition);
+                if (parsed) onResponseFilename(parsed);
             }
 
             const totalSize = parseInt(response.headers['content-length'] || '0', 10);
@@ -796,14 +851,30 @@ async function executeOneClickDownload(
     const targetPath = getDisabledPath(deadlockPath);
     let downloadPath = join(targetPath, fileName);
 
-    await downloadFile(archiveUrl, downloadPath, (downloaded, total) => {
-        mainWindow?.webContents.send('download-progress', {
-            modId,
-            fileId,
-            downloaded,
-            total,
-        });
-    });
+    // Capture the canonical archive name from Content-Disposition. GB's 1-click
+    // URL points at /mmdl/<id> which has no extension, so the URL-derived
+    // fileName above is a generic placeholder; the response header carries the
+    // real name (e.g. "bozzsilverv2.zip") which we use to match against the
+    // mod's file list.
+    let responseFilename: string | undefined;
+
+    await downloadFile(
+        archiveUrl,
+        downloadPath,
+        (downloaded, total) => {
+            mainWindow?.webContents.send('download-progress', {
+                modId,
+                fileId,
+                downloaded,
+                total,
+            });
+        },
+        undefined,
+        undefined,
+        (name) => {
+            responseFilename = name;
+        }
+    );
 
     try {
         const actualSize = statSync(downloadPath).size;
@@ -895,16 +966,47 @@ async function executeOneClickDownload(
         : undefined;
 
     const realModId = args.modId !== undefined && args.modId > 0 ? args.modId : undefined;
-    // Same trick as the regular download path: capture the author's per-file
-    // header so the variant picker has a sane default label. Only available
-    // when GB enrichment succeeded and the file id is recognised in the list.
-    const oneClickFileDescription = enriched?.files
-        ?.find((f) => f.id === fileId)
-        ?.description?.trim();
-    const oneClickSourceFileName = stripArchiveExtension(fileName);
+    // GameBanana's grimoire:// protocol only carries the archive URL + mod id,
+    // not the file id. Recover it by matching the URL (and falling back to the
+    // filename, then to a sole file row) against the enriched file list so the
+    // resulting variant carries the same gameBananaFileId a manual install
+    // would. Without this, the file row in ModDetailsModal can't recognise the
+    // 1-click variant as installed and a second click silently creates a
+    // duplicate. The URL match is fragile in practice: the protocol passes
+    // GB's user-facing download endpoint (mmdl/) while _sDownloadUrl is often
+    // the file-redirect URL (dl/), so single-file mods fall through to the
+    // positional match below.
+    const enrichedFiles = enriched?.files ?? [];
+    const urlFileId = extractGameBananaFileIdFromUrl(archiveUrl);
+    let matchedFile =
+        (urlFileId !== undefined
+            ? enrichedFiles.find((f) => f.id === urlFileId)
+            : undefined) ??
+        (responseFilename
+            ? enrichedFiles.find((f) => f.fileName === responseFilename)
+            : undefined) ??
+        enrichedFiles.find((f) => f.downloadUrl === archiveUrl) ??
+        enrichedFiles.find((f) => f.fileName === fileName);
+    if (!matchedFile && enrichedFiles.length === 1) {
+        matchedFile = enrichedFiles[0];
+    }
+    // If we got the file id from the URL but enrichment was missing/failed,
+    // still record it so per-file install state lights up — the label fields
+    // will just fall back to URL/header-derived names.
+    const resolvedFileId = matchedFile?.id ?? urlFileId;
+    if (!matchedFile && enrichedFiles.length > 0) {
+        console.warn(
+            `[oneClickInstall] Could not match archiveUrl=${archiveUrl} (urlFileId=${urlFileId ?? '<none>'}, response=${responseFilename ?? '<none>'}, fileName=${fileName}) to any of ${enrichedFiles.length} GB file rows; gameBananaFileId=${resolvedFileId ?? '<none>'}.`
+        );
+    }
+    const oneClickFileDescription = matchedFile?.description?.trim();
+    const oneClickSourceFileName = stripArchiveExtension(
+        matchedFile?.fileName ?? responseFilename ?? fileName
+    );
     const metadata = {
         modName: enriched?.name ?? fileName.replace(/\.(zip|7z|rar|vpk)$/i, ''),
         gameBananaId: realModId,
+        gameBananaFileId: resolvedFileId,
         categoryId: enriched?.category?.id,
         categoryName: enriched?.category?.name,
         thumbnailUrl,

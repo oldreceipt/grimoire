@@ -260,6 +260,10 @@ export interface ElectronAPI {
     disableMod: (modId: string) => Promise<Mod>;
     deleteMod: (modId: string) => Promise<void>;
     setVariantLabel: (modId: string, label: string) => Promise<Mod>;
+    backfillGameBananaFileId: (
+      modId: string,
+      payload: { gameBananaFileId: number; fileDescription?: string; sourceFileName?: string }
+    ) => Promise<Mod>;
     setModPriority: (modId: string, priority: number) => Promise<Mod>;
     reorderMods: (orderedFileNames: string[]) => Promise<Mod[]>;
     swapModPriority: (modIdA: string, modIdB: string) => Promise<Mod[]>;

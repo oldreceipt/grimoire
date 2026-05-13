@@ -24,6 +24,7 @@ import {
   downloadMod,
   getGamebananaSections,
   getGamebananaCategories,
+  backfillGameBananaFileId,
 } from '../lib/api';
 import { getActiveDeadlockPath } from '../lib/appSettings';
 import type {
@@ -1033,6 +1034,80 @@ export default function Browse() {
     }
     return map;
   }, [installedMods]);
+
+  // Heal legacy 1-click installs that pre-date the forward fix. Those variants
+  // have the right gameBananaId but no gameBananaFileId, so ModDetailsModal
+  // can't recognise the matching file row as installed and the user ends up
+  // clicking Install again, creating a duplicate. When the modal opens, try
+  // to recover the file id by matching the local sourceFileName against the
+  // GB file list; if only one variant lacks an id and only one file row
+  // exists on the page, match unambiguously by position. Healed variants
+  // become visible to installedFileIds on the next loadMods.
+  useEffect(() => {
+    if (!selectedMod) return;
+    const candidates = installedMods.filter(
+      (m) => m.gameBananaId === selectedMod.id && typeof m.gameBananaFileId !== 'number'
+    );
+    if (candidates.length === 0) return;
+    const files = selectedMod.files ?? [];
+    if (files.length === 0) return;
+
+    const usedFileIds = new Set<number>();
+    for (const m of installedMods) {
+      if (m.gameBananaId === selectedMod.id && typeof m.gameBananaFileId === 'number') {
+        usedFileIds.add(m.gameBananaFileId);
+      }
+    }
+    const availableFiles = files.filter((f) => !usedFileIds.has(f.id));
+
+    type Match = {
+      modId: string;
+      payload: { gameBananaFileId: number; fileDescription?: string; sourceFileName?: string };
+    };
+    const matches: Match[] = [];
+    for (const mod of candidates) {
+      const source = mod.sourceFileName?.toLowerCase();
+      // Skip the placeholder our old 1-click flow used so we don't try to
+      // match "gamebanana-mod-1778634670877" against real GB file rows.
+      const usableSource = source && !/^gamebanana-mod-\d+$/.test(source) ? source : undefined;
+      let matched = usableSource
+        ? availableFiles.find(
+            (f) => f.fileName.replace(/\.(zip|7z|rar|vpk)$/i, '').toLowerCase() === usableSource
+          )
+        : undefined;
+      if (!matched && candidates.length === 1 && availableFiles.length === 1) {
+        matched = availableFiles[0];
+      }
+      if (matched) {
+        const stem = matched.fileName.replace(/\.(zip|7z|rar|vpk)$/i, '').trim();
+        matches.push({
+          modId: mod.id,
+          payload: {
+            gameBananaFileId: matched.id,
+            fileDescription: matched.description?.trim() || undefined,
+            sourceFileName: stem.length > 0 ? stem : undefined,
+          },
+        });
+        usedFileIds.add(matched.id);
+      }
+    }
+    if (matches.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        for (const m of matches) {
+          await backfillGameBananaFileId(m.modId, m.payload);
+        }
+        if (!cancelled) await loadMods();
+      } catch (err) {
+        console.warn('[Browse] backfill gameBananaFileId failed:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMod, installedMods, loadMods]);
 
   // Just use all loaded mods - infinite scroll handles pagination.
   // Hide outdated mods if the user has opted in.

@@ -204,28 +204,38 @@ export default function ModDetailsModal({
           <h2 className="text-lg lg:text-xl font-bold leading-tight truncate min-w-0 flex-1" title={mod.name}>
             {mod.name}
           </h2>
-          {(dateAdded || dateModified || totalDownloads > 0) && (
-            <div className="hidden md:flex items-center gap-3 text-xs text-text-secondary flex-shrink-0">
-              {dateAdded && dateAdded > 0 && (
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  <span className="text-text-primary">{formatDate(dateAdded)}</span>
-                </span>
-              )}
-              {dateModified && dateModified > 0 && (
-                <span className={`flex items-center gap-1 ${outdated ? 'text-yellow-400' : ''}`}>
-                  <Clock className="w-3 h-3" />
-                  <span className={outdated ? 'text-yellow-300' : 'text-text-primary'}>{formatDate(dateModified)}</span>
-                </span>
-              )}
-              {totalDownloads > 0 && (
-                <span className="flex items-center gap-1">
-                  <Download className="w-3 h-3" />
-                  <span className="text-text-primary">{totalDownloads.toLocaleString()}</span>
-                </span>
-              )}
-            </div>
-          )}
+          {(() => {
+            // Hide the modified date when it formats to the same day as the
+            // added date — common for fresh uploads where both timestamps
+            // fall on the same calendar day, which makes the header read
+            // "5/12/2026 5/12/2026".
+            const addedStr = dateAdded && dateAdded > 0 ? formatDate(dateAdded) : null;
+            const modifiedStr = dateModified && dateModified > 0 ? formatDate(dateModified) : null;
+            const showModified = modifiedStr !== null && modifiedStr !== addedStr;
+            if (!addedStr && !showModified && totalDownloads === 0) return null;
+            return (
+              <div className="hidden md:flex items-center gap-3 text-xs text-text-secondary flex-shrink-0">
+                {addedStr && (
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    <span className="text-text-primary">{addedStr}</span>
+                  </span>
+                )}
+                {showModified && (
+                  <span className={`flex items-center gap-1 ${outdated ? 'text-yellow-400' : ''}`}>
+                    <Clock className="w-3 h-3" />
+                    <span className={outdated ? 'text-yellow-300' : 'text-text-primary'}>{modifiedStr}</span>
+                  </span>
+                )}
+                {totalDownloads > 0 && (
+                  <span className="flex items-center gap-1">
+                    <Download className="w-3 h-3" />
+                    <span className="text-text-primary">{totalDownloads.toLocaleString()}</span>
+                  </span>
+                )}
+              </div>
+            );
+          })()}
           <button
             onClick={onClose}
             aria-label="Close"

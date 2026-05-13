@@ -116,6 +116,50 @@ ipcMain.handle(
     }
 );
 
+// backfill-gamebanana-file-id — heal legacy 1-click installs that were saved
+// before we recovered the file id from the archive URL. The renderer matches
+// a local variant to a GameBanana file row (by sourceFileName/fileName or by
+// sole-file fallback) and asks us to persist the resolved id plus the file's
+// canonical label fields, so both the per-file install state in
+// ModDetailsModal and the variant picker's title flip to the right values on
+// the next render. Label fields are only written when no existing value is
+// present so a user's variantLabel rename never gets clobbered (the picker
+// already prefers variantLabel over fileDescription, but we belt-and-brace
+// against fileDescription/sourceFileName too).
+interface BackfillPayload {
+    gameBananaFileId: number;
+    fileDescription?: string;
+    sourceFileName?: string;
+}
+ipcMain.handle(
+    'backfill-gamebanana-file-id',
+    async (_, modId: string, payload: BackfillPayload): Promise<Mod> => {
+        const deadlockPath = getActiveDeadlockPath();
+        if (!deadlockPath) {
+            throw new Error('No Deadlock path configured');
+        }
+        const all = await scanMods(deadlockPath);
+        const target = all.find((m) => m.id === modId);
+        if (!target) {
+            throw new Error(`Mod not found: ${modId}`);
+        }
+        const existing = getModMetadata(target.fileName) ?? {};
+        const patch: Record<string, unknown> = { gameBananaFileId: payload.gameBananaFileId };
+        if (payload.fileDescription && !existing.fileDescription) {
+            patch.fileDescription = payload.fileDescription;
+        }
+        // Overwrite sourceFileName only when missing or when it's the old
+        // placeholder (gamebanana-mod-{timestamp}) — a real GB stem from a
+        // working enrichment path is kept as-is.
+        const placeholderName = existing.sourceFileName?.match(/^gamebanana-mod-\d+$/);
+        if (payload.sourceFileName && (!existing.sourceFileName || placeholderName)) {
+            patch.sourceFileName = payload.sourceFileName;
+        }
+        setModMetadata(target.fileName, patch);
+        return enrichMod(target);
+    }
+);
+
 // set-mod-priority
 ipcMain.handle(
     'set-mod-priority',

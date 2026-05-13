@@ -59,6 +59,13 @@ export async function setVariantLabel(modId: string, label: string): Promise<Mod
   return window.electronAPI.setVariantLabel(modId, label);
 }
 
+export async function backfillGameBananaFileId(
+  modId: string,
+  payload: { gameBananaFileId: number; fileDescription?: string; sourceFileName?: string }
+): Promise<Mod> {
+  return window.electronAPI.backfillGameBananaFileId(modId, payload);
+}
+
 export async function setModPriority(modId: string, priority: number): Promise<Mod> {
   return window.electronAPI.setModPriority(modId, priority);
 }
