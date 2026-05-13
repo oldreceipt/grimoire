@@ -140,6 +140,26 @@ export default function LockerHero() {
     await Promise.all(actions);
   };
 
+  // Toggle one variant within a group. Disables enabled mods from other groups
+  // for the hero, but leaves sibling variants in the same group alone so a
+  // model + voice-lines pair can stay co-enabled.
+  const toggleHeroVariant = async (modId: string) => {
+    if (!hero) return;
+    const heroModList = heroMods.map.get(hero.id) ?? [];
+    const target = heroModList.find((m) => m.id === modId);
+    if (!target) return;
+    const groupKey = target.gameBananaId ? `gb:${target.gameBananaId}` : `mod:${target.id}`;
+    const actions: Promise<void>[] = [];
+    for (const mod of heroModList) {
+      if (mod.id === modId) continue;
+      if (!mod.enabled) continue;
+      const otherKey = mod.gameBananaId ? `gb:${mod.gameBananaId}` : `mod:${mod.id}`;
+      if (otherKey !== groupKey) actions.push(toggleMod(mod.id));
+    }
+    actions.push(toggleMod(modId));
+    await Promise.all(actions);
+  };
+
   const applyMinaPreset = async (presetFileName: string) => {
     try {
       await setMinaPreset(presetFileName);
@@ -304,8 +324,8 @@ export default function LockerHero() {
             <HeroSkinsPanel
               mods={list}
               onSelect={setActiveSkin}
+              onToggleVariant={toggleHeroVariant}
               categoryId={hero.id}
-              onRefreshMods={loadMods}
               minaPresets={hero.name === 'Mina' ? minaPresets : []}
               activeMinaPreset={hero.name === 'Mina' ? activeMinaPreset : undefined}
               minaTextures={hero.name === 'Mina' ? minaTextures : []}

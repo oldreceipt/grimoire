@@ -145,7 +145,12 @@ export async function detectConflicts(deadlockPath: string): Promise<ModConflict
     // Strip out any pairs the user has explicitly dismissed. We do this at
     // the end rather than inside the loops so the ignored list stays a clean
     // post-filter — easy to reason about and easy to disable later.
-    const ignored = new Set(loadSettings().ignoredConflicts ?? []);
+    const settings = loadSettings();
+    if (settings.ignoreConflictsByDefault) {
+        console.log(`[detectConflicts] Hiding all ${conflicts.length} conflicts — ignore-by-default is on`);
+        return [];
+    }
+    const ignored = new Set(settings.ignoredConflicts ?? []);
     const filtered = ignored.size === 0
         ? conflicts
         : conflicts.filter((c) => !ignored.has(conflictPairKey(c.modA, c.modB)));

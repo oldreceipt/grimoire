@@ -586,9 +586,6 @@ export default function Installed() {
 
   const enabledMods = mods.filter((m) => m.enabled).sort((a, b) => a.priority - b.priority);
   const disabledMods = mods.filter((m) => !m.enabled).sort((a, b) => a.priority - b.priority);
-  const hasPriorityGap =
-    enabledMods.some((m, i) => m.priority !== i + 1) ||
-    disabledMods.some((m, i) => m.priority !== enabledMods.length + i + 1);
   const conflictCount = conflictMap.size > 0 ? new Set([...conflictMap.keys()]).size : 0;
 
   // Group variants sharing a GB mod id under a single card. Singletons and
@@ -661,9 +658,7 @@ export default function Installed() {
     reorderMods(next.map((m) => m.fileName));
   };
 
-  const compactPriorities = () => {
-    // Renumber every installed mod sequentially (enabled first, then disabled)
-    // so priority slots are tight 1..N with no gaps from prior delete/disable.
+  const fixOrder = () => {
     const ordered = [...enabledMods, ...disabledMods];
     if (ordered.length === 0) return;
     reorderMods(ordered.map((m) => m.fileName));
@@ -946,14 +941,14 @@ export default function Installed() {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-3">
             <SectionHeader count={visibleEnabled.length} className="!mb-0">Enabled</SectionHeader>
-            {hasPriorityGap && !searchNeedle && (
+            {!searchNeedle && (
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={compactPriorities}
-                title="Renumber all installed mods 1, 2, 3, … to remove gaps from disable/delete"
+                onClick={fixOrder}
+                title="Renumber all installed mods 1, 2, 3, … to tidy priority slots"
               >
-                Compact priorities
+                Fix Order
               </Button>
             )}
           </div>

@@ -141,7 +141,7 @@ export default function Profiles() {
   }
 
   return (
-    <div className="p-6 h-full flex flex-col overflow-hidden">
+    <div className="p-6 h-full max-w-5xl mx-auto w-full flex flex-col overflow-hidden">
       <PageHeader
         title="Profiles"
         description="Save and restore your mod configurations"
