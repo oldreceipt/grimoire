@@ -1145,7 +1145,7 @@ export default function Browse() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search mods..."
-                className="w-full bg-bg-secondary border border-border rounded-lg pl-3 pr-16 py-2 text-text-primary placeholder:text-text-secondary/50 focus:outline-none focus:ring-2 focus:ring-accent"
+                className="w-full h-10 bg-bg-secondary border border-border rounded-lg pl-3 pr-16 text-sm text-text-primary placeholder:text-text-secondary/50 focus:outline-none focus:ring-2 focus:ring-accent"
               />
               <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
                 {/* Inline spinner while debouncing or refetching with stale results.
@@ -1181,7 +1181,7 @@ export default function Browse() {
               type="button"
               onClick={handleRefresh}
               disabled={syncing}
-              className="p-2.5 bg-bg-secondary hover:bg-bg-tertiary border border-border text-text-secondary hover:text-text-primary rounded-lg transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+              className="h-10 w-10 flex items-center justify-center bg-bg-secondary hover:bg-bg-tertiary border border-border text-text-secondary hover:text-text-primary rounded-lg transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
               title="Refresh from GameBanana"
             >
               {syncing ? (
@@ -1192,7 +1192,7 @@ export default function Browse() {
             </button>
 
             {/* View Mode Toggle - Icon Only */}
-            <div className="flex items-center rounded-lg border border-border bg-bg-secondary p-1">
+            <div className="flex items-center h-10 rounded-lg border border-border bg-bg-secondary p-1">
               <button
                 type="button"
                 onClick={() => setViewMode('grid')}
@@ -1233,7 +1233,7 @@ export default function Browse() {
 
             {/* Section toggle — Mods vs Sounds as icon buttons */}
             {sections.length > 1 && (
-              <div className="flex items-center rounded-lg border border-border bg-bg-secondary p-1" role="tablist" aria-label="Section">
+              <div className="flex items-center h-10 rounded-lg border border-border bg-bg-secondary p-1" role="tablist" aria-label="Section">
                 {sections.map((entry) => {
                   const Icon = entry.modelName === 'Sound' ? Music : Package;
                   const active = section === entry.modelName;
@@ -1261,7 +1261,7 @@ export default function Browse() {
 
             {/* Global Volume Slider - visible when Sound section is selected */}
             {section === 'Sound' && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-bg-secondary border border-border rounded-lg">
+              <div className="flex items-center h-10 gap-2 px-3 bg-bg-secondary border border-border rounded-lg">
                 <Volume2 className="w-4 h-4 text-text-secondary flex-shrink-0" />
                 <input
                   type="range"
@@ -1302,7 +1302,7 @@ export default function Browse() {
                     onClick={() => setFiltersOpen((v) => !v)}
                     aria-haspopup="dialog"
                     aria-expanded={filtersOpen}
-                    className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                    className={`flex items-center h-10 gap-2 px-3 rounded-lg border text-sm transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
                       filterCount > 0
                         ? 'bg-accent/10 border-accent/40 text-accent hover:bg-accent/20'
                         : 'bg-bg-secondary border-border text-text-primary hover:bg-bg-tertiary'

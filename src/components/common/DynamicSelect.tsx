@@ -47,7 +47,7 @@ export function DynamicSelect({
                 onChange={(e) => onChange(e.target.value)}
                 disabled={disabled}
                 style={width ? { width: `${width}px` } : undefined}
-                className={`appearance-none pl-3 pr-8 py-2.5 bg-bg-secondary border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent transition-[width] duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+                className={`appearance-none h-10 pl-3 pr-8 bg-bg-secondary border border-border rounded-lg text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent transition-[width] duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
                 {...props}
             >
                 {options.map((opt) => (
