@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Layers, Plus, Trash2, Play, Save, RefreshCw, AlertTriangle, User, ChevronDown, ChevronUp, Terminal, Check } from 'lucide-react';
+import { Layers, Plus, Trash2, Play, Save, RefreshCw, AlertTriangle, User, ChevronDown, ChevronUp, Terminal, Check, Pencil, X } from 'lucide-react';
 import {
   getProfiles,
   createProfile,
   applyProfile,
   updateProfile,
   deleteProfile,
+  renameProfile,
   getSettings,
 } from '../lib/api';
 import type { Profile, ProfileCrosshairSettings } from '../lib/api';
@@ -88,6 +89,9 @@ export default function Profiles() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [expandedProfiles, setExpandedProfiles] = useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [isRenaming, setIsRenaming] = useState(false);
 
   const { mods, loadMods } = useAppStore();
   const { getSettings: getCrosshairSettings, loadSettingsFromPreset } = useCrosshairStore();
@@ -177,6 +181,36 @@ export default function Profiles() {
     }
   };
 
+  const startRename = (profile: Profile) => {
+    setRenamingId(profile.id);
+    setRenameValue(profile.name);
+  };
+
+  const cancelRename = () => {
+    setRenamingId(null);
+    setRenameValue('');
+  };
+
+  const submitRename = async () => {
+    if (!renamingId) return;
+    const trimmed = renameValue.trim();
+    const current = profiles.find(p => p.id === renamingId);
+    if (!trimmed || !current || trimmed === current.name) {
+      cancelRename();
+      return;
+    }
+    setIsRenaming(true);
+    try {
+      await renameProfile(renamingId, trimmed);
+      await loadProfileList();
+      cancelRename();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsRenaming(false);
+    }
+  };
+
   const handleDeleteProfile = async (profileId: string) => {
     try {
       await deleteProfile(profileId);
@@ -259,15 +293,61 @@ export default function Profiles() {
                 const profileModGroups = getProfileModGroups(profile.mods, modByFileName);
                 const profileFileCount = profile.mods.length;
 
+                const isRenamingThis = renamingId === profile.id;
+
                 return (
                   <Card
                     key={profile.id}
-                    title={profile.name}
+                    title={
+                      isRenamingThis ? (
+                        <input
+                          type="text"
+                          autoFocus
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') submitRename();
+                            else if (e.key === 'Escape') cancelRename();
+                          }}
+                          onBlur={submitRename}
+                          disabled={isRenaming}
+                          aria-label="Rename profile"
+                          className="w-full px-2 py-1 bg-bg-tertiary border border-white/10 rounded text-text-primary text-lg font-semibold font-reaver focus:outline-none focus:ring-2 focus:ring-accent"
+                        />
+                      ) : (
+                        profile.name
+                      )
+                    }
                     icon={Layers}
                     accentEdge={isActive ? 'active' : 'none'}
                     className={`transition-all duration-300 ${isActive ? '' : 'hover:border-white/10'}`}
                     action={
                       <div className="flex items-center gap-2">
+                        {!isRenamingThis && (
+                          <button
+                            type="button"
+                            onClick={() => startRename(profile)}
+                            disabled={isApplying || isUpdating}
+                            aria-label="Rename profile"
+                            title="Rename profile"
+                            className="p-1 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {isRenamingThis && (
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={cancelRename}
+                            disabled={isRenaming}
+                            aria-label="Cancel rename"
+                            title="Cancel"
+                            className="p-1 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded transition-colors disabled:opacity-50"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         {isActive ? (
                           <Badge variant="success" className="animate-pulse">Active</Badge>
                         ) : (
