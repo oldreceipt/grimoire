@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { getUserDataPath } from '../utils/paths';
-import { scanMods, enableMod, disableMod, setModPriority } from './mods';
+import { scanMods, enableMod, disableMod, setModPriority, type Mod } from './mods';
 import { getModMetadata } from './metadata';
 import { readAutoexec, writeAutoexec } from './autoexec';
 
@@ -135,6 +135,12 @@ export async function createProfile(deadlockPath: string, name: string, crosshai
  * so capturing live state would save the profile with everything disabled.
  * The user's intent in saving a collection as a profile is "make these the
  * active set when I apply this", so we encode that explicitly.
+ *
+ * Exactly one variant per gameBananaId is saved — the most recently
+ * installed. After a fresh collection import this is reliably the variant
+ * the collection author specified (the download just bumped its mtime).
+ * Including every sibling variant would re-enable both old and new at
+ * apply time, which conflicts on the same files.
  */
 export async function createProfileFromGameBananaIds(
     deadlockPath: string,
@@ -147,10 +153,23 @@ export async function createProfileFromGameBananaIds(
     // metadata sidecar (read at the IPC layer via enrichMod), so we look
     // it up per-mod here. Without this the filter never matches and the
     // profile saves zero mods.
-    const matching = mods.filter((mod) => {
+    const byGbId = new Map<number, Mod>();
+    for (const mod of mods) {
         const metadata = getModMetadata(mod.fileName);
-        return metadata?.gameBananaId !== undefined && idSet.has(metadata.gameBananaId);
-    });
+        const gbId = metadata?.gameBananaId;
+        if (gbId === undefined || !idSet.has(gbId)) continue;
+        const existing = byGbId.get(gbId);
+        if (!existing) {
+            byGbId.set(gbId, mod);
+            continue;
+        }
+        const candidateTs = Date.parse(mod.installedAt);
+        const existingTs = Date.parse(existing.installedAt);
+        if (Number.isFinite(candidateTs) && candidateTs > existingTs) {
+            byGbId.set(gbId, mod);
+        }
+    }
+    const matching = Array.from(byGbId.values());
 
     const autoexecData = readAutoexec(deadlockPath);
     const now = new Date().toISOString();

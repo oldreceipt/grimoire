@@ -8,7 +8,7 @@ import { extractArchive, isArchive, checkOneClickOptOut, scanSuspiciousFiles } f
 import { randomUUID } from 'crypto';
 import { setModMetadata, getModMetadata } from './metadata';
 import { fetchModDetails, GameBananaModDetails } from './gamebanana';
-import { getUsedPriorities, scanMods, disableMod } from './mods';
+import { getUsedPriorities, scanMods, disableMod, enableMod } from './mods';
 import { validateDownloadUrl, validateFileSize } from './security';
 import { loadSettings } from './settings';
 import { getVpkLabels } from './vpk';
@@ -761,7 +761,24 @@ async function executeDownload(
                 await disableMod(deadlockPath, peer.id);
                 disabledPeers.push({ id: peer.id, name: peer.name, fileName: peer.fileName });
             }
-            if (disabledPeers.length > 0) {
+            // Downloads land in /disabled by default, so just disabling the
+            // previously-enabled sibling would leave the mod entirely off
+            // ("the newest pick is the active one" in the surrounding comment
+            // requires actually promoting the new pick). When we kick an
+            // enabled variant, move the freshly-downloaded VPK(s) into the
+            // addons folder so the user ends up with the new variant active.
+            if (disabledPeers.length > 0 && installedVpks.length > 0) {
+                const refreshed = await scanMods(deadlockPath);
+                for (const vpkFileName of installedVpks) {
+                    const newMod = refreshed.find((m) => m.fileName === vpkFileName);
+                    if (newMod && !newMod.enabled) {
+                        try {
+                            await enableMod(deadlockPath, newMod.id);
+                        } catch (err) {
+                            console.warn(`[downloadMod] Failed to enable new variant ${vpkFileName}:`, err);
+                        }
+                    }
+                }
                 mainWindow?.webContents.send('mods-auto-disabled', {
                     reason: 'sibling-variant',
                     modId,
