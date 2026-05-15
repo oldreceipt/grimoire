@@ -45,29 +45,22 @@ export function parseVpkDirectory(vpkPath: string): string[] | null {
         readSync(fd, headerBuffer, 0, 12, 0);
 
         const signature = headerBuffer.readUInt32LE(0);
-        console.log(`[parseVpkDirectory] Signature: 0x${signature.toString(16)}, expected: 0x${VPK_SIGNATURE.toString(16)}`);
-
         if (signature !== VPK_SIGNATURE) {
             closeSync(fd);
-            console.log(`[parseVpkDirectory] Invalid signature, not a VPK file`);
             return null;
         }
 
         const version = headerBuffer.readUInt32LE(4);
         const treeSize = headerBuffer.readUInt32LE(8);
-        console.log(`[parseVpkDirectory] Version: ${version}, TreeSize: ${treeSize}`);
 
         // VPK v2 has an extended header (28 bytes total vs 12 for v1)
         // After the first 12 bytes, v2 has: FileDataSectionSize(4) + ArchiveMD5SectionSize(4) + OtherMD5SectionSize(4) + SignatureSectionSize(4)
         const headerSize = version === 2 ? 28 : 12;
-        console.log(`[parseVpkDirectory] Using header size: ${headerSize} for version ${version}`);
 
         // Read the directory tree (starts after the full header)
         const treeBuffer = Buffer.alloc(treeSize);
         readSync(fd, treeBuffer, 0, treeSize, headerSize);
         closeSync(fd);
-
-        console.log(`[parseVpkDirectory] First 100 bytes of tree:`, treeBuffer.slice(0, 100).toString('utf-8').replace(/\0/g, '|'));
 
         const paths: string[] = [];
         let offset = 0;
@@ -147,7 +140,7 @@ export function parseVpkDirectory(vpkPath: string): string[] | null {
 
         // Validate tree was properly terminated
         if (!properlyTerminated) {
-            console.warn(`[parseVpkDirectory] Warning: VPK tree did not terminate properly - buffer exhausted at offset ${offset}/${treeBuffer.length}. Some files may be missing from conflict detection.`);
+            console.warn(`[parseVpkDirectory] ${vpkPath}: tree did not terminate properly (offset ${offset}/${treeBuffer.length}). Some files may be missing from conflict detection.`);
         }
 
         // Check if there's unexpected data after tree termination
@@ -155,11 +148,9 @@ export function parseVpkDirectory(vpkPath: string): string[] | null {
             const remainingBytes = treeBuffer.length - offset;
             // Small amount of padding is acceptable, but large amounts suggest parsing error
             if (remainingBytes > 16) {
-                console.warn(`[parseVpkDirectory] Warning: ${remainingBytes} bytes remaining after tree termination. Tree may have been parsed incorrectly.`);
+                console.warn(`[parseVpkDirectory] ${vpkPath}: ${remainingBytes} bytes remaining after tree termination.`);
             }
         }
-
-        console.log(`[parseVpkDirectory] Parsed ${paths.length} files, properly terminated: ${properlyTerminated}, final offset: ${offset}/${treeBuffer.length}`);
 
         return paths;
     } catch (error) {
@@ -270,12 +261,8 @@ export function getVpkContentSummary(vpkPath: string): {
     const paths = parseVpkDirectory(vpkPath);
 
     if (!paths) {
-        console.log(`[getVpkContentSummary] Failed to parse VPK: ${vpkPath}`);
         return { heroes: new Set(), fileCount: 0, samplePaths: [] };
     }
-
-    console.log(`[getVpkContentSummary] Parsed ${paths.length} paths from ${vpkPath}`);
-    console.log(`[getVpkContentSummary] Sample paths:`, paths.slice(0, 10));
 
     const heroes = new Set<string>();
 
@@ -285,8 +272,6 @@ export function getVpkContentSummary(vpkPath: string): {
             heroes.add(hero);
         }
     }
-
-    console.log(`[getVpkContentSummary] Detected heroes: ${[...heroes].join(', ') || 'none'}`);
 
     return {
         heroes,

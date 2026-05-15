@@ -22,13 +22,27 @@ const IGNORED_CONFLICT_FILES = new Set([
     'info.txt',
 ]);
 
+// Path prefixes for files the VPK packer commonly bundles even when the mod
+// doesn't really touch them. Two mods both shipping a copy of the engine's
+// default fallback textures isn't a real conflict between them — it's just
+// the packer dragging in shared dependencies. Filtering these prevents false
+// positives like "Graves Shirt vs Ghost Bride Vindicta" caused entirely by
+// materials/default/default_*_tga_*.vtex_c overlaps.
+const IGNORED_CONFLICT_PREFIXES = [
+    'materials/default/default_',
+];
+
 /**
  * Check if a file path should be ignored for conflict detection
  */
 function shouldIgnoreFile(filePath: string): boolean {
     const normalizedPath = filePath.toLowerCase();
     const fileName = normalizedPath.split('/').pop() || normalizedPath;
-    return IGNORED_CONFLICT_FILES.has(fileName);
+    if (IGNORED_CONFLICT_FILES.has(fileName)) return true;
+    for (const prefix of IGNORED_CONFLICT_PREFIXES) {
+        if (normalizedPath.startsWith(prefix)) return true;
+    }
+    return false;
 }
 
 export interface ModConflict {
@@ -115,13 +129,16 @@ export async function detectConflicts(deadlockPath: string): Promise<ModConflict
     const enabledMods = mods.filter(m => m.enabled);
     const conflicts: ModConflict[] = [];
 
-    console.log(`[detectConflicts] Enabled mods: ${enabledMods.length}`);
-
     if (enabledMods.length < 2) {
         return [];
     }
 
-    // Priority conflicts (same pak number)
+    // Priority conflicts (same pak number). Track which pairs are already
+    // reported so the later file-conflict pass skips them in O(1).
+    const reportedPairs = new Set<string>();
+    const markReported = (a: Mod, b: Mod) => reportedPairs.add(conflictPairKey(a.id, b.id));
+    const wasReported = (a: Mod, b: Mod) => reportedPairs.has(conflictPairKey(a.id, b.id));
+
     const priorityMap = new Map<number, Mod[]>();
     for (const mod of enabledMods) {
         const existing = priorityMap.get(mod.priority) || [];
@@ -133,12 +150,15 @@ export async function detectConflicts(deadlockPath: string): Promise<ModConflict
         if (modsWithPriority.length > 1) {
             for (let i = 0; i < modsWithPriority.length; i++) {
                 for (let j = i + 1; j < modsWithPriority.length; j++) {
+                    const a = modsWithPriority[i];
+                    const b = modsWithPriority[j];
                     conflicts.push(createConflict(
-                        modsWithPriority[i],
-                        modsWithPriority[j],
+                        a,
+                        b,
                         'priority',
                         `Both use pak${String(priority).padStart(2, '0')}`
                     ));
+                    markReported(a, b);
                 }
             }
         }
@@ -150,11 +170,6 @@ export async function detectConflicts(deadlockPath: string): Promise<ModConflict
         const files = parseVpkDirectory(mod.path);
         if (files && files.length > 0) {
             modFileLists.set(mod.id, new Set(files));
-            console.log(`[detectConflicts] ${mod.fileName}: ${files.length} files`);
-            // Log sample paths for debugging
-            console.log(`[detectConflicts]   Sample paths: ${files.slice(0, 5).join(', ')}`);
-        } else {
-            console.log(`[detectConflicts] ${mod.fileName}: failed to parse or empty`);
         }
     }
 
@@ -165,6 +180,8 @@ export async function detectConflicts(deadlockPath: string): Promise<ModConflict
         for (let j = i + 1; j < modsWithFiles.length; j++) {
             const modA = modsWithFiles[i];
             const modB = modsWithFiles[j];
+            if (wasReported(modA, modB)) continue;
+
             const filesA = modFileLists.get(modA.id)!;
             const filesB = modFileLists.get(modB.id)!;
 
@@ -177,30 +194,13 @@ export async function detectConflicts(deadlockPath: string): Promise<ModConflict
             }
 
             if (overlapping.length > 0) {
-                // Skip if already reported as priority conflict
-                const alreadyReported = conflicts.some(
-                    c => (c.modA === modA.id && c.modB === modB.id) ||
-                        (c.modA === modB.id && c.modB === modA.id)
-                );
-
-                if (!alreadyReported) {
-                    // Log the actual conflicting files for debugging
-                    console.log(`[detectConflicts] File conflict: ${modA.fileName} vs ${modB.fileName}`);
-                    console.log(`[detectConflicts] Overlapping files (${overlapping.length}):`);
-                    for (const file of overlapping.slice(0, 20)) { // Log first 20
-                        console.log(`[detectConflicts]   - ${file}`);
-                    }
-                    if (overlapping.length > 20) {
-                        console.log(`[detectConflicts]   ... and ${overlapping.length - 20} more`);
-                    }
-
-                    conflicts.push(createConflict(
-                        modA,
-                        modB,
-                        'file',
-                        `${overlapping.length} shared file(s): ${overlapping.slice(0, 3).join(', ')}${overlapping.length > 3 ? '...' : ''}`
-                    ));
-                }
+                conflicts.push(createConflict(
+                    modA,
+                    modB,
+                    'file',
+                    `${overlapping.length} shared file(s): ${overlapping.slice(0, 3).join(', ')}${overlapping.length > 3 ? '...' : ''}`
+                ));
+                markReported(modA, modB);
             }
         }
     }
@@ -210,7 +210,6 @@ export async function detectConflicts(deadlockPath: string): Promise<ModConflict
     // post-filter — easy to reason about and easy to disable later.
     const settings = loadSettings();
     if (settings.ignoreConflictsByDefault) {
-        console.log(`[detectConflicts] Hiding all ${conflicts.length} conflicts — ignore-by-default is on`);
         return [];
     }
     const ignored = new Set(settings.ignoredConflicts ?? []);
@@ -221,6 +220,5 @@ export async function detectConflicts(deadlockPath: string): Promise<ModConflict
             !ignored.has(conflictPairKey(c.modA, c.modB))
         );
 
-    console.log(`[detectConflicts] Found ${conflicts.length} conflicts (${conflicts.length - filtered.length} ignored)`);
     return filtered;
 }
