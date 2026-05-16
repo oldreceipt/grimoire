@@ -1,4 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type {
+    PortableProfile,
+    PortableExportResult,
+    PortableResolutionReport,
+    PortableResolvedMod,
+} from '../../src/types/portableProfile';
 
 // Type definitions for the exposed API
 export interface ElectronAPI {
@@ -106,6 +112,10 @@ export interface ElectronAPI {
     applyProfile: (profileId: string) => Promise<Profile>;
     deleteProfile: (profileId: string) => Promise<void>;
     renameProfile: (profileId: string, newName: string) => Promise<Profile>;
+    exportPortableProfile: (profileId: string) => Promise<PortableExportResult>;
+    parsePortableProfile: (input: string) => Promise<PortableProfile>;
+    resolvePortableProfile: (profile: PortableProfile) => Promise<PortableResolutionReport>;
+    finalizePortableImport: (args: { profile: PortableProfile; resolved: PortableResolvedMod[] }) => Promise<Profile>;
 
     // Mod Database (Local Cache)
     syncAllMods: () => Promise<{ success: boolean }>;
@@ -854,6 +864,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     applyProfile: (profileId: string) => ipcRenderer.invoke('apply-profile', profileId),
     deleteProfile: (profileId: string) => ipcRenderer.invoke('delete-profile', profileId),
     renameProfile: (profileId: string, newName: string) => ipcRenderer.invoke('rename-profile', profileId, newName),
+    exportPortableProfile: (profileId: string) => ipcRenderer.invoke('export-portable-profile', profileId),
+    parsePortableProfile: (input: string) => ipcRenderer.invoke('parse-portable-profile', input),
+    resolvePortableProfile: (profile: PortableProfile) => ipcRenderer.invoke('resolve-portable-profile', profile),
+    finalizePortableImport: (args: { profile: PortableProfile; resolved: PortableResolvedMod[] }) =>
+        ipcRenderer.invoke('finalize-portable-import', args),
 
     // Mod Database (Local Cache)
     syncAllMods: () => ipcRenderer.invoke('sync-all-mods'),

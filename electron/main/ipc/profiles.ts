@@ -11,6 +11,16 @@ import {
     Profile,
     ProfileCrosshairSettings,
 } from '../services/profiles';
+import {
+    buildPortableProfile,
+    parsePortableProfile,
+    resolvePortableProfile,
+    createProfileFromPortable,
+} from '../services/portableProfile';
+import type {
+    PortableProfile,
+    PortableResolvedMod,
+} from '../../../src/types/portableProfile';
 
 /**
  * Get the active deadlock path from settings
@@ -94,3 +104,43 @@ ipcMain.handle('delete-profile', (_, profileId: string): void => {
 ipcMain.handle('rename-profile', (_, profileId: string, newName: string): Profile => {
     return renameProfile(profileId, newName);
 });
+
+// export-portable-profile
+ipcMain.handle('export-portable-profile', async (_, profileId: string) => {
+    const deadlockPath = getActiveDeadlockPath();
+    if (!deadlockPath) {
+        throw new Error('No Deadlock path configured');
+    }
+    return buildPortableProfile(deadlockPath, profileId);
+});
+
+// parse-portable-profile — accepts raw JSON or a share code, returns the
+// validated profile so the renderer can show a preview.
+ipcMain.handle('parse-portable-profile', (_, input: string): PortableProfile => {
+    return parsePortableProfile(input);
+});
+
+// resolve-portable-profile — looks up each entry against GameBanana and
+// returns the per-row exact/upgraded/unresolvable categorization for the
+// import preview UI.
+ipcMain.handle(
+    'resolve-portable-profile',
+    async (_, profile: PortableProfile) => {
+        return resolvePortableProfile(profile);
+    }
+);
+
+// finalize-portable-import — called after downloads finish to capture the
+// import as a new local profile (preserves priority, enabled state, and
+// extensions). The renderer is responsible for kicking off downloads via the
+// existing download-mod handler before calling this.
+ipcMain.handle(
+    'finalize-portable-import',
+    async (_, args: { profile: PortableProfile; resolved: PortableResolvedMod[] }): Promise<Profile> => {
+        const deadlockPath = getActiveDeadlockPath();
+        if (!deadlockPath) {
+            throw new Error('No Deadlock path configured');
+        }
+        return createProfileFromPortable(deadlockPath, args.profile, args.resolved);
+    }
+);

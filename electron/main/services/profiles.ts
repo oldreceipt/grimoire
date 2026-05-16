@@ -44,8 +44,19 @@ function getProfilesPath(): string {
 /**
  * Generate a unique profile ID
  */
-function generateProfileId(): string {
+export function generateProfileId(): string {
     return `profile_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * Append a fully-formed profile to disk. Used by import paths that build the
+ * Profile object themselves (e.g. portable profile imports).
+ */
+export function addProfile(profile: Profile): Profile {
+    const profiles = loadProfiles();
+    profiles.push(profile);
+    saveProfiles(profiles);
+    return profile;
 }
 
 /**

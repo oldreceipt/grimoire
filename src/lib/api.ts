@@ -358,3 +358,33 @@ export async function deleteProfile(profileId: string): Promise<void> {
 export async function renameProfile(profileId: string, newName: string): Promise<Profile> {
   return window.electronAPI.renameProfile(profileId, newName);
 }
+
+// =====================
+// Portable Profile API
+// =====================
+
+import type {
+  PortableProfile,
+  PortableExportResult,
+  PortableResolutionReport,
+  PortableResolvedMod,
+} from '../types/portableProfile';
+
+export async function exportPortableProfile(profileId: string): Promise<PortableExportResult> {
+  return window.electronAPI.exportPortableProfile(profileId);
+}
+
+export async function parsePortableProfile(input: string): Promise<PortableProfile> {
+  return window.electronAPI.parsePortableProfile(input);
+}
+
+export async function resolvePortableProfile(profile: PortableProfile): Promise<PortableResolutionReport> {
+  return window.electronAPI.resolvePortableProfile(profile);
+}
+
+export async function finalizePortableImport(args: {
+  profile: PortableProfile;
+  resolved: PortableResolvedMod[];
+}): Promise<Profile> {
+  return window.electronAPI.finalizePortableImport(args);
+}

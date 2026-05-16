@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Layers, Plus, Trash2, Play, Save, RefreshCw, AlertTriangle, User, ChevronDown, ChevronUp, Terminal, Check, Pencil, X } from 'lucide-react';
+import { Layers, Plus, Trash2, Play, Save, RefreshCw, AlertTriangle, User, ChevronDown, ChevronUp, Terminal, Check, Pencil, X, Upload, Share2 } from 'lucide-react';
 import {
   getProfiles,
   createProfile,
@@ -10,11 +10,15 @@ import {
   getSettings,
 } from '../lib/api';
 import type { Profile, ProfileCrosshairSettings } from '../lib/api';
+import type { AppSettings } from '../types/mod';
 import { useAppStore } from '../stores/appStore';
 import { useCrosshairStore } from '../stores/crosshairStore';
 import { Card, Badge, Button } from '../components/common/ui';
 import { ConfirmModal, EmptyState, PageHeader } from '../components/common/PageComponents';
 import CrosshairPreview from '../components/crosshair/CrosshairPreview';
+import ExportProfileModal from '../components/profiles/ExportProfileModal';
+import ImportProfileDialog from '../components/profiles/ImportProfileDialog';
+import { getActiveDeadlockPath } from '../lib/appSettings';
 import type { Mod } from '../types/mod';
 
 type ProfileModEntry = Profile['mods'][number];
@@ -81,6 +85,7 @@ export default function Profiles() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [crosshairEnabled, setCrosshairEnabled] = useState(false);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newProfileName, setNewProfileName] = useState('');
@@ -92,27 +97,33 @@ export default function Profiles() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [isRenaming, setIsRenaming] = useState(false);
+  const [exportingProfileId, setExportingProfileId] = useState<string | null>(null);
+  const [showImport, setShowImport] = useState(false);
 
   const { mods, loadMods } = useAppStore();
   const { getSettings: getCrosshairSettings, loadSettingsFromPreset } = useCrosshairStore();
 
   const modByFileName = new Map(mods.map(m => [m.fileName, m]));
 
-  const loadProfileList = async () => {
-    setLoading(true);
+  const loadProfileList = async (opts?: { silent?: boolean }) => {
+    // Silent refresh leaves the page rendered: needed for in-modal flows
+    // (e.g. portable import) that would otherwise unmount the modal when
+    // the page swaps to its loading-spinner state mid-flow.
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
-      const [profilesResult, settings] = await Promise.all([
+      const [profilesResult, loadedSettings] = await Promise.all([
         getProfiles(),
         getSettings(),
       ]);
       setProfiles(profilesResult);
-      setActiveProfileId(settings.activeProfileId || null);
-      setCrosshairEnabled(settings.experimentalCrosshair ?? false);
+      setSettings(loadedSettings);
+      setActiveProfileId(loadedSettings.activeProfileId || null);
+      setCrosshairEnabled(loadedSettings.experimentalCrosshair ?? false);
     } catch (err) {
       setError(String(err));
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   };
 
@@ -271,6 +282,14 @@ export default function Profiles() {
               >
                 Create Profile
               </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setShowImport(true)}
+                icon={Upload}
+                title="Import a portable profile from a share code or file"
+              >
+                Import
+              </Button>
             </div>
           </Card>
 
@@ -406,6 +425,15 @@ export default function Profiles() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          onClick={() => setExportingProfileId(profile.id)}
+                          disabled={isApplying || isUpdating}
+                          icon={Share2}
+                          title="Export / share profile"
+                          className="px-1.5"
+                        />
+                        <Button
+                          size="sm"
+                          variant="ghost"
                           onClick={() => toggleExpand(profile.id)}
                           icon={isExpanded ? ChevronUp : ChevronDown}
                           className="px-1.5"
@@ -516,6 +544,23 @@ export default function Profiles() {
         confirmLabel="Delete"
         variant="danger"
       />
+
+      {exportingProfileId && (
+        <ExportProfileModal
+          profileId={exportingProfileId}
+          profileName={profiles.find((p) => p.id === exportingProfileId)?.name ?? ''}
+          onClose={() => setExportingProfileId(null)}
+        />
+      )}
+
+      {showImport && (
+        <ImportProfileDialog
+          activeDeadlockPath={getActiveDeadlockPath(settings)}
+          hideNsfwPreviews={settings?.hideNsfwPreviews ?? false}
+          onClose={() => setShowImport(false)}
+          onImported={() => { void loadProfileList({ silent: true }); void loadMods(); }}
+        />
+      )}
     </div>
   );
 }

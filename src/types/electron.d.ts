@@ -366,6 +366,15 @@ export interface ElectronAPI {
     applyProfile: (profileId: string) => Promise<Profile>;
     deleteProfile: (profileId: string) => Promise<void>;
     renameProfile: (profileId: string, newName: string) => Promise<Profile>;
+    exportPortableProfile: (profileId: string) => Promise<import('./portableProfile').PortableExportResult>;
+    parsePortableProfile: (input: string) => Promise<import('./portableProfile').PortableProfile>;
+    resolvePortableProfile: (
+        profile: import('./portableProfile').PortableProfile
+    ) => Promise<import('./portableProfile').PortableResolutionReport>;
+    finalizePortableImport: (args: {
+        profile: import('./portableProfile').PortableProfile;
+        resolved: import('./portableProfile').PortableResolvedMod[];
+    }) => Promise<Profile>;
 
     // Mod Database (Local Cache)
     syncAllMods: () => Promise<{ success: boolean }>;
