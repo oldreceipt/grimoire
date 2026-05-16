@@ -438,6 +438,7 @@ export interface ElectronAPI {
             id: string,
             body: import('@grimoire/social-types').ReportRequest
         ) => Promise<void>;
+        deleteProfile: (id: string) => Promise<void>;
         deleteAccount: () => Promise<import('./social').SocialSessionStatus>;
         onSessionChanged: (
             callback: (status: import('./social').SocialSessionStatus) => void

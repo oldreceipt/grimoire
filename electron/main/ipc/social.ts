@@ -15,6 +15,7 @@ import type {
 } from '@grimoire/social-types';
 import {
     deleteAccount,
+    deleteProfile,
     getProfile,
     likeProfile,
     listProfiles,
@@ -95,6 +96,10 @@ ipcMain.handle(
         await reportProfile(args.id, args.body);
     }
 );
+
+ipcMain.handle('social:deleteProfile', async (_event, id: string): Promise<void> => {
+    await deleteProfile(id);
+});
 
 ipcMain.handle('social:deleteAccount', async (): Promise<SessionStatus> => {
     await deleteAccount();

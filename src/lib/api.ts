@@ -466,6 +466,10 @@ export async function socialReport(id: string, body: SocialReportRequest): Promi
   return window.electronAPI.social.report(id, body);
 }
 
+export async function socialDeleteProfile(id: string): Promise<void> {
+  return window.electronAPI.social.deleteProfile(id);
+}
+
 export async function socialDeleteAccount(): Promise<SocialSessionStatus> {
   return window.electronAPI.social.deleteAccount();
 }

@@ -187,6 +187,7 @@ export interface ElectronAPI {
         like: (id: string) => Promise<LikeResponse>;
         unlike: (id: string) => Promise<LikeResponse>;
         report: (id: string, body: ReportRequest) => Promise<void>;
+        deleteProfile: (id: string) => Promise<void>;
         deleteAccount: () => Promise<SocialSessionStatus>;
         onSessionChanged: (callback: (status: SocialSessionStatus) => void) => () => void;
     };
@@ -973,6 +974,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         unlike: (id: string) => ipcRenderer.invoke('social:unlike', id),
         report: (id: string, body: ReportRequest) =>
             ipcRenderer.invoke('social:report', { id, body }),
+        deleteProfile: (id: string) => ipcRenderer.invoke('social:deleteProfile', id),
         deleteAccount: () => ipcRenderer.invoke('social:deleteAccount'),
         onSessionChanged: (callback: (status: SocialSessionStatus) => void) => {
             const handler = (_event: Electron.IpcRendererEvent, status: SocialSessionStatus) =>

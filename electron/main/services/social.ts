@@ -286,3 +286,10 @@ export async function reportProfile(id: string, body: ReportRequest): Promise<vo
         auth: 'required',
     });
 }
+
+export async function deleteProfile(id: string): Promise<void> {
+    await request(`/v1/profiles/${encodeURIComponent(id)}`, z.unknown(), {
+        method: 'DELETE',
+        auth: 'required',
+    });
+}

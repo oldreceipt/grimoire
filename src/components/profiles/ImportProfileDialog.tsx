@@ -8,14 +8,17 @@ import {
   ArrowUpCircle,
   FileText,
   Terminal,
+  ChevronDown,
 } from 'lucide-react';
 import { Button } from '../common/ui';
 import ModThumbnail from '../ModThumbnail';
+import SocialProfileHeader, { type SocialProfileSeed } from '../social/SocialProfileHeader';
 import {
   parsePortableProfile,
   resolvePortableProfile,
   finalizePortableImport,
   downloadMod,
+  type SocialProfileDetail,
 } from '../../lib/api';
 import type {
   PortableProfile,
@@ -29,9 +32,25 @@ interface ImportProfileDialogProps {
   onClose: () => void;
   onImported: () => void;
   // When provided, the dialog skips the paste-and-click step: the input is
-  // prefilled and parsed automatically. Used by the Discover flow to hand a
-  // share code straight from a profile card into resolution.
+  // prefilled and parsed automatically. Used by the legacy paste flow.
   initialInput?: string;
+  // When provided, the dialog renders a two-column layout: the left rail is
+  // the social profile post (owner, description, hero badges, like/report);
+  // the right column is the import form. The share code is fetched from the
+  // social backend, not passed via initialInput.
+  socialProfileId?: string;
+  // Instant-render seed so the left rail shows the title/owner/badges/thumbs
+  // before the /v1/profiles/:id call resolves. Passed straight through from
+  // the Discover card.
+  socialProfileSeed?: SocialProfileSeed;
+  // Sync like-count + viewer_has_liked changes back to the parent list /
+  // manage section so card counters stay in step with the dialog.
+  onLikeChange?: (profileId: string, likeCount: number, viewerHasLiked: boolean) => void;
+  // Explicit "Sign in with Steam" click in the header.
+  onSignInRequested?: () => void;
+  // Implicit "tried to like while signed-out" — used for the pulse-the-header
+  // affordance, not for triggering OAuth.
+  onLikeWithoutSignIn?: () => void;
 }
 
 type RowStatus =
@@ -39,6 +58,7 @@ type RowStatus =
   | 'queued'
   | 'downloading'
   | 'installed'
+  | 'already-installed'
   | 'failed'
   | 'skipped';
 
@@ -62,8 +82,16 @@ export default function ImportProfileDialog({
   onClose,
   onImported,
   initialInput,
+  socialProfileId,
+  socialProfileSeed,
+  onLikeChange,
+  onSignInRequested,
+  onLikeWithoutSignIn,
 }: ImportProfileDialogProps) {
-  const [input, setInput] = useState(initialInput ?? '');
+  // In social mode the share code arrives via SocialProfileHeader's detail
+  // fetch; the input is empty until then. In paste mode it's seeded from
+  // initialInput as before.
+  const [input, setInput] = useState(socialProfileId ? '' : (initialInput ?? ''));
   const [parsed, setParsed] = useState<PortableProfile | null>(null);
   const [report, setReport] = useState<PortableResolutionReport | null>(null);
   const [rows, setRows] = useState<RowState[]>([]);
@@ -74,6 +102,7 @@ export default function ImportProfileDialog({
   const [importedProfileName, setImportedProfileName] = useState<string | null>(null);
   const [profileName, setProfileName] = useState('');
   const [includeAutoexec, setIncludeAutoexec] = useState(true);
+  const [autoexecExpanded, setAutoexecExpanded] = useState(false);
 
   const rowsRef = useRef<RowState[]>([]);
   useEffect(() => { rowsRef.current = rows; }, [rows]);
@@ -119,7 +148,12 @@ export default function ImportProfileDialog({
         prev.map((r) => {
           const id = gbId(r.mod);
           if (id === null || !trackedIdsRef.current.has(id)) return r;
-          if (r.status === 'installed' || r.status === 'failed' || r.status === 'skipped') return r;
+          if (
+            r.status === 'installed' ||
+            r.status === 'already-installed' ||
+            r.status === 'failed' ||
+            r.status === 'skipped'
+          ) return r;
           if (currentId === id) return r.status === 'downloading' ? r : { ...r, status: 'downloading' };
           if (queuedSet.has(id)) return r.status === 'queued' ? r : { ...r, status: 'queued' };
           return r;
@@ -172,7 +206,7 @@ export default function ImportProfileDialog({
         r.resolved.map((mod) => ({
           mod,
           selected: mod.status !== 'unresolvable',
-          status: 'pending',
+          status: mod.alreadyInstalled ? 'already-installed' : 'pending',
         }))
       );
     } catch (err) {
@@ -187,7 +221,7 @@ export default function ImportProfileDialog({
     setInput(text);
   }, []);
 
-  // Auto-parse when invoked with a prefilled share code (Discover → Import).
+  // Auto-parse when invoked with a prefilled share code (legacy paste flow).
   const didAutoParseRef = useRef(false);
   useEffect(() => {
     if (didAutoParseRef.current) return;
@@ -198,6 +232,30 @@ export default function ImportProfileDialog({
     // run once for the prefilled value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Social mode: SocialProfileHeader fetches /v1/profiles/:id; once the detail
+  // arrives, we get the share code from it, set `input`, and trigger the same
+  // parse pipeline. Guarded so we only fire once even if the header re-renders.
+  const didSocialAutoParseRef = useRef(false);
+  const handleSocialDetailReady = useCallback(
+    (detail: SocialProfileDetail) => {
+      if (didSocialAutoParseRef.current) return;
+      didSocialAutoParseRef.current = true;
+      setInput(detail.share_code);
+    },
+    []
+  );
+  // Once input has been set from the social detail, kick the parse. Separate
+  // effect so we don't re-call handleParse on every input change in paste mode.
+  useEffect(() => {
+    if (!socialProfileId) return;
+    if (!input || !input.trim()) return;
+    if (parsed || resolving) return;
+    void handleParse();
+    // handleParse is stable; we want exactly one auto-parse after the social
+    // share code lands on `input`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [socialProfileId, input]);
 
   const toggleRow = useCallback((idx: number) => {
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, selected: !r.selected } : r)));
@@ -218,17 +276,22 @@ export default function ImportProfileDialog({
     setImporting(true);
     setFinalizeError(null);
 
-    const accepted: PortableResolvedMod[] = [];
+    const toDownload: PortableResolvedMod[] = [];
     const startingRows = rowsRef.current.map((r) => {
       if (!r.selected || r.mod.status === 'unresolvable') {
         return { ...r, status: 'skipped' as RowStatus };
       }
-      accepted.push(r.mod);
+      if (r.mod.alreadyInstalled) {
+        // Selected and on disk — no work to do, keep the badge and let
+        // finalize wire the existing VPK into the new profile.
+        return { ...r, status: 'already-installed' as RowStatus };
+      }
+      toDownload.push(r.mod);
       return { ...r, status: 'queued' as RowStatus };
     });
     setRows(startingRows);
 
-    for (const mod of accepted) {
+    for (const mod of toDownload) {
       if (mod.entry.source !== 'gamebanana') continue;
       if (mod.resolvedFileId === undefined || !mod.resolvedFileName) continue;
       const ref = mod.entry.ref as { submissionId: number; section?: string };
@@ -253,7 +316,11 @@ export default function ImportProfileDialog({
   const downloadsSettled = useMemo(() => {
     if (!importing) return false;
     return rows.every(
-      (r) => r.status === 'installed' || r.status === 'failed' || r.status === 'skipped'
+      (r) =>
+        r.status === 'installed' ||
+        r.status === 'already-installed' ||
+        r.status === 'failed' ||
+        r.status === 'skipped'
     );
   }, [rows, importing]);
 
@@ -266,7 +333,9 @@ export default function ImportProfileDialog({
     (async () => {
       const installedEntries: PortableResolvedMod[] = [];
       for (const r of rowsRef.current) {
-        if (r.status === 'installed') installedEntries.push(r.mod);
+        if (r.status === 'installed' || r.status === 'already-installed') {
+          installedEntries.push(r.mod);
+        }
       }
       try {
         const finalName = profileNameRef.current.trim() || parsed.profile.name;
@@ -312,6 +381,19 @@ export default function ImportProfileDialog({
   const selectableCount = rows.filter((r) => r.mod.status !== 'unresolvable').length;
   const selectedCount = rows.filter((r) => r.selected).length;
 
+  // Tri-state UI. Important: there's a transient window inside handleParse
+  // where parsed is set but report is not yet (we awaited parse, are now
+  // awaiting resolve). Without showSkeleton spanning that gap, only the
+  // dialog header would render and the body would flash empty.
+  const showResolved = !!(parsed && report);
+  const showSkeleton =
+    !showResolved &&
+    !parseError &&
+    (!!initialInput || resolving || !!socialProfileId);
+  // The manual paste form never makes sense in social mode — the share code
+  // comes from the backend, not user input.
+  const showInputForm = !socialProfileId && !showResolved && !showSkeleton;
+
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-2 sm:p-4 animate-fade-in"
@@ -321,28 +403,79 @@ export default function ImportProfileDialog({
       onClick={importing ? undefined : onClose}
     >
       <div
-        className="bg-bg-secondary border border-white/10 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden shadow-2xl"
+        className={`bg-bg-secondary border border-white/10 rounded-2xl w-full ${socialProfileId ? 'max-w-5xl' : 'max-w-4xl'} max-h-[92vh] flex flex-col overflow-hidden shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between p-4 sm:p-6 border-b border-white/10">
+        <div className={`flex items-start justify-between ${parsed || socialProfileId ? 'px-4 sm:px-6 py-3' : 'p-4 sm:p-6'} border-b border-white/10`}>
           <div className="min-w-0">
-            <h2 id="import-profile-title" className="text-lg sm:text-xl font-bold text-text-primary">
+            <h2 id="import-profile-title" className="text-base sm:text-lg font-bold text-text-primary">
               Import Profile
             </h2>
-            <p className="hidden sm:block text-sm text-text-secondary mt-1">
-              Paste a share code or load a .modprofile.json file exported from Grimoire's Profiles tab. This format is Grimoire-only and not compatible with other mod managers.
-            </p>
+            {!parsed && !socialProfileId && (
+              <p className="hidden sm:block text-sm text-text-secondary mt-1">
+                Paste a share code or load a .modprofile.json file exported from Grimoire's Profiles tab. This format is Grimoire-only and not compatible with other mod managers.
+              </p>
+            )}
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-white/5 transition-colors cursor-pointer text-text-secondary hover:text-text-primary flex-shrink-0"
+            className="p-1.5 rounded-lg hover:bg-white/5 transition-colors cursor-pointer text-text-secondary hover:text-text-primary flex-shrink-0"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {!parsed && (
+        {(() => {
+          // Wrap the existing body blocks (skeleton / input form / resolved)
+          // in an IIFE so we can render them either standalone (paste mode)
+          // or inside a two-column flex layout (social mode) without
+          // duplicating the JSX. The body itself is unchanged.
+          const body = (
+            <>
+        {/* Loading skeleton — covers both the auto-parse flow (Discover ->
+            Import with a prefilled share code) and the in-between window of
+            manual parse + resolve where `parsed` is set but `report` is not
+            yet. Without this the dialog body would flash empty between the
+            two awaits. */}
+        {showSkeleton && (
+          <>
+            <div className="px-4 sm:px-6 py-2.5 border-b border-white/10">
+              <div className="h-3 bg-white/5 rounded w-20 mb-2 animate-pulse" />
+              <div className="h-8 bg-white/5 rounded animate-pulse" />
+            </div>
+            <div className="px-4 sm:px-6 py-2 border-b border-white/5 flex items-center justify-between">
+              <div className="h-3 bg-white/5 rounded w-24 animate-pulse" />
+              <div className="h-4 bg-white/5 rounded w-32 animate-pulse" />
+            </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <ul className="divide-y divide-white/5">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <li key={i} className="px-4 sm:px-6 py-2.5 flex items-center gap-3 sm:gap-4 animate-pulse">
+                    <div className="w-4 h-4 rounded-sm bg-white/5 flex-shrink-0" />
+                    <div className="w-14 h-10 sm:w-20 sm:h-14 flex-shrink-0 rounded-sm bg-white/5" />
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="h-3.5 bg-white/5 rounded w-2/3" />
+                      <div className="h-3 bg-white/5 rounded w-1/3" />
+                    </div>
+                    <div className="h-3 bg-white/5 rounded w-16 flex-shrink-0" />
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="border-t border-white/10 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3">
+              <div className="text-xs text-text-secondary inline-flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Resolving profile contents...
+              </div>
+              <Button variant="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+            </div>
+          </>
+        )}
+
+        {showInputForm && (
           <div className="p-4 sm:p-6 border-b border-white/10 space-y-3">
             <textarea
               value={input}
@@ -378,12 +511,17 @@ export default function ImportProfileDialog({
           </div>
         )}
 
-        {parsed && report && (
+        {showResolved && parsed && report && (
           <>
-            <div className="px-4 sm:px-6 py-4 border-b border-white/10">
-              <label className="block text-[11px] uppercase tracking-wider text-text-secondary mb-1">
-                Save as
-              </label>
+            <div className="px-4 sm:px-6 py-2.5 border-b border-white/10">
+              <div className="flex items-baseline gap-2 mb-1">
+                <label className="text-[11px] uppercase tracking-wider text-text-secondary flex-shrink-0">
+                  Save as
+                </label>
+                {parsed.profile.author && (
+                  <span className="text-xs text-text-tertiary truncate min-w-0">· originally by {parsed.profile.author}</span>
+                )}
+              </div>
               <input
                 type="text"
                 value={profileName}
@@ -391,53 +529,105 @@ export default function ImportProfileDialog({
                 disabled={importing || !!importedProfileName}
                 placeholder={parsed.profile.name}
                 aria-label="Profile name"
-                className="w-full px-3 py-2 bg-bg-tertiary border border-white/10 rounded-md text-base font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
+                className="w-full px-3 py-1.5 bg-bg-tertiary border border-white/10 rounded-md text-sm font-semibold text-text-primary focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
               />
-              {parsed.profile.author && (
-                <p className="text-xs text-text-secondary mt-1.5">originally by {parsed.profile.author}</p>
-              )}
-              <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                <span className="px-2 py-0.5 rounded-sm bg-green-500/10 text-green-300 border border-green-500/20">
-                  {report.exactCount} exact
-                </span>
-                {report.upgradedCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-sm bg-blue-500/10 text-blue-300 border border-blue-500/20">
-                    {report.upgradedCount} upgraded
-                  </span>
-                )}
-                {report.unresolvableCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-sm bg-red-500/10 text-red-300 border border-red-500/20">
-                    {report.unresolvableCount} unresolvable
-                  </span>
-                )}
-                {parsed.extensions?.grimoire?.crosshair && (
-                  <span className="px-2 py-0.5 rounded-sm bg-white/5 text-text-secondary border border-white/10">
-                    crosshair
-                  </span>
-                )}
-                {parsed.extensions?.grimoire?.autoexecCommands?.length ? (
-                  <span className="px-2 py-0.5 rounded-sm bg-white/5 text-text-secondary border border-white/10 inline-flex items-center gap-1">
-                    <Terminal className="w-3 h-3" /> {parsed.extensions.grimoire.autoexecCommands.length} autoexec
-                  </span>
-                ) : null}
-              </div>
             </div>
 
-            <div className="px-4 sm:px-6 py-3 sticky top-0 bg-bg-secondary/95 backdrop-blur border-b border-white/5 z-10">
-              <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer w-fit">
+            {parsed.extensions?.grimoire?.autoexecCommands?.length ? (
+              (() => {
+                const cmds = parsed.extensions!.grimoire!.autoexecCommands!;
+                return (
+                  <div className="border-b border-white/5 bg-yellow-500/5">
+                    <div className="px-4 sm:px-6 py-2 flex items-center gap-2 text-xs text-yellow-200">
+                      <Terminal className="w-3.5 h-3.5 flex-shrink-0" />
+                      <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={includeAutoexec}
+                          onChange={(e) => setIncludeAutoexec(e.target.checked)}
+                          disabled={importing || !!importedProfileName}
+                          className="accent-accent cursor-pointer disabled:cursor-not-allowed"
+                          aria-label="Include autoexec commands from this profile"
+                        />
+                        <span className="font-medium">
+                          Include {cmds.length} autoexec {cmds.length === 1 ? 'command' : 'commands'}
+                        </span>
+                      </label>
+                      <span
+                        className={`min-w-0 truncate font-mono text-[11px] text-text-tertiary ${includeAutoexec ? '' : 'line-through opacity-60'}`}
+                        title={cmds.join('\n')}
+                      >
+                        {cmds[0]}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setAutoexecExpanded((v) => !v)}
+                        className="ml-auto flex-shrink-0 inline-flex items-center gap-1 text-text-secondary hover:text-text-primary cursor-pointer"
+                        aria-expanded={autoexecExpanded}
+                        aria-label={autoexecExpanded ? 'Hide autoexec details' : 'Show autoexec details'}
+                      >
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${autoexecExpanded ? 'rotate-180' : ''}`} />
+                      </button>
+                    </div>
+                    {autoexecExpanded && (
+                      <div className="px-4 sm:px-6 pb-2 pl-9 sm:pl-11">
+                        <div className={`space-y-0.5 max-h-24 overflow-y-auto font-mono text-[11px] text-text-secondary ${includeAutoexec ? '' : 'opacity-50 line-through'}`}>
+                          {cmds.map((cmd, i) => (
+                            <div key={i} className="truncate" title={cmd}>{cmd}</div>
+                          ))}
+                        </div>
+                        <div className="text-[11px] text-text-secondary mt-1">
+                          {includeAutoexec
+                            ? 'Written to autoexec.cfg when you apply the imported profile.'
+                            : 'Discarded. Your autoexec.cfg will not be modified by this profile.'}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
+            ) : null}
+
+            <div className="px-4 sm:px-6 py-2 sticky top-0 bg-bg-secondary/95 backdrop-blur border-b border-white/5 z-10 flex items-center justify-between gap-2">
+              <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer min-w-0">
                 <input
                   type="checkbox"
                   checked={selectableCount > 0 && selectedCount === selectableCount}
                   onChange={toggleAll}
                   disabled={selectableCount === 0 || importing}
-                  className="accent-accent cursor-pointer"
+                  className="accent-accent cursor-pointer flex-shrink-0"
                 />
-                <span>
+                <span className="truncate">
                   {selectedCount === selectableCount && selectableCount > 0
                     ? 'Deselect all'
                     : `Select all (${selectableCount})`}
                 </span>
               </label>
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] justify-end flex-shrink-0">
+                <span className="px-1.5 py-0.5 rounded-sm bg-green-500/10 text-green-300 border border-green-500/20">
+                  {report.exactCount} exact
+                </span>
+                {report.alreadyInstalledCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-sm bg-white/5 text-text-secondary border border-white/10" title="Mods already installed locally">
+                    {report.alreadyInstalledCount} on disk
+                  </span>
+                )}
+                {report.upgradedCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-sm bg-blue-500/10 text-blue-300 border border-blue-500/20">
+                    {report.upgradedCount} upgraded
+                  </span>
+                )}
+                {report.unresolvableCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-sm bg-red-500/10 text-red-300 border border-red-500/20">
+                    {report.unresolvableCount} unresolvable
+                  </span>
+                )}
+                {parsed.extensions?.grimoire?.crosshair && (
+                  <span className="px-1.5 py-0.5 rounded-sm bg-white/5 text-text-secondary border border-white/10">
+                    crosshair
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto">
@@ -451,7 +641,7 @@ export default function ImportProfileDialog({
                       ? Math.min(100, (r.progress.downloaded / r.progress.total) * 100)
                       : null;
                   return (
-                    <li key={idx} className="relative px-4 sm:px-6 py-4">
+                    <li key={idx} className="relative px-4 sm:px-6 py-2.5">
                       {r.status === 'downloading' && (
                         <div className="absolute top-0 left-0 right-0 h-0.5 bg-white/5 overflow-hidden">
                           {progressPct === null ? (
@@ -512,6 +702,15 @@ export default function ImportProfileDialog({
                           {r.status === 'pending' && !isUnresolvable && (
                             <span className="text-text-tertiary text-xs">Ready</span>
                           )}
+                          {r.status === 'already-installed' && (
+                            <span
+                              className="text-text-secondary inline-flex items-center gap-1.5 justify-end text-xs"
+                              title="Already installed locally — will be wired into the new profile without re-downloading"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                              <span className="hidden sm:inline">On disk</span>
+                            </span>
+                          )}
                           {r.status === 'queued' && (
                             <span className="text-accent inline-flex items-center gap-1.5 justify-end text-xs" title="Queued">
                               <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
@@ -552,38 +751,7 @@ export default function ImportProfileDialog({
               </ul>
             </div>
 
-            {parsed.extensions?.grimoire?.autoexecCommands?.length ? (
-              <div className="px-4 sm:px-6 py-3 border-t border-white/5 bg-yellow-500/5">
-                <div className="text-xs text-yellow-200 flex items-start gap-2">
-                  <Terminal className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                  <div className="min-w-0 flex-1">
-                    <label className="flex items-center gap-2 cursor-pointer w-fit">
-                      <input
-                        type="checkbox"
-                        checked={includeAutoexec}
-                        onChange={(e) => setIncludeAutoexec(e.target.checked)}
-                        disabled={importing || !!importedProfileName}
-                        className="accent-accent cursor-pointer disabled:cursor-not-allowed"
-                        aria-label="Include autoexec commands from this profile"
-                      />
-                      <span className="font-medium">Include autoexec commands from this profile</span>
-                    </label>
-                    <div className={`mt-1 space-y-0.5 max-h-24 overflow-y-auto font-mono text-[11px] text-text-secondary ${includeAutoexec ? '' : 'opacity-50 line-through'}`}>
-                      {parsed.extensions.grimoire.autoexecCommands.map((cmd, i) => (
-                        <div key={i} className="truncate" title={cmd}>{cmd}</div>
-                      ))}
-                    </div>
-                    <div className="text-xs text-text-secondary mt-1">
-                      {includeAutoexec
-                        ? 'These will be written to autoexec.cfg when you apply the imported profile.'
-                        : 'These will be discarded. Your autoexec.cfg will not be modified by this profile.'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="border-t border-white/10 p-3 sm:p-4 flex items-center justify-between gap-3 flex-wrap">
+            <div className="border-t border-white/10 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 flex-wrap">
               <div className="text-xs text-text-secondary min-w-0 flex-1">
                 {importedProfileName ? (
                   <span className="text-green-400 inline-flex items-center gap-1.5 min-w-0">
@@ -622,6 +790,27 @@ export default function ImportProfileDialog({
             </div>
           </>
         )}
+            </>
+          );
+          if (!socialProfileId) return body;
+          return (
+            <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
+              <aside className="md:w-80 md:flex-shrink-0 md:border-r border-b md:border-b-0 border-white/10 overflow-hidden flex">
+                <SocialProfileHeader
+                  profileId={socialProfileId}
+                  seed={socialProfileSeed}
+                  onDetailReady={handleSocialDetailReady}
+                  onLikeChange={onLikeChange}
+                  onSignInRequested={onSignInRequested}
+                  onLikeWithoutSignIn={onLikeWithoutSignIn}
+                />
+              </aside>
+              <section className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">
+                {body}
+              </section>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
