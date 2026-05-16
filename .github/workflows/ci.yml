@@ -44,6 +44,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: grimoire/pnpm-lock.yaml
 
+      # @grimoire/social-types declares zod as a peer dependency. Locally that
+      # resolves via grimoire-social/node_modules/zod (each repo runs its own
+      # pnpm install). In CI we have to mirror that — installing only in
+      # grimoire leaves the workspace-shared package unable to resolve zod
+      # when typecheck follows the symlink.
+      - name: Install grimoire-social deps (for the shared workspace package)
+        working-directory: grimoire-social
+        run: pnpm install --frozen-lockfile
+
       - name: Install dependencies
         working-directory: grimoire
         run: pnpm install --frozen-lockfile
