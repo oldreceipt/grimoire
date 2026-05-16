@@ -10,8 +10,27 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout grimoire
         uses: actions/checkout@v4
+        with:
+          path: grimoire
+
+      # pnpm-workspace.yaml resolves @grimoire/social-types from
+      # ../grimoire-social/packages/*. Local dev works because both repos sit
+      # side-by-side; CI has to mirror that or every social import becomes an
+      # implicit-any and the build fails on the workspace dep.
+      #
+      # grimoire-social is private, so the default GITHUB_TOKEN can't read it.
+      # WORKSPACE_PAT is a fine-grained PAT scoped to Slush97/grimoire-social
+      # with Contents:Read. Set it under
+      # https://github.com/Slush97/grimoire/settings/secrets/actions
+      - name: Checkout grimoire-social (sibling for shared types)
+        uses: actions/checkout@v4
+        with:
+          repository: Slush97/grimoire-social
+          token: ${{ secrets.WORKSPACE_PAT }}
+          path: grimoire-social
+          ref: main
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -23,15 +42,34 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+          cache-dependency-path: grimoire/pnpm-lock.yaml
+
+      # @grimoire/social-types declares zod as a peer dependency. Locally that
+      # resolves via grimoire-social/node_modules/zod (each repo runs its own
+      # pnpm install). In CI we have to mirror that — installing only in
+      # grimoire leaves the workspace-shared package unable to resolve zod
+      # when typecheck follows the symlink.
+      - name: Install grimoire-social deps (for the shared workspace package)
+        working-directory: grimoire-social
+        run: pnpm install --frozen-lockfile
 
       - name: Install dependencies
+        working-directory: grimoire
         run: pnpm install --frozen-lockfile
 
       - name: Lint
+        working-directory: grimoire
         run: pnpm lint
 
       - name: Typecheck
+        working-directory: grimoire
         run: pnpm exec tsc -b --noEmit
 
+      # The prod-build gate refuses to build without GRIMOIRE_SOCIAL_BASE_URL
+      # set to an https URL. CI uses a placeholder to exercise the build
+      # pipeline; the value is meaningless at runtime (CI doesn't run the app).
       - name: Build
+        working-directory: grimoire
+        env:
+          GRIMOIRE_SOCIAL_BASE_URL: https://grimoire-social.ci.workers.dev
         run: pnpm exec electron-vite build
