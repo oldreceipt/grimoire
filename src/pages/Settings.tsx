@@ -713,9 +713,11 @@ export default function Settings() {
         />
 
         {/* Grimoire Social */}
-        <Card title="Grimoire Social" icon={Globe} className="lg:col-span-2">
-          <SocialAccountSection />
-        </Card>
+        {settings?.experimentalSocial && (
+          <Card title="Grimoire Social" icon={Globe} className="lg:col-span-2">
+            <SocialAccountSection />
+          </Card>
+        )}
 
         {/* Preferences */}
         <Card title="Preferences" icon={Shield}>
@@ -794,6 +796,15 @@ export default function Settings() {
               onChange={(checked) => settings && saveSettings({ ...settings, experimentalCrosshair: checked })}
               label="Crosshair Designer"
               description="Create custom crosshairs with a live preview."
+            />
+
+            <div className="h-px bg-white/5" />
+
+            <Toggle
+              checked={settings?.experimentalSocial ?? false}
+              onChange={(checked) => settings && saveSettings({ ...settings, experimentalSocial: checked })}
+              label="Grimoire Social"
+              description="Sign in with Steam to publish profiles and browse uploads from other players in Discover."
             />
           </div>
         </Card>

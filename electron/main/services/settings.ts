@@ -14,6 +14,7 @@ export interface AppSettings {
     autoSaveProfile: boolean;        // Auto-save when mods change
     experimentalStats: boolean;
     experimentalCrosshair: boolean;
+    experimentalSocial: boolean;     // Grimoire Social: Discover page + publish/account UI
     hasCompletedSetup: boolean;      // First-run setup completed
     /** Mod pairs the user has dismissed in the Conflicts page. New entries use
      *  stable per-mod identities (GameBanana mod/file ids when available)
@@ -40,6 +41,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     autoSaveProfile: false,
     experimentalStats: false,
     experimentalCrosshair: false,
+    experimentalSocial: false,
     hasCompletedSetup: false,
     ignoredConflicts: [],
     ignoreConflictsByDefault: false,

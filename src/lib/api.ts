@@ -402,6 +402,8 @@ import type {
   PublishRequest as SocialPublishRequest,
   PublishResponse as SocialPublishResponse,
   ReportRequest as SocialReportRequest,
+  UpdateProfileRequest as SocialUpdateProfileRequest,
+  UpdateProfileResponse as SocialUpdateProfileResponse,
 } from '@grimoire/social-types';
 import type { SocialSessionStatus } from '../types/social';
 
@@ -414,6 +416,8 @@ export type {
   SocialPublishRequest,
   SocialPublishResponse,
   SocialReportRequest,
+  SocialUpdateProfileRequest,
+  SocialUpdateProfileResponse,
   SocialSessionStatus,
 };
 
@@ -452,6 +456,13 @@ export async function socialGetProfile(id: string): Promise<SocialProfileDetail>
 
 export async function socialPublish(body: SocialPublishRequest): Promise<SocialPublishResponse> {
   return window.electronAPI.social.publish(body);
+}
+
+export async function socialUpdateProfile(
+  id: string,
+  body: SocialUpdateProfileRequest
+): Promise<SocialUpdateProfileResponse> {
+  return window.electronAPI.social.updateProfile(id, body);
 }
 
 export async function socialLike(id: string): Promise<SocialLikeResponse> {

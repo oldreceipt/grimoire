@@ -10,7 +10,6 @@ import {
   X,
   ExternalLink,
   ShieldCheck,
-  Boxes,
   User as UserIcon,
 } from 'lucide-react';
 import { SteamIcon } from '../components/social/SteamIcon';
@@ -23,19 +22,20 @@ import {
 } from '../lib/api';
 import { useAppStore } from '../stores/appStore';
 import { useSocialStore } from '../stores/socialStore';
-import { Card, Badge, Button } from '../components/common/ui';
+import { Card, Button } from '../components/common/ui';
 import { EmptyState, PageHeader } from '../components/common/PageComponents';
 import ImportProfileDialog from '../components/profiles/ImportProfileDialog';
 import MyPublishedSection from '../components/social/MyPublishedSection';
 import { getActiveDeadlockPath } from '../lib/appSettings';
 import { formatRelativeDate } from '../lib/dates';
 
-type SortKey = Extract<SocialProfileSort, 'top' | 'new' | 'featured'>;
+// 'mine' is a client-side view, not a backend sort. We branch on it before
+// hitting /v1/profiles and render the user's own published profiles instead.
+type TabKey = Extract<SocialProfileSort, 'top' | 'new'> | 'mine';
 
-const SORTS: { key: SortKey; label: string; icon: typeof Flame }[] = [
+const BROWSE_TABS: { key: Extract<TabKey, 'top' | 'new'>; label: string; icon: typeof Flame }[] = [
   { key: 'top', label: 'Top', icon: Flame },
   { key: 'new', label: 'New', icon: Clock },
-  { key: 'featured', label: 'Featured', icon: Sparkles },
 ];
 
 type CardProfile = SocialListProfilesResponse['profiles'][number];
@@ -63,11 +63,16 @@ export default function Discover() {
     }
   }, [login]);
 
-  const [sort, setSort] = useState<SortKey>('top');
+  const [tab, setTab] = useState<TabKey>('top');
   const [data, setData] = useState<SocialListProfilesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [likingId, setLikingId] = useState<string | null>(null);
+  // Tracks the viewer's like state per profile so toggling works without
+  // depending on the server returning an error on duplicate Like. The list
+  // endpoint doesn't include viewer_has_liked, so we start empty and learn
+  // the truth from each like/unlike response.
+  const [viewerLiked, setViewerLiked] = useState<Record<string, boolean>>({});
   // Pulses the header sign-in button when a signed-out user clicks Like.
   const [signInPulse, setSignInPulse] = useState(false);
 
@@ -76,23 +81,30 @@ export default function Discover() {
   const [importTarget, setImportTarget] = useState<CardProfile | null>(null);
 
   const loadProfiles = useCallback(async () => {
+    if (tab === 'mine') return;
     setLoading(true);
     setError(null);
     try {
-      const res = await socialListProfiles({ sort, hideNsfw });
+      const res = await socialListProfiles({ sort: tab, hideNsfw });
       setData(res);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [sort, hideNsfw]);
+  }, [tab, hideNsfw]);
 
   useEffect(() => {
     void loadProfiles();
   }, [loadProfiles]);
 
-  const applyLikeUpdate = useCallback((id: string, likeCount: number) => {
+  // If a signed-in user lands on Your profile and then signs out, fall back
+  // to Top so they don't end up staring at an empty owner-only view.
+  useEffect(() => {
+    if (tab === 'mine' && !signedIn) setTab('top');
+  }, [tab, signedIn]);
+
+  const applyLikeUpdate = useCallback((id: string, likeCount: number, liked?: boolean) => {
     setData((prev) => {
       if (!prev) return prev;
       return {
@@ -102,6 +114,9 @@ export default function Discover() {
         ),
       };
     });
+    if (typeof liked === 'boolean') {
+      setViewerLiked((prev) => ({ ...prev, [id]: liked }));
+    }
   }, []);
 
   const handleCardLikeClick = useCallback(
@@ -115,16 +130,24 @@ export default function Discover() {
       }
       if (likingId) return;
       setLikingId(profile.id);
+      // Drive direction from local state instead of trial-and-error against
+      // the server. The previous "try Like, fall back to Unlike on error"
+      // pattern broke when the server treated duplicate Like as idempotent
+      // (returns success, no error to catch, no toggle).
+      const currentlyLiked = viewerLiked[profile.id] === true;
       try {
-        // We don't track viewer_has_liked on the list response (only on detail).
-        // Best-effort: try Like first; if the server says "already liked"
-        // (typically 409), fall back to Unlike for toggle UX.
-        const res = await socialLike(profile.id);
-        applyLikeUpdate(profile.id, res.like_count);
+        const res = currentlyLiked
+          ? await socialUnlike(profile.id)
+          : await socialLike(profile.id);
+        applyLikeUpdate(profile.id, res.like_count, res.viewer_has_liked);
       } catch (err) {
+        // Out of sync with server (e.g., session expired then resumed).
+        // Try the opposite op once and trust the server's state.
         try {
-          const res = await socialUnlike(profile.id);
-          applyLikeUpdate(profile.id, res.like_count);
+          const res = currentlyLiked
+            ? await socialLike(profile.id)
+            : await socialUnlike(profile.id);
+          applyLikeUpdate(profile.id, res.like_count, res.viewer_has_liked);
         } catch {
           console.warn('[discover] like toggle failed:', err);
         }
@@ -132,7 +155,7 @@ export default function Discover() {
         setLikingId(null);
       }
     },
-    [signedIn, likingId, applyLikeUpdate]
+    [signedIn, likingId, viewerLiked, applyLikeUpdate]
   );
 
 
@@ -181,11 +204,16 @@ export default function Discover() {
   );
 
   return (
-    <div className="p-6 space-y-6 h-full overflow-y-auto">
+    <div className="h-full overflow-y-auto">
+      <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <PageHeader
         title="Discover"
         description="Mod profiles published by other Grimoire users."
-        stats={data ? `${data.total} ${data.total === 1 ? 'profile' : 'profiles'}` : undefined}
+        stats={
+          tab !== 'mine' && data
+            ? `${data.total} ${data.total === 1 ? 'profile' : 'profiles'}`
+            : undefined
+        }
         action={headerAction}
       />
 
@@ -218,31 +246,14 @@ export default function Discover() {
         </div>
       )}
 
-      {signedIn && (
-        <MyPublishedSection
-          onOpenProfile={(id) => {
-            // Prefer the discover-list seed if it's there; fall back to a
-            // minimal stand-in built from the /v1/me row data via the section.
-            // The dialog will refetch detail either way so the header fills in.
-            const seed = data?.profiles.find((p) => p.id === id) ?? null;
-            if (seed) setImportTarget(seed);
-          }}
-          onUnpublished={(id) => {
-            setData((prev) =>
-              prev ? { ...prev, profiles: prev.profiles.filter((p) => p.id !== id) } : prev
-            );
-          }}
-        />
-      )}
-
       <div className="flex items-center gap-1 border-b border-border">
-        {SORTS.map(({ key, label, icon: Icon }) => {
-          const active = sort === key;
+        {BROWSE_TABS.map(({ key, label, icon: Icon }) => {
+          const active = tab === key;
           return (
             <button
               key={key}
               type="button"
-              onClick={() => setSort(key)}
+              onClick={() => setTab(key)}
               className={`px-4 py-2 -mb-px border-b-2 inline-flex items-center gap-2 text-sm transition-colors cursor-pointer ${
                 active
                   ? 'border-accent text-text-primary'
@@ -254,10 +265,61 @@ export default function Discover() {
             </button>
           );
         })}
+        {signedIn && (
+          <button
+            type="button"
+            onClick={() => setTab('mine')}
+            className={`px-4 py-2 -mb-px border-b-2 inline-flex items-center gap-2 text-sm transition-colors cursor-pointer ${
+              tab === 'mine'
+                ? 'border-accent text-text-primary'
+                : 'border-transparent text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            <UserIcon className="w-4 h-4" />
+            Your profile
+          </button>
+        )}
       </div>
 
-      {loading && !data && (
-        <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
+      {tab === 'mine' && signedIn && (
+        <MyPublishedSection
+          onOpenProfile={(id) => {
+            // Prefer the discover-list seed if it's there; otherwise the
+            // dialog refetches detail and fills in the header from /v1/profiles/:id.
+            const seed = data?.profiles.find((p) => p.id === id) ?? null;
+            if (seed) setImportTarget(seed);
+          }}
+          onUnpublished={(id) => {
+            setData((prev) =>
+              prev ? { ...prev, profiles: prev.profiles.filter((p) => p.id !== id) } : prev
+            );
+          }}
+          onUpdated={(updated) => {
+            // Keep the browse-list cache in sync so switching back to Top/New
+            // doesn't show a stale title.
+            setData((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    profiles: prev.profiles.map((p) =>
+                      p.id === updated.id
+                        ? {
+                            ...p,
+                            title: updated.title,
+                            description: updated.description,
+                            updated_at: updated.updated_at,
+                          }
+                        : p
+                    ),
+                  }
+                : prev
+            );
+          }}
+        />
+      )}
+
+      {tab !== 'mine' && loading && !data && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3">
           {Array.from({ length: 4 }).map((_, i) => (
             <Card key={i} className="p-4 animate-pulse h-32">
               <div className="h-4 bg-white/5 rounded w-1/2 mb-2" />
@@ -269,7 +331,7 @@ export default function Discover() {
         </div>
       )}
 
-      {error && (
+      {tab !== 'mine' && error && (
         <EmptyState
           icon={CloudOff}
           variant="error"
@@ -285,7 +347,7 @@ export default function Discover() {
         />
       )}
 
-      {!loading && !error && data && data.profiles.length === 0 && (
+      {tab !== 'mine' && !loading && !error && data && data.profiles.length === 0 && (
         <EmptyState
           icon={Globe2}
           title="No profiles here yet"
@@ -293,11 +355,12 @@ export default function Discover() {
         />
       )}
 
-      {data && data.profiles.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3 items-start">
+      {tab !== 'mine' && data && data.profiles.length > 0 && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3 items-start">
           {data.profiles.map((p) => {
             const isLiking = likingId === p.id;
             const isActive = importTarget?.id === p.id;
+            const liked = viewerLiked[p.id] === true;
             const openImport = () => setImportTarget(p);
             const thumbs = p.thumbnail_urls ?? [];
             // 0 -> tiny placeholder bar. 1 -> full-bleed single hero. 2-4 ->
@@ -321,15 +384,18 @@ export default function Discover() {
                 }}
                 className="text-left rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent cursor-pointer"
               >
-                <Card className={`overflow-hidden flex flex-col transition-colors ${isActive ? 'border-accent/40' : 'hover:border-white/20'}`}>
-                  {/* Image-led header: mosaic / hero with title + like
-                      overlaid on a strong bottom gradient. Layouts:
-                      - 0 thumbs   : flat header with title only
-                      - 1 thumb    : full-bleed hero behind title
-                      - 2-4 thumbs : 2x2 mosaic behind title */}
-                  <div className="relative h-40 bg-bg-tertiary overflow-hidden">
+                <Card
+                  contentClassName="p-0"
+                  className={`overflow-hidden flex flex-col transition-colors ${isActive ? 'border-accent/40' : 'hover:border-white/20'}`}
+                >
+                  {/* Image at the top, Twitter-card style. 16:9 full-bleed.
+                      Layouts:
+                      - 0 thumbs   : empty placeholder
+                      - 1 thumb    : full-bleed hero
+                      - 2-4 thumbs : 2x2 mosaic, hairline separators */}
+                  <div className="relative aspect-video bg-bg-tertiary overflow-hidden">
                     {mosaicSlots && (
-                      <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-0.5">
+                      <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-px bg-black/40">
                         {mosaicSlots.map((url, i) =>
                           url ? (
                             <img
@@ -361,109 +427,85 @@ export default function Discover() {
                         className="absolute inset-0 w-full h-full object-cover object-top"
                       />
                     )}
-
-                    {/* Strong bottom gradient so the title stays readable
-                        regardless of the underlying image. Black instead of
-                        bg-secondary so it pops on darker thumbs too. */}
-                    <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/90 via-black/50 to-transparent pointer-events-none" />
-
-                    {/* Like button: top-right, floats over the image with a
-                        backdrop-blur pill so it stays visible on any thumb. */}
-                    <button
-                      type="button"
-                      onClick={(e) => handleCardLikeClick(e, p)}
-                      disabled={isLiking}
-                      className={`absolute top-2 right-2 inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md backdrop-blur-sm bg-black/40 border border-white/10 transition-colors ${
-                        signedIn
-                          ? 'text-white hover:text-red-400 hover:bg-black/60 cursor-pointer'
-                          : 'text-white/70 cursor-help hover:bg-black/60'
-                      } disabled:opacity-50`}
-                      title={signedIn ? 'Like / unlike' : 'Sign in to like'}
-                      aria-label={signedIn ? 'Like profile' : 'Sign in to like'}
-                    >
-                      <Heart className={`w-3.5 h-3.5 ${isLiking ? 'animate-pulse' : ''}`} />
-                      <span className="tabular-nums">{p.like_count}</span>
-                    </button>
-
-                    {/* Title overlaid on the gradient. Drop-shadow as belt-
-                        and-braces in case a particular thumb beats the
-                        gradient (e.g. all-white art). */}
-                    <div
-                      className="absolute left-3 right-3 bottom-2 text-lg font-semibold text-white truncate leading-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]"
-                      title={p.title}
-                    >
-                      {p.title}
-                    </div>
+                    {(p.is_featured || p.has_nsfw) && (
+                      <div className="absolute top-2 left-2 flex items-center gap-1.5">
+                        {p.is_featured && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-sm bg-black/60 backdrop-blur-sm text-amber-300 border border-amber-300/30">
+                            <Sparkles className="w-3 h-3" />
+                            Featured
+                          </span>
+                        )}
+                        {p.has_nsfw && (
+                          <span className="inline-flex items-center text-[11px] font-medium px-1.5 py-0.5 rounded-sm bg-black/60 backdrop-blur-sm text-yellow-300 border border-yellow-300/30">
+                            NSFW
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Below the header: owner row + description (if any) +
-                      badges. Tight stack so cards stay compact. */}
-                  <div className="px-3.5 py-3 flex flex-col gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
+                  {/* Body: title block, then meta/actions row. Vertical
+                      rhythm is 12px (gap-3) between sections and 6px
+                      (gap-1.5) within the title block. */}
+                  <div className="p-4 flex flex-col gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <div
+                        className="text-base font-semibold text-text-primary leading-snug line-clamp-2"
+                        title={p.title}
+                      >
+                        {p.title}
+                      </div>
+                      {p.description && (
+                        <div className="text-sm text-text-secondary leading-snug line-clamp-2">
+                          {p.description}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2.5">
                       {p.owner.avatar_url ? (
                         <img
                           src={p.owner.avatar_url}
                           alt=""
                           referrerPolicy="no-referrer"
-                          className="w-6 h-6 rounded-full flex-shrink-0"
+                          className="w-8 h-8 rounded-full flex-shrink-0"
                         />
                       ) : (
-                        <div className="w-6 h-6 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0">
-                          <UserIcon className="w-3 h-3 text-text-secondary" />
+                        <div className="w-8 h-8 rounded-full bg-bg-tertiary flex items-center justify-center flex-shrink-0">
+                          <UserIcon className="w-4 h-4 text-text-secondary" />
                         </div>
                       )}
-                      <span className="text-xs text-text-secondary truncate" title={p.owner.display_name}>
-                        {p.owner.display_name}
-                      </span>
-                      <span className="text-[11px] text-text-tertiary flex-shrink-0">
-                        · {formatRelativeDate(isoFromUnix(p.created_at))}
-                      </span>
-                    </div>
-
-                    {p.description && (
-                      <div className="text-sm text-text-secondary line-clamp-2">
-                        {p.description}
-                      </div>
-                    )}
-
-                    {(() => {
-                      const allHeroes = p.heroes && p.heroes.length > 0
-                        ? p.heroes
-                        : p.primary_hero
-                          ? [p.primary_hero]
-                          : [];
-                      const HERO_BADGES_VISIBLE = 4;
-                      const visibleHeroes = allHeroes.slice(0, HERO_BADGES_VISIBLE);
-                      const overflowHeroes = allHeroes.slice(HERO_BADGES_VISIBLE);
-                      return (
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <Badge variant="neutral">
-                            <Boxes className="w-3 h-3 mr-1 inline" />
-                            {p.mod_count} {p.mod_count === 1 ? 'mod' : 'mods'}
-                          </Badge>
-                          {visibleHeroes.map((hero) => (
-                            <Badge key={hero} variant="neutral">{hero}</Badge>
-                          ))}
-                          {overflowHeroes.length > 0 && (
-                            <span
-                              className="inline-flex items-center px-2 py-0.5 rounded-sm text-xs font-medium border bg-white/5 text-text-secondary border-white/10 opacity-70"
-                              title={overflowHeroes.join(', ')}
-                            >
-                              +{overflowHeroes.length}
-                            </span>
-                          )}
-                          {p.is_featured && (
-                            <Badge variant="success">
-                              <Sparkles className="w-3 h-3 mr-1 inline" />
-                              Featured
-                            </Badge>
-                          )}
-                          {p.has_nsfw && <Badge variant="warning">NSFW</Badge>}
+                      <div className="flex-1 min-w-0 leading-tight">
+                        <div
+                          className="text-sm text-text-primary truncate"
+                          title={p.owner.display_name}
+                        >
+                          {p.owner.display_name}
                         </div>
-                      );
-                    })()}
+                        <div className="text-xs text-text-tertiary mt-0.5">
+                          {formatRelativeDate(isoFromUnix(p.created_at))} · {p.mod_count} {p.mod_count === 1 ? 'mod' : 'mods'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => handleCardLikeClick(e, p)}
+                        disabled={isLiking}
+                        className={`flex-shrink-0 inline-flex items-center gap-1 text-xs px-2 py-1 -mr-1 rounded-md transition-colors ${
+                          signedIn
+                            ? liked
+                              ? 'text-red-400 hover:bg-red-500/10 cursor-pointer'
+                              : 'text-text-secondary hover:text-red-400 hover:bg-white/5 cursor-pointer'
+                            : 'text-text-tertiary cursor-help hover:bg-white/5'
+                        } disabled:opacity-50`}
+                        title={signedIn ? (liked ? 'Unlike' : 'Like') : 'Sign in to like'}
+                        aria-label={signedIn ? (liked ? 'Unlike profile' : 'Like profile') : 'Sign in to like'}
+                        aria-pressed={liked}
+                      >
+                        <Heart className={`w-4 h-4 ${isLiking ? 'animate-pulse' : ''} ${liked ? 'fill-current' : ''}`} />
+                        <span className="tabular-nums">{p.like_count}</span>
+                      </button>
+                    </div>
                   </div>
-
                 </Card>
               </div>
             );
@@ -471,13 +513,14 @@ export default function Discover() {
         </div>
       )}
 
-      {data && data.profiles.length > 0 && data.total > data.profiles.length && (
+      {tab !== 'mine' && data && data.profiles.length > 0 && data.total > data.profiles.length && (
         <div className="text-xs text-text-secondary text-center pt-2 inline-flex items-center gap-2 justify-center w-full">
           <AlertTriangle className="w-3 h-3" />
           Pagination not wired up yet (showing first {data.page_size} of {data.total}).
         </div>
       )}
 
+      </div>
       {importTarget && (
         <ImportProfileDialog
           activeDeadlockPath={getActiveDeadlockPath(settings)}
@@ -489,7 +532,7 @@ export default function Discover() {
             // Stay open: the dialog shows a success state after the user
             // finishes. They can close it manually.
           }}
-          onLikeChange={(id, likeCount) => applyLikeUpdate(id, likeCount)}
+          onLikeChange={(id, likeCount, viewerHasLiked) => applyLikeUpdate(id, likeCount, viewerHasLiked)}
           onSignInRequested={() => { void handleSignIn(); }}
           onLikeWithoutSignIn={() => {
             setSignInPulse(true);

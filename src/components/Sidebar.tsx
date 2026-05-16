@@ -262,14 +262,14 @@ export default function Sidebar() {
       icon: typeof Boxes;
       label: string;
       tooltip: string;
-      experimental?: 'crosshair' | 'stats';
+      experimental?: 'crosshair' | 'stats' | 'social';
       badge?: number;
       badgeTone?: BadgeTone;
     };
     const items: NavItem[] = [
       { to: '/', icon: Boxes, label: 'Installed', tooltip: 'Mods currently in your Deadlock addons folder.', badge: installedCount, badgeTone: 'muted' },
       { to: '/browse', icon: Compass, label: 'Browse', tooltip: 'Discover and download mods from GameBanana.' },
-      { to: '/discover', icon: Globe2, label: 'Discover', tooltip: 'Browse and import profiles published by other Grimoire users.' },
+      { to: '/discover', icon: Globe2, label: 'Discover', tooltip: 'Browse and import profiles published by other Grimoire users.', experimental: 'social' },
       { to: '/locker', icon: Vault, label: 'Locker', tooltip: 'Active cosmetic skins, organized by hero.' },
       { to: '/crosshair', icon: Target, label: 'Crosshair', tooltip: 'Custom crosshair editor.', experimental: 'crosshair' },
       { to: '/autoexec', icon: ScrollText, label: 'Autoexec', tooltip: 'Console commands that run at game launch.' },
@@ -282,9 +282,10 @@ export default function Sidebar() {
     return items.filter((item) => {
       if (item.experimental === 'stats') return settings?.experimentalStats;
       if (item.experimental === 'crosshair') return settings?.experimentalCrosshair;
+      if (item.experimental === 'social') return settings?.experimentalSocial;
       return true;
     });
-  }, [settings?.experimentalStats, settings?.experimentalCrosshair, conflictCount, installedCount]);
+  }, [settings?.experimentalStats, settings?.experimentalCrosshair, settings?.experimentalSocial, conflictCount, installedCount]);
 
   const handleLaunchModded = async () => {
     if (launchPending || stopPending) return;
@@ -642,6 +643,14 @@ export default function Sidebar() {
           aria-hidden={isFullyCollapsed && !updateAvailable}
           tabIndex={isFullyCollapsed && !updateAvailable ? -1 : undefined}
         >
+          {!updateAvailable && (
+            <Settings2
+              className={`w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200 ${
+                isFullyCollapsed ? 'translate-y-0' : '-translate-y-px'
+              }`}
+              strokeWidth={1.75}
+            />
+          )}
           {labelMounted && (
             <span className={labelTransitionClass} aria-hidden={!labelsVisible}>
               {appVersion || 'v...'}

@@ -58,6 +58,7 @@ export interface AppSettings {
   autoSaveProfile: boolean;
   experimentalStats: boolean;
   experimentalCrosshair: boolean;
+  experimentalSocial: boolean;
   hasCompletedSetup: boolean;
   ignoredConflicts: string[];
   ignoreConflictsByDefault: boolean;

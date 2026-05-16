@@ -12,6 +12,8 @@ import type {
     PublishResponse,
     ProfileSort,
     ReportRequest,
+    UpdateProfileRequest,
+    UpdateProfileResponse,
 } from '@grimoire/social-types';
 import {
     deleteAccount,
@@ -23,6 +25,7 @@ import {
     publishProfile,
     reportProfile,
     unlikeProfile,
+    updateProfile,
     type ListProfilesArgs,
 } from '../services/social';
 import {
@@ -79,6 +82,16 @@ ipcMain.handle(
     'social:publish',
     async (_event, body: PublishRequest): Promise<PublishResponse> => {
         return publishProfile(body);
+    }
+);
+
+ipcMain.handle(
+    'social:updateProfile',
+    async (
+        _event,
+        args: { id: string; body: UpdateProfileRequest }
+    ): Promise<UpdateProfileResponse> => {
+        return updateProfile(args.id, args.body);
     }
 );
 

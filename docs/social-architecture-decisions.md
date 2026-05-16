@@ -315,6 +315,26 @@ A log of the load-bearing decisions made while planning Grimoire Social. Each en
 
 ---
 
+## ADR-016: Owner-only PATCH for title + description on published profiles
+
+**Date:** 2026-05-16
+**Status:** Accepted
+
+**Context.** Owners need to fix typos and tighten descriptions on profiles they've already published. Without an update endpoint the only workaround is unpublish + republish, which (a) burns the per-user publish window (ADR-004), (b) generates a new profile id so anyone who imported the old one loses provenance, and (c) resets the like count. None of those are appropriate for a copy edit.
+
+**Decision.** Add `PATCH /v1/profiles/:id` (owner-only, `requireAuth`) that updates `title` and `description` and returns the full `ProfileDetail`. Both fields are optional individually; at least one must be present. The endpoint does NOT touch the share blob or any derived fields (`mod_count`, `has_nsfw`, `primary_hero`, `heroes`, `thumbnail_urls`): mutating the mod set still goes through unpublish + republish, because those derived fields anchor the integrity of the like count and the moderation surface. The PATCH is not gated by the publish DO; it's a cheap text edit, not a publish.
+
+**Consequences.**
+- (+) Owners can copy-edit without losing likes, id, or burning the publish gate
+- (+) Wire-format change is purely additive (new endpoint + new request schema): ADR-005 compliant
+- (+) `viewer_has_liked` returns `null` on PATCH responses because the action is owner-only and the client already knows its own like state; this avoids a second query
+- (-) Adds a small write path that bypasses the DO rate limit; abuse risk is bounded by the Cloudflare Rate Limit API global throttles and the fact that only the owner can call it
+- (-) Editable text means cached card previews in other clients can drift until next list/detail fetch; acceptable since lists already refetch on every Discover open
+
+**Alternatives considered.** Rebuild the publish path to accept an existing `id` (rejected: conflates create and update, and the DO gate makes copy edits prohibitively expensive). Allow editing the share blob too (rejected: derived fields and like-count integrity make this a separate, larger decision; defer until we have a real use case beyond text fixes). Skip and tell users to unpublish/republish (rejected: ruined the "your profile" tab UX in Discover).
+
+---
+
 ## Index of decisions
 
 | ID | Title | Status |
@@ -334,3 +354,4 @@ A log of the load-bearing decisions made while planning Grimoire Social. Each en
 | ADR-013 | D1 free-tier hard-cliff is a real risk; alert at 70% usage | Accepted |
 | ADR-014 | Account deletion: hard-delete user, soft-delete profiles | Accepted |
 | ADR-015 | Shared types via Zod schemas package | Accepted |
+| ADR-016 | Owner-only PATCH for title + description on profiles | Accepted |

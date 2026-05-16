@@ -157,6 +157,7 @@ All routes JSON, all responses include `{ error: string }` on failure. Auth via 
 | `GET` | `/v1/profiles?sort=top\|new\|hero\|featured&hero=&hideNsfw=&page=` | none | Paginated list (20/page) |
 | `GET` | `/v1/profiles/:id` | none | Metadata + base64-encoded share code |
 | `POST` | `/v1/profiles` | yes | Body: `{ title, description, shareCode }`. Server decodes, validates, stores. **Returns the full created row** (see §8 read-after-write note). |
+| `PATCH` | `/v1/profiles/:id` | yes (owner) | Body: `{ title?, description? }`. Edits human-curated fields only; never touches the share blob or derived fields. Returns the full row. See ADR-016. |
 | `DELETE` | `/v1/profiles/:id` | yes (owner) | Soft delete |
 | `POST` | `/v1/profiles/:id/like` | yes | Idempotent |
 | `DELETE` | `/v1/profiles/:id/like` | yes | Idempotent |
