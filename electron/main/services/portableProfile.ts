@@ -40,10 +40,12 @@ export function encodeShareCode(json: string): string {
 }
 
 // Mirror the server-side cap so a malicious / corrupted share code can't
-// inflate into a multi-MB allocation in the Electron main process. The
-// previous implementation called gunzipSync with no maxOutputLength, which
-// let a 16 KB compressed payload expand up to ~16 MB before failing.
-const MAX_INFLATED_SHARE_CODE_BYTES = 16 * 1024;
+// inflate into a multi-MB allocation in the Electron main process. 256 KB
+// fits the worst realistic case (Deadlock's ~100-mod ceiling with every
+// optional hint filled measures ~70 KB pretty-printed; 150 mods ~106 KB)
+// with comfortable headroom for future schema growth, while still bounding
+// gzip-bomb risk to a trivial allocation.
+export const MAX_INFLATED_SHARE_CODE_BYTES = 256 * 1024;
 
 export function decodeShareCode(code: string): string {
     if (!code.startsWith(PORTABLE_PROFILE_SHARE_PREFIX)) {
@@ -62,6 +64,14 @@ export function decodeShareCode(code: string): string {
         });
     } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        const tooLarge = /buffer/i.test(msg) && /larger|too large|exceed/i.test(msg);
+        if (tooLarge) {
+            const kb = Math.round(MAX_INFLATED_SHARE_CODE_BYTES / 1024);
+            throw new Error(
+                `Share code is too large to import (exceeds ${kb} KB after decompression). ` +
+                `Export the profile to a .modprofile.json file and load it from disk instead.`
+            );
+        }
         throw new Error(
             `Invalid share code (gzip payload rejected: ${msg.slice(0, 120)})`
         );
