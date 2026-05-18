@@ -503,12 +503,20 @@ async function executeDownload(
     const details: GameBananaModDetails = await fetchModDetails(modId, section);
 
     if (!details.files || details.files.length === 0) {
-        throw new Error('No files available for this mod');
+        throw new Error(
+            'This mod has no downloadable files on GameBanana. It may have been ' +
+            'revoked (copyright, moderation) or the author removed the file. ' +
+            'The catalog entry will clear on the next sync.'
+        );
     }
 
     const file = details.files.find((f) => f.id === fileId);
     if (!file) {
-        throw new Error(`File ${fileId} not found in mod ${modId}`);
+        throw new Error(
+            'The specific file Grimoire had cached for this mod is no longer on ' +
+            'GameBanana (likely revoked or replaced). Open the mod page in Browse ' +
+            'and pick a current file, or refresh the catalog.'
+        );
     }
 
     // Validate download URL before proceeding (P0 security fix)
