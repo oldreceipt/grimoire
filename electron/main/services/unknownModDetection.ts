@@ -464,14 +464,19 @@ async function fetchBucketCandidates(
     return [...byId.values()];
 }
 
+// Accept any .vpk inside the archive, not just *_dir.vpk. Mod authors often
+// ship a single non-chunked VPK (e.g. demomanbebop.vpk) and Grimoire renames
+// it to pakNN_dir.vpk on install. The bytes are preserved, so CRC still
+// matches: but the old `_dir.vpk`-only filter skipped these archives before
+// any CRC check could happen. See GB 678174 for a repro case.
 function rawVpkPathsCouldMatch(rawPaths: string[]): boolean {
     if (rawPaths.length === 0) return false;
-    return rawPaths.some((rawPath) => rawPath.toLowerCase().endsWith('_dir.vpk'));
+    return rawPaths.some((rawPath) => rawPath.toLowerCase().endsWith('.vpk'));
 }
 
 function archiveMatchesLocalVpk(localFile: LocalVpkFingerprint, archiveEntries: ArchiveVpkCrcEntry[]): boolean {
     return archiveEntries.some((entry) => (
-        entry.name.toLowerCase().endsWith('_dir.vpk') &&
+        entry.name.toLowerCase().endsWith('.vpk') &&
         entry.uncompressedSize === localFile.size &&
         entry.crc32.toLowerCase() === localFile.crc32
     ));
