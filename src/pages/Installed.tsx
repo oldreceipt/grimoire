@@ -1380,7 +1380,12 @@ export default function Installed() {
           onClick={() => setUpdateAllConfirmOpen(true)}
           icon={Download}
           isLoading={!!updateAllProgress}
-          title="Re-download every mod with a newer version on GameBanana and restore each one's enabled state"
+          aria-live="polite"
+          title={
+            updateAllProgress
+              ? 'Update in progress. Please wait until all mods finish before starting another.'
+              : "Re-download every mod with a newer version on GameBanana and restore each one's enabled state"
+          }
         >
           {updateAllProgress
             ? `Updating ${updateAllProgress.done}/${updateAllProgress.total}…`
@@ -1547,14 +1552,14 @@ export default function Installed() {
               const pending = mods.filter((m) => updatesAvailable.has(m.id));
               if (pending.length === 0) return null;
               return (
-                <div className="update-stripes border border-border bg-bg-tertiary/40 rounded-md px-3 py-2 max-h-48 overflow-y-auto">
-                  <div className="text-[11px] uppercase tracking-wider text-text-secondary mb-1.5 font-semibold">
-                    Mods receiving updates
+                <div className="update-stripes border border-accent/20 bg-bg-tertiary/40 rounded-md px-3 py-2 max-h-48 overflow-y-auto">
+                  <div className="text-[10px] uppercase tracking-wider text-accent mb-1.5 font-semibold">
+                    Mods receiving updates ({pending.length})
                   </div>
                   <ul className="space-y-1 text-sm text-text-primary">
                     {pending.map((m) => (
                       <li key={m.id} className="flex items-center gap-2 min-w-0">
-                        <Download className="w-3.5 h-3.5 text-text-secondary flex-shrink-0" />
+                        <Download className="w-3.5 h-3.5 text-accent flex-shrink-0" />
                         <span className="truncate" title={m.name}>{m.name}</span>
                       </li>
                     ))}
@@ -1571,14 +1576,18 @@ export default function Installed() {
       />
 
       {updateAllError && (
-        <div className="fixed bottom-4 right-4 z-50 max-w-md bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg px-4 py-3 shadow-lg flex items-start gap-3">
+        <div
+          role="alert"
+          aria-live="polite"
+          className="fixed bottom-4 right-4 z-50 max-w-md bg-state-danger/10 border border-state-danger/40 text-state-danger rounded-sm px-4 py-3 shadow-lg flex items-start gap-3 animate-fade-in"
+        >
           <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <div className="flex-1 text-sm">{updateAllError}</div>
+          <div className="flex-1 text-sm text-text-primary">{updateAllError}</div>
           <button
             type="button"
             onClick={() => setUpdateAllError(null)}
-            className="text-red-300 hover:text-red-100 p-1 -m-1 cursor-pointer"
-            aria-label="Dismiss"
+            className="text-state-danger hover:text-text-primary p-1 -m-1 cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-state-danger"
+            aria-label="Dismiss update error"
           >
             <X className="w-4 h-4" />
           </button>
@@ -2687,13 +2696,15 @@ function ModCard({
                 </Tag>
               )}
               {updateAvailable && (
-                <span
+                <Tag
+                  tone="accent"
+                  variant="overlay"
+                  icon={Download}
                   title="A newer version is available on GameBanana"
-                  className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-semibold leading-none bg-black/75 backdrop-blur-sm border border-white/40 text-white shadow-[0_1px_2px_rgba(0,0,0,0.45)] uppercase tracking-wide"
+                  className="uppercase tracking-wide"
                 >
-                  <Download className="w-3 h-3" />
                   Update
-                </span>
+                </Tag>
               )}
             </div>
           </>
@@ -2909,13 +2920,14 @@ function ModCard({
                 <Tag tone="danger" className="flex-shrink-0">18+</Tag>
               )}
               {updateAvailable && (
-                <span
+                <Tag
+                  tone="accent"
+                  icon={Download}
                   title="A newer version is available on GameBanana"
-                  className="flex-shrink-0 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-semibold leading-none bg-white/10 border border-white/30 text-text-primary uppercase tracking-wide"
+                  className="flex-shrink-0 uppercase tracking-wide"
                 >
-                  <Download className="w-3 h-3" />
                   Update
-                </span>
+                </Tag>
               )}
               {mod.enabled && (
                 <Tag

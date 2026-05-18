@@ -207,28 +207,22 @@ export default function VariantPickerModal({
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                         {onUpdateGroup && variantsWithUpdate && variantsWithUpdate.size > 0 && (
-                            <button
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                icon={Download}
+                                isLoading={isUpdating}
                                 onClick={() => void onUpdateGroup()}
-                                disabled={isUpdating}
-                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-text-primary bg-white/10 border border-white/30 hover:bg-white/15 hover:border-white/50 rounded cursor-pointer transition-colors disabled:cursor-default disabled:opacity-60"
                                 title={
                                     isUpdating
                                         ? 'Update already in progress'
                                         : `Re-download ${variantsWithUpdate.size} file${variantsWithUpdate.size === 1 ? '' : 's'} and restore their enabled state`
                                 }
                             >
-                                {isUpdating && updateProgress ? (
-                                    <>
-                                        <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                                        Updating {updateProgress.done}/{updateProgress.total}
-                                    </>
-                                ) : (
-                                    <>
-                                        <Download className="w-3.5 h-3.5" />
-                                        Update {variantsWithUpdate.size}
-                                    </>
-                                )}
-                            </button>
+                                {isUpdating && updateProgress
+                                    ? `Updating ${updateProgress.done}/${updateProgress.total}`
+                                    : `Update ${variantsWithUpdate.size}`}
+                            </Button>
                         )}
                         {onOpenModDetails && (
                             <button
@@ -407,13 +401,14 @@ export default function VariantPickerModal({
                                                     </span>
                                                     {v.isArchived && <ArchivedTag />}
                                                     {hasUpdate && (
-                                                        <span
+                                                        <Tag
+                                                            tone="accent"
+                                                            icon={Download}
                                                             title="A newer version is available on GameBanana"
-                                                            className="flex-shrink-0 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold leading-none bg-white/10 border border-white/30 text-text-primary uppercase tracking-wide"
+                                                            className="flex-shrink-0 uppercase tracking-wide"
                                                         >
-                                                            <Download className="w-3 h-3" />
                                                             Update
-                                                        </span>
+                                                        </Tag>
                                                     )}
                                                     {conflictDetails.length > 0 && (
                                                         <Tag
