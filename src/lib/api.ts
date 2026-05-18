@@ -72,9 +72,6 @@ export async function applyUnknownModMatch(modId: string, args: ApplyUnknownModM
 }
 
 export async function applyUnknownCustomMod(modId: string, args: ApplyUnknownCustomModArgs): Promise<Mod> {
-  if (typeof window.electronAPI.applyUnknownCustomMod !== 'function') {
-    throw new Error('Make Custom Mod is not available in the current Electron preload. Restart pnpm dev so the new main/preload API is loaded.');
-  }
   return window.electronAPI.applyUnknownCustomMod(modId, args);
 }
 

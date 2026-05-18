@@ -137,7 +137,11 @@ async function scanFolder(folder: string, enabled: boolean): Promise<Mod[]> {
 }
 
 /**
- * Scan for all mods in both enabled and disabled folders (async)
+ * Scan for all mods in both enabled and disabled folders (async).
+ *
+ * Not pure: reconcileEnabledDisabledCollisions may rename or unlink files
+ * when the same pakNN_dir.vpk exists in both addons/ and .disabled/. The
+ * heal is idempotent, so repeated scans no-op after the first pass.
  */
 export async function scanMods(deadlockPath: string): Promise<Mod[]> {
     const addonsPath = getAddonsPath(deadlockPath);
