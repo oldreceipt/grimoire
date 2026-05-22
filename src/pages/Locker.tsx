@@ -25,7 +25,6 @@ import {
   countLockerSkins,
   detectMinaTextures,
   findMinaVariant,
-  getLockerSkinKey,
   getHeroFacePosition,
   getHeroNamePath,
   getHeroRenderPath,
@@ -205,75 +204,22 @@ export default function Locker() {
     [minaVariants, minaSelection]
   );
 
+  // Both skins and sounds toggle independently. Users layering multiple VPKs
+  // on the same hero (textures + weapons + voice) is a valid workflow; the
+  // Locker reflects what's enabled rather than enforcing one-at-a-time. Real
+  // conflicts surface on the Conflicts page.
   const setActiveSkin = async (heroId: number, modId: string) => {
-    // Pick the section list (skins vs sounds) that actually contains the
-    // clicked mod. Keeps cross-section toggles independent: picking a Geist
-    // skin must not silently kill an enabled Geist voice pack.
     const skins = heroMods.map.get(heroId) ?? [];
     const sounds = heroSounds.map.get(heroId) ?? [];
-    const isSound = sounds.some((m) => m.id === modId);
-    const list = isSound ? sounds : skins;
-    const selected = list.find((mod) => mod.id === modId);
-    if (!selected) return;
-
-    // Sounds: just flip the one mod. A player can reasonably want a voice
-    // pack from one upload running alongside ability sounds from another,
-    // so the Sounds section doesn't enforce single-active semantics.
-    if (isSound) {
-      await toggleMod(modId);
-      return;
-    }
-
-    const selectedSkinKey = getLockerSkinKey(selected);
-    const selectedSkinFiles = list.filter((mod) => getLockerSkinKey(mod) === selectedSkinKey);
-    const selectedEnabledFiles = selectedSkinFiles.filter((mod) => mod.enabled);
-    const otherEnabledFiles = list.filter(
-      (mod) => getLockerSkinKey(mod) !== selectedSkinKey && mod.enabled
-    );
-    const actions: Promise<void>[] = [];
-    if (selectedEnabledFiles.length > 0 && otherEnabledFiles.length === 0) {
-      for (const mod of selectedEnabledFiles) {
-        actions.push(toggleMod(mod.id));
-      }
-    } else {
-      for (const mod of otherEnabledFiles) {
-        actions.push(toggleMod(mod.id));
-      }
-      if (selectedEnabledFiles.length === 0 && !selected.enabled) {
-        actions.push(toggleMod(selected.id));
-      }
-    }
-    await Promise.all(actions);
+    if (!skins.some((m) => m.id === modId) && !sounds.some((m) => m.id === modId)) return;
+    await toggleMod(modId);
   };
 
-  // Toggle one variant within a group. For skins, disables enabled mods from
-  // other groups for the hero (so switching groups still feels exclusive),
-  // but leaves the target's siblings alone so users can co-enable e.g. a
-  // model + voice VPK. For sounds, just toggles the clicked mod so several
-  // sound mods can run simultaneously on the same hero.
   const toggleHeroVariant = async (heroId: number, modId: string) => {
     const skins = heroMods.map.get(heroId) ?? [];
     const sounds = heroSounds.map.get(heroId) ?? [];
-    const isSound = sounds.some((m) => m.id === modId);
-    const list = isSound ? sounds : skins;
-    const target = list.find((m) => m.id === modId);
-    if (!target) return;
-
-    if (isSound) {
-      await toggleMod(modId);
-      return;
-    }
-
-    const groupKey = getLockerSkinKey(target);
-    const actions: Promise<void>[] = [];
-    for (const mod of list) {
-      if (mod.id === modId) continue;
-      if (!mod.enabled) continue;
-      const otherKey = getLockerSkinKey(mod);
-      if (otherKey !== groupKey) actions.push(toggleMod(mod.id));
-    }
-    actions.push(toggleMod(modId));
-    await Promise.all(actions);
+    if (!skins.some((m) => m.id === modId) && !sounds.some((m) => m.id === modId)) return;
+    await toggleMod(modId);
   };
 
   // Sorted hero name list for the "tag as hero" dropdown on Unassigned cards.
