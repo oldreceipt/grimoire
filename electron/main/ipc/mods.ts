@@ -91,9 +91,13 @@ ipcMain.handle('get-mods', async (): Promise<Mod[]> => {
     }
     const mods = await scanMods(deadlockPath);
     // Self-heal users whose metadata.json still carries orphan entries from
-    // pre-fix deletes (issue #26). pruneOrphanMetadata is a no-op when there
-    // are none, so the steady-state cost is one JSON parse.
-    pruneOrphanMetadata(new Set(mods.map((m) => m.fileName)));
+    // pre-fix deletes (issue #26). Skip while dev mode is active: the dev
+    // sandbox starts empty, and pruning against it would wipe every real
+    // install's name/thumbnail/gameBananaId from the global metadata sidecar.
+    const settings = loadSettings();
+    if (!settings.devMode) {
+        pruneOrphanMetadata(new Set(mods.map((m) => m.fileName)));
+    }
     return mods.map(enrichMod);
 });
 
