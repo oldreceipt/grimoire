@@ -383,6 +383,7 @@ ipcMain.handle(
         setModMetadata(target.fileName, {
             lockerHero: trimmed.length > 0 ? trimmed : undefined,
             lockerHeroSource: trimmed.length > 0 ? 'manual' : undefined,
+            ...(trimmed.length > 0 ? { globalType: undefined } : {}),
         });
         return enrichMod(target);
     }

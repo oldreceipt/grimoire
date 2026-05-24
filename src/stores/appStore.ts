@@ -324,27 +324,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   editLocalMod: async (modId: string, args: EditLocalModArgs) => {
-    try {
-      const updated = await api.editLocalMod(modId, args);
-      set({
-        mods: get().mods.map((m) => (m.id === modId ? updated : m)),
-      });
-    } catch (err) {
-      set({ modsError: String(err) });
-      throw err;
-    }
+    const updated = await api.editLocalMod(modId, args);
+    set({
+      mods: get().mods.map((m) => (m.id === modId ? updated : m)),
+    });
   },
 
   setModLockerHero: async (modId: string, heroName: string | null) => {
-    try {
-      const updated = await api.setModLockerHero(modId, heroName);
-      set({
-        mods: get().mods.map((m) => (m.id === modId ? updated : m)),
-      });
-    } catch (err) {
-      set({ modsError: String(err) });
-      throw err;
-    }
+    const updated = await api.setModLockerHero(modId, heroName);
+    set({
+      mods: get().mods.map((m) => (m.id === modId ? updated : m)),
+    });
   },
 
   setVariantLabel: async (modId: string, label: string) => {

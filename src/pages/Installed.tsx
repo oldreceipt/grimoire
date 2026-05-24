@@ -3905,6 +3905,7 @@ function ModCard({
   const [menuOpen, setMenuOpen] = useState(false);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
   const [menuBusy, setMenuBusy] = useState(false);
+  const [menuError, setMenuError] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -3932,10 +3933,14 @@ function ModCard({
   const applyLockerTag = async (heroName: string | null) => {
     if (!onTagLocker || menuBusy) return;
     setMenuBusy(true);
+    setMenuError(null);
     try {
       await onTagLocker(heroName);
       setMenuOpen(false);
       setTagPickerOpen(false);
+    } catch (err) {
+      console.error('[Installed] Failed to set locker hero:', err);
+      setMenuError(err instanceof Error ? err.message : String(err));
     } finally {
       setMenuBusy(false);
     }
@@ -4014,6 +4019,7 @@ function ModCard({
             e.stopPropagation();
             setMenuOpen((open) => !open);
             setTagPickerOpen(false);
+            setMenuError(null);
           }}
           className={`${utilityActionClasses} ${isList ? '' : 'opacity-0 group-hover/card:opacity-90 focus:opacity-100 aria-expanded:opacity-100'}`}
           title="More actions"
@@ -4028,6 +4034,11 @@ function ModCard({
             role="menu"
             className="absolute bottom-full right-0 z-[70] mb-2 w-56 rounded-lg border border-border bg-bg-secondary p-1 shadow-xl animate-fade-in"
           >
+            {menuError && (
+              <div className="mb-1 rounded-md border border-state-danger/30 bg-state-danger/10 px-2 py-1.5 text-xs text-state-danger">
+                {menuError}
+              </div>
+            )}
             {onEditLocal && (
               <button
                 type="button"
