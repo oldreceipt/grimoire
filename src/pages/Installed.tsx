@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Package,
   Loader2,
@@ -27,6 +27,7 @@ import {
   PowerOff,
   Tag as TagIcon,
   Pencil,
+  MoreHorizontal,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../stores/appStore';
@@ -297,9 +298,12 @@ export default function Installed() {
     deleteMod,
     reorderMods,
     editLocalMod,
+    setModLockerHero,
     setVariantLabel,
     importCustomMod,
     soundVolume,
+    installedScrollTop,
+    setInstalledScrollTop,
   } = useAppStore();
   const activeDeadlockPath = getActiveDeadlockPath(settings);
 
@@ -428,6 +432,28 @@ export default function Installed() {
   const [updateAllConfirmOpen, setUpdateAllConfirmOpen] = useState(false);
   const [updateAllProgress, setUpdateAllProgress] = useState<{ done: number; total: number } | null>(null);
   const [updateAllError, setUpdateAllError] = useState<string | null>(null);
+  const initialInstalledScrollTopRef = useRef(installedScrollTop);
+  const latestInstalledScrollTopRef = useRef(installedScrollTop);
+
+  useLayoutEffect(() => {
+    const main = document.querySelector('main');
+    const initialScrollTop = initialInstalledScrollTopRef.current;
+    if (!main || initialScrollTop <= 0) return;
+    main.scrollTop = initialScrollTop;
+  }, []);
+
+  useEffect(() => {
+    const main = document.querySelector('main');
+    if (!main) return;
+    const onScroll = () => {
+      latestInstalledScrollTopRef.current = main.scrollTop;
+    };
+    main.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      main.removeEventListener('scroll', onScroll);
+      setInstalledScrollTop(latestInstalledScrollTopRef.current);
+    };
+  }, [setInstalledScrollTop]);
 
   const openModDetails = async (m: typeof mods[number]) => {
     if (!m.gameBananaId) return;
@@ -1039,7 +1065,6 @@ export default function Installed() {
         await setModLockerHero(targets[i].id, heroName);
         setBulkProgress({ verb: 'Tagging', done: i + 1, total: targets.length });
       }
-      await loadMods();
     } catch (err) {
       console.error('[Installed] Bulk tag failed:', err);
     } finally {
@@ -1859,6 +1884,7 @@ export default function Installed() {
           onToggle={() => toggleMod(mod.id)}
           onDelete={() => setModToDelete({ ids: [mod.id], name: mod.name, isGroup: false })}
           onEditLocal={!mod.gameBananaId ? () => setLocalEditMod(mod) : undefined}
+          onTagLocker={(heroName) => setModLockerHero(mod.id, heroName)}
           onFixUnknown={mod.isUnknown ? () => openUnknownModFix(mod, 'single') : undefined}
           fixingUnknown={unknownFilterPendingIds.has(mod.id)}
           onCommitPriority={(p) => commitPriorityForMod(mod.id, p)}
@@ -1970,6 +1996,11 @@ export default function Installed() {
             isGroup: true,
           })
         }
+        onTagLocker={async (heroName) => {
+          for (const variant of entry.variants) {
+            await setModLockerHero(variant.id, heroName);
+          }
+        }}
         onCommitPriority={(p) => commitPriorityForMod(entry.primary.id, p)}
         selectMode={selectMode}
         selected={entrySelected}
@@ -3429,6 +3460,7 @@ interface ModCardProps {
   onToggle: () => void;
   onDelete: () => void;
   onEditLocal?: () => void;
+  onTagLocker?: (heroName: string | null) => void | Promise<void>;
   onFixUnknown?: () => void;
   fixingUnknown?: boolean;
   /** Collision-tolerant priority commit. Passed through to PriorityEditor so
@@ -3786,6 +3818,7 @@ function ModCard({
   onToggle,
   onDelete,
   onEditLocal,
+  onTagLocker,
   onFixUnknown,
   fixingUnknown,
   onCommitPriority,
@@ -3814,7 +3847,44 @@ function ModCard({
   const variantStatusTitle = group
     ? `${enabledTitle || 'No files enabled'} - click card to choose files`
     : '';
-  const hasUtilityActions = !!onEditLocal || mod.isUnknown || (mod.merged && (!!onCopyShareCode || !!onUnmerge));
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [menuBusy, setMenuBusy] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+        setTagPickerOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpen(false);
+        setTagPickerOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  const applyLockerTag = async (heroName: string | null) => {
+    if (!onTagLocker || menuBusy) return;
+    setMenuBusy(true);
+    try {
+      await onTagLocker(heroName);
+      setMenuOpen(false);
+      setTagPickerOpen(false);
+    } finally {
+      setMenuBusy(false);
+    }
+  };
 
   const indicatorClasses = (() => {
     if (!isDropTarget || !dropPosition) return '';
@@ -3855,9 +3925,9 @@ function ModCard({
       : '';
   const metaChipClasses = 'inline-flex h-[18px] min-w-0 max-w-full items-center overflow-hidden truncate rounded border border-white/[0.06] bg-bg-tertiary/65 px-1.5 text-[11px] leading-none text-text-secondary/80';
   const technicalMetaClasses = 'min-w-0 truncate font-mono text-[11px] text-text-secondary/55 hover:text-text-secondary cursor-help';
-  const actionRevealClasses = 'opacity-0 group-hover/card:opacity-70 focus:opacity-100 hover:opacity-100 focus-within:opacity-100';
   const utilityActionClasses = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 cursor-pointer disabled:opacity-60';
-  const deleteActionClasses = `inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-state-danger/10 hover:text-state-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-state-danger/70 cursor-pointer ${actionRevealClasses}`;
+  const menuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-primary hover:bg-bg-tertiary focus:outline-none focus-visible:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50';
+  const dangerMenuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-state-danger hover:bg-state-danger/10 focus:outline-none focus-visible:bg-state-danger/10 disabled:cursor-not-allowed disabled:opacity-50';
   const toggleClasses = `relative h-5 w-10 rounded-full transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary ${
     mod.enabled ? 'bg-accent shadow-[0_0_0_1px_rgba(255,122,47,0.25)]' : 'bg-bg-tertiary border border-border hover:border-white/20'
   }`;
@@ -3880,83 +3950,173 @@ function ModCard({
   const gridTagsClasses = 'h-[22px] flex-nowrap overflow-hidden';
   const actions = (
     <div className="ml-auto flex items-center gap-1">
-      {hasUtilityActions && (
-        <div
-          className={`flex items-center gap-1 rounded-md border border-border/60 bg-bg-secondary/45 p-0.5 transition-opacity duration-200 ${isList ? '' : 'opacity-0 group-hover/card:opacity-90 focus-within:opacity-100'}`}
+      <div className="relative" ref={menuRef} data-card-action="true">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen((open) => !open);
+            setTagPickerOpen(false);
+          }}
+          className={`${utilityActionClasses} ${isList ? '' : 'opacity-0 group-hover/card:opacity-90 focus:opacity-100 aria-expanded:opacity-100'}`}
+          title="More actions"
+          aria-label={`More actions for ${mod.name}`}
+          aria-expanded={menuOpen}
           data-card-action="true"
         >
-          {onEditLocal && (
+          <MoreHorizontal className="w-4 h-4" />
+        </button>
+        {menuOpen && (
+          <div
+            role="menu"
+            className="absolute bottom-full right-0 z-[70] mb-2 w-56 rounded-lg border border-border bg-bg-secondary p-1 shadow-xl animate-fade-in"
+          >
+            {onEditLocal && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onEditLocal();
+                }}
+                className={menuItemClasses}
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Edit local metadata
+              </button>
+            )}
+            {onOpenDetails && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onOpenDetails();
+                }}
+                className={menuItemClasses}
+              >
+                <Info className="w-3.5 h-3.5" />
+                View details
+              </button>
+            )}
+            {onTagLocker && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTagPickerOpen((open) => !open);
+                  }}
+                  className={menuItemClasses}
+                >
+                  <TagIcon className="w-3.5 h-3.5" />
+                  Tag for Locker
+                </button>
+                {tagPickerOpen && (
+                  <div className="my-1 max-h-56 overflow-y-auto rounded-md border border-border bg-bg-primary/40 p-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void applyLockerTag(null);
+                      }}
+                      disabled={menuBusy || !mod.lockerHero}
+                      className="w-full rounded px-2 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Clear manual tag
+                    </button>
+                    <div className="my-1 h-px bg-border" />
+                    {HERO_NAMES.map((heroName) => (
+                      <button
+                        key={heroName}
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void applyLockerTag(heroName);
+                        }}
+                        disabled={menuBusy}
+                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50 ${
+                          mod.lockerHero === heroName ? 'text-accent' : 'text-text-primary'
+                        }`}
+                      >
+                        <span>{heroName}</span>
+                        {mod.lockerHero === heroName && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            {mod.isUnknown && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onFixUnknown?.();
+                }}
+                disabled={!onFixUnknown}
+                className={menuItemClasses}
+              >
+                {fixingUnknown ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Wrench className="w-3.5 h-3.5" />
+                )}
+                Fix unknown match
+              </button>
+            )}
+            {mod.merged && onCopyShareCode && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onCopyShareCode();
+                }}
+                className={menuItemClasses}
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                Copy share code
+              </button>
+            )}
+            {mod.merged && onUnmerge && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onUnmerge();
+                }}
+                className={menuItemClasses}
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                Unmerge
+              </button>
+            )}
+            <div className="my-1 h-px bg-border" />
             <button
               type="button"
+              role="menuitem"
               onClick={(e) => {
                 e.stopPropagation();
-                onEditLocal();
+                setMenuOpen(false);
+                onDelete();
               }}
-              className={utilityActionClasses}
-              title="Edit local mod"
-              aria-label={`Edit local mod ${mod.name}`}
+              className={dangerMenuItemClasses}
             >
-              <Pencil className="w-4 h-4" />
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete
             </button>
-          )}
-          {mod.isUnknown && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onFixUnknown?.();
-              }}
-              disabled={!onFixUnknown}
-              className={utilityActionClasses}
-              title="Fix unknown mod"
-              aria-label={`Fix unknown mod ${mod.name}`}
-            >
-              {fixingUnknown ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Wrench className="w-4 h-4" />
-              )}
-            </button>
-          )}
-          {mod.merged && onCopyShareCode && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCopyShareCode();
-              }}
-              className={utilityActionClasses}
-              title="Copy share code (paste into any Grimoire to import the sources)"
-              aria-label={`Copy share code for ${mod.name}`}
-            >
-              <Share2 className="w-4 h-4" />
-            </button>
-          )}
-          {mod.merged && onUnmerge && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onUnmerge();
-              }}
-              className={utilityActionClasses}
-              title="Unmerge (restore source mods)"
-              aria-label={`Unmerge ${mod.name}`}
-            >
-              <Scissors className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      )}
-      <button
-        onClick={onDelete}
-        className={deleteActionClasses}
-        title="Delete mod"
-        aria-label={`Delete ${mod.name}`}
-        data-card-action="true"
-      >
-        <Trash2 className="w-4 h-4" />
-      </button>
+          </div>
+        )}
+      </div>
       <button
         onClick={onToggle}
         aria-pressed={mod.enabled}

@@ -119,6 +119,10 @@ interface AppState {
   // the user left it instead of refetching + scrolling to top.
   browseSession: BrowseSessionCache | null;
 
+  // Installed-page scroll position. The page uses Layout's shared <main>
+  // scroller, so keep this tiny session value in the store across navigation.
+  installedScrollTop: number;
+
   // Actions
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
@@ -137,6 +141,7 @@ interface AppState {
   swapModPriority: (modIdA: string, modIdB: string) => Promise<void>;
   reorderMods: (orderedFileNames: string[]) => Promise<void>;
   editLocalMod: (modId: string, args: EditLocalModArgs) => Promise<void>;
+  setModLockerHero: (modId: string, heroName: string | null) => Promise<void>;
   setVariantLabel: (modId: string, label: string) => Promise<void>;
   importCustomMod: (args: { vpkPath: string; name: string; thumbnailDataUrl?: string; nsfw?: boolean }) => Promise<void>;
 
@@ -154,6 +159,7 @@ interface AppState {
 
   // Browse session cache (loaded mods + scroll position)
   setBrowseSession: (cache: BrowseSessionCache | null) => void;
+  setInstalledScrollTop: (scrollTop: number) => void;
 }
 
 // The main process throws this exact phrase from every "can't add a 100th
@@ -176,6 +182,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   soundVolume: 0.7,
   browseUi: { ...DEFAULT_BROWSE_UI },
   browseSession: null,
+  installedScrollTop: 0,
 
   // Load settings from backend
   loadSettings: async () => {
@@ -326,6 +333,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  setModLockerHero: async (modId: string, heroName: string | null) => {
+    try {
+      const updated = await api.setModLockerHero(modId, heroName);
+      set({
+        mods: get().mods.map((m) => (m.id === modId ? updated : m)),
+      });
+    } catch (err) {
+      set({ modsError: String(err) });
+      throw err;
+    }
+  },
+
   setVariantLabel: async (modId: string, label: string) => {
     try {
       const updated = await api.setVariantLabel(modId, label);
@@ -403,6 +422,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setBrowseSession: (cache: BrowseSessionCache | null) => {
     set({ browseSession: cache });
+  },
+
+  setInstalledScrollTop: (scrollTop: number) => {
+    set({ installedScrollTop: Math.max(0, scrollTop) });
   },
 }));
 
