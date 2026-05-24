@@ -53,9 +53,12 @@ let lockerPageScrollTop = 0;
 let lockerCategoriesCache: GameBananaCategoryNode[] | null = null;
 const lockerLoadedImageUrls = new Set<string>();
 const lockerLoadingImageUrls = new Set<string>();
+const lockerImageListeners = new Set<() => void>();
 
 function rememberLockerImageLoaded(src: string | undefined) {
-  if (src) lockerLoadedImageUrls.add(src);
+  if (!src || lockerLoadedImageUrls.has(src)) return;
+  lockerLoadedImageUrls.add(src);
+  for (const listener of lockerImageListeners) listener();
 }
 
 function prewarmLockerImage(src: string | undefined) {
@@ -66,7 +69,7 @@ function prewarmLockerImage(src: string | undefined) {
   image.decoding = 'async';
   image.onload = () => {
     lockerLoadingImageUrls.delete(src);
-    lockerLoadedImageUrls.add(src);
+    rememberLockerImageLoaded(src);
   };
   image.onerror = () => {
     lockerLoadingImageUrls.delete(src);
@@ -824,7 +827,6 @@ function GlobalGalleryCard({ count, typeCount, onNavigate }: GlobalGalleryCardPr
     <div
       onClick={onNavigate}
       className="group relative w-full cursor-pointer overflow-hidden rounded-2xl border border-accent/40 bg-bg-secondary text-left shadow-sm transition-transform duration-300 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '0 200px' }}
     >
       <div className="relative aspect-[3/4]">
         <img
@@ -1231,8 +1233,7 @@ function HeroGalleryCard({
   const facePositionX = getHeroFacePosition(hero.name);
   const [fallbackStep, setFallbackStep] = useState(0);
   const [nameFailed, setNameFailed] = useState(false);
-  const [renderLoaded, setRenderLoaded] = useState(false);
-  const [nameLoaded, setNameLoaded] = useState(false);
+  const [, setImageCacheVersion] = useState(0);
 
   const renderSrc = fallbackStep === 0
     ? renderLocal
@@ -1241,11 +1242,22 @@ function HeroGalleryCard({
       : fallbackStep === 2
         ? (hero.iconUrl ?? '')
         : '';
-  const isRenderReady = !!renderSrc && (renderLoaded || lockerLoadedImageUrls.has(renderSrc));
-  const isNameReady = nameLoaded || lockerLoadedImageUrls.has(namePath);
+  const isRenderReady = !!renderSrc && lockerLoadedImageUrls.has(renderSrc);
+
+  useEffect(() => {
+    const tick = () => setImageCacheVersion((version) => version + 1);
+    lockerImageListeners.add(tick);
+    return () => {
+      lockerImageListeners.delete(tick);
+    };
+  }, []);
+
+  useEffect(() => {
+    prewarmLockerImage(renderSrc);
+    prewarmLockerImage(namePath);
+  }, [namePath, renderSrc]);
 
   const handleRenderError = () => {
-    setRenderLoaded(false);
     if (fallbackStep === 0) {
       setFallbackStep(1);
       return;
@@ -1265,37 +1277,32 @@ function HeroGalleryCard({
       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-80" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.06),_transparent_55%)] opacity-60 transition-opacity duration-300 group-hover:opacity-100" />
       <div className="relative aspect-[3/4]">
-        {/* Shimmer shows whenever the image hasn't decoded yet or we're
-            still waiting for the IntersectionObserver to reveal the card.
-            Always painted at least once because we don't short-circuit
-            onLoad based on img.complete — locally-bundled images would
-            otherwise skip the skeleton entirely. */}
         {!isRenderReady && fallbackStep < 3 && (
           <div className="absolute inset-0 skeleton-shimmer bg-bg-tertiary" aria-hidden />
         )}
         {renderSrc && fallbackStep < 3 && (
-          <img
-            ref={(el) => {
-              if (el && el.complete && el.naturalWidth > 0) {
-                rememberLockerImageLoaded(renderSrc);
-                setRenderLoaded(true);
-              }
-            }}
-            src={renderSrc}
-            alt={hero.name}
-            className={`absolute inset-0 h-full w-full object-cover will-change-transform backface-visibility-hidden group-hover:scale-[1.06] scale-100 ${isRenderReady ? 'opacity-100' : 'opacity-0'} transition-[opacity,transform] duration-500`}
-            style={{
-              objectPosition: `${facePositionX}% 20%`,
-              imageRendering: 'auto',
-              transform: 'translateZ(0)',
-            }}
-            decoding="async"
-            onLoad={() => {
-              rememberLockerImageLoaded(renderSrc);
-              setRenderLoaded(true);
-            }}
-            onError={handleRenderError}
-          />
+          <>
+            <div
+              className="absolute inset-0 h-full w-full bg-cover will-change-transform backface-visibility-hidden group-hover:scale-[1.06] scale-100 transition-transform duration-500"
+              style={{
+                backgroundImage: `url(${JSON.stringify(renderSrc)})`,
+                backgroundPosition: `${facePositionX}% 20%`,
+                imageRendering: 'auto',
+                transform: 'translateZ(0)',
+              }}
+              aria-label={hero.name}
+              role="img"
+            />
+            <img
+              src={renderSrc}
+              alt=""
+              aria-hidden
+              className="pointer-events-none absolute h-px w-px opacity-0"
+              decoding="async"
+              onLoad={() => rememberLockerImageLoaded(renderSrc)}
+              onError={handleRenderError}
+            />
+          </>
         )}
         {fallbackStep === 3 && (
           <div className="absolute inset-0 flex items-center justify-center text-text-secondary">
@@ -1353,28 +1360,14 @@ function HeroGalleryCard({
           <div className="text-sm font-semibold text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)]">{hero.name}</div>
         ) : (
           <div className="relative w-[70%] h-6 sm:h-7 ml-auto">
-            {!isNameReady && (
-              <div className="absolute inset-0 skeleton-shimmer bg-white/10 rounded-sm" aria-hidden />
-            )}
             <img
-              ref={(el) => {
-                // Sub-100KB PNGs over file:// can finish loading before React
-                // attaches onLoad, leaving the image cached but stuck at
-                // opacity-0. Sync the state from img.complete on every mount.
-                if (el && el.complete && el.naturalWidth > 0) {
-                  rememberLockerImageLoaded(namePath);
-                  setNameLoaded(true);
-                }
-              }}
               src={namePath}
               alt={hero.name}
-              className={`absolute inset-0 w-full h-full object-contain object-right drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] will-change-transform backface-visibility-hidden group-hover:scale-105 scale-100 ${isNameReady ? 'opacity-100' : 'opacity-0'} transition-[opacity,transform] duration-500`}
+              className="absolute inset-0 w-full h-full object-contain object-right drop-shadow-[0_2px_12px_rgba(0,0,0,0.6)] will-change-transform backface-visibility-hidden group-hover:scale-105 scale-100 transition-transform duration-300"
               style={{ transform: 'translateZ(0)' }}
-              decoding="async"
-              onLoad={() => {
-                rememberLockerImageLoaded(namePath);
-                setNameLoaded(true);
-              }}
+              decoding="sync"
+              loading="eager"
+              onLoad={() => rememberLockerImageLoaded(namePath)}
               onError={() => setNameFailed(true)}
             />
           </div>

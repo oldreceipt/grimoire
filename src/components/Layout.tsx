@@ -265,7 +265,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-bg-primary">
+      <main className="flex min-w-0 flex-1 flex-col overflow-auto bg-bg-primary">
         {gameinfoAlert && (
           <div className="sticky top-0 z-40 border-b border-yellow-500/30 bg-yellow-500/10 backdrop-blur-sm">
             <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 py-3 text-yellow-200">
