@@ -25,6 +25,7 @@ import {
   Share2,
   Beaker,
   PowerOff,
+  Sparkles,
   Tag as TagIcon,
   Pencil,
   MoreHorizontal,
@@ -3458,6 +3459,7 @@ interface ModCardProps {
     gameBananaId?: number;
     isUnknown?: boolean;
     lockerHero?: string;
+    lockerHeroSource?: Mod['lockerHeroSource'];
     merged?: import('../types/mod').MergedModInfo;
   };
   viewMode: ViewMode;
@@ -3675,8 +3677,49 @@ interface ModListRowContentProps {
   variantStatusTitle: string;
   metaChipClasses: string;
   manualTagChipClasses: string;
+  inferredTagChipClasses: string;
   technicalMetaClasses: string;
   actions: ReactNode;
+}
+
+function lockerHeroSourceLabel(source: Mod['lockerHeroSource']): string {
+  switch (source) {
+    case 'manual':
+      return 'Manual override';
+    case 'download-title':
+    case 'title':
+      return 'Inferred from title';
+    case 'download-vpk':
+    case 'vpk':
+      return 'Inferred from VPK files';
+    default:
+      return 'Inferred by Grimoire';
+  }
+}
+
+function LockerHeroChip({
+  mod,
+  manualTagChipClasses,
+  inferredTagChipClasses,
+}: {
+  mod: { lockerHero?: string; lockerHeroSource?: Mod['lockerHeroSource'] };
+  manualTagChipClasses: string;
+  inferredTagChipClasses: string;
+}) {
+  if (!mod.lockerHero) return null;
+  const isManual = mod.lockerHeroSource === 'manual';
+  const Icon = isManual ? TagIcon : Sparkles;
+  return (
+    <span
+      className={isManual ? manualTagChipClasses : inferredTagChipClasses}
+      title={`${lockerHeroSourceLabel(mod.lockerHeroSource)}: ${mod.lockerHero}`}
+    >
+      <span className="flex h-3 w-3 flex-shrink-0 items-center justify-center" aria-hidden>
+        <Icon className="h-[11px] w-[11px]" strokeWidth={2.25} />
+      </span>
+      {mod.lockerHero}
+    </span>
+  );
 }
 
 function ModListRowContent({
@@ -3691,6 +3734,7 @@ function ModListRowContent({
   variantStatusTitle,
   metaChipClasses,
   manualTagChipClasses,
+  inferredTagChipClasses,
   technicalMetaClasses,
   actions,
 }: ModListRowContentProps) {
@@ -3769,12 +3813,11 @@ function ModListRowContent({
         </h3>
         <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-xs text-text-secondary">
           {mod.categoryName && <span className={metaChipClasses}>{mod.categoryName}</span>}
-          {mod.lockerHero && (
-            <span className={manualTagChipClasses} title={`Manual hero: ${mod.lockerHero}`}>
-              <TagIcon className="h-3 w-3 flex-shrink-0" aria-hidden />
-              {mod.lockerHero}
-            </span>
-          )}
+          <LockerHeroChip
+            mod={mod}
+            manualTagChipClasses={manualTagChipClasses}
+            inferredTagChipClasses={inferredTagChipClasses}
+          />
           {mod.nsfw && <Tag tone="danger" className="flex-shrink-0">18+</Tag>}
           <span className="flex-shrink-0">{formatBytes(mod.size)}</span>
           <span className="flex-shrink-0 tabular-nums" title={`Installed ${formatAbsoluteDate(mod.installedAt)}`}>
@@ -3936,7 +3979,8 @@ function ModCard({
       ? 'shadow-[3px_3px_0_0_var(--color-bg-secondary),3px_3px_0_1px_var(--color-border),6px_6px_0_0_var(--color-bg-secondary),6px_6px_0_1px_var(--color-border)] mr-1.5 mb-1.5'
       : '';
   const metaChipClasses = 'inline-flex h-[18px] min-w-0 max-w-full items-center overflow-hidden truncate rounded border border-white/[0.06] bg-bg-tertiary/65 px-1.5 text-[11px] leading-none text-text-secondary/80';
-  const manualTagChipClasses = 'inline-flex h-[18px] min-w-0 max-w-full items-center gap-1 overflow-hidden truncate rounded border border-accent/30 bg-accent/10 px-1.5 text-[11px] leading-none text-accent';
+  const manualTagChipClasses = 'inline-flex h-[18px] min-w-0 max-w-full items-center gap-1 overflow-hidden truncate rounded border border-accent/30 bg-accent/10 pl-[5px] pr-1.5 text-[11px] leading-[18px] text-accent';
+  const inferredTagChipClasses = 'inline-flex h-[18px] min-w-0 max-w-full items-center gap-1 overflow-hidden truncate rounded border border-sky-400/25 bg-sky-400/10 pl-[5px] pr-1.5 text-[11px] leading-[18px] text-sky-200/90';
   const technicalMetaClasses = 'min-w-0 truncate font-mono text-[11px] text-text-secondary/55 hover:text-text-secondary cursor-help';
   const utilityActionClasses = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 cursor-pointer disabled:opacity-60';
   const menuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-primary hover:bg-bg-tertiary focus:outline-none focus-visible:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50';
@@ -4036,7 +4080,7 @@ function ModCard({
                         e.stopPropagation();
                         void applyLockerTag(null);
                       }}
-                      disabled={menuBusy || !mod.lockerHero}
+                      disabled={menuBusy || mod.lockerHeroSource !== 'manual'}
                       className="w-full rounded px-2 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-tertiary hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Clear manual tag
@@ -4052,7 +4096,11 @@ function ModCard({
                         }}
                         disabled={menuBusy}
                         className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50 ${
-                          mod.lockerHero === heroName ? 'text-accent' : 'text-text-primary'
+                          mod.lockerHero === heroName
+                            ? mod.lockerHeroSource === 'manual'
+                              ? 'text-accent'
+                              : 'text-sky-200'
+                            : 'text-text-primary'
                         }`}
                       >
                         <span>{heroName}</span>
@@ -4297,6 +4345,7 @@ function ModCard({
             variantStatusTitle={variantStatusTitle}
             metaChipClasses={metaChipClasses}
             manualTagChipClasses={manualTagChipClasses}
+            inferredTagChipClasses={inferredTagChipClasses}
             technicalMetaClasses={technicalMetaClasses}
             actions={actions}
           />
@@ -4413,12 +4462,11 @@ function ModCard({
             {mod.categoryName && (
               <span className={metaChipClasses}>{mod.categoryName}</span>
             )}
-            {mod.lockerHero && (
-              <span className={manualTagChipClasses} title={`Manual hero: ${mod.lockerHero}`}>
-                <TagIcon className="h-3 w-3 flex-shrink-0" aria-hidden />
-                {mod.lockerHero}
-              </span>
-            )}
+            <LockerHeroChip
+              mod={mod}
+              manualTagChipClasses={manualTagChipClasses}
+              inferredTagChipClasses={inferredTagChipClasses}
+            />
             {mod.nsfw && (
               <Tag tone="danger" className="flex-shrink-0">18+</Tag>
             )}

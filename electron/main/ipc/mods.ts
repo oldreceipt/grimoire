@@ -52,22 +52,26 @@ function enrichMod(mod: Mod): Mod {
         !(typeof metadata?.modName === 'string' && metadata.modName.trim().length > 0);
     if (metadata) {
         let lockerHero = metadata.lockerHero;
+        let lockerHeroSource = metadata.lockerHeroSource;
         if (!lockerHero && metadata.sourceSection === 'Sound') {
             // Title match first because it's O(1) regex; only crack open the
             // VPK if the title gave us nothing. The VPK path is authoritative
             // (parses real Source 2 codenames like `ghost` → Lady Geist) but
             // costs a disk read + directory tree parse per call.
             let inferred = inferHeroFromTitle(metadata.modName || mod.name);
+            let inferredSource: typeof lockerHeroSource = inferred ? 'title' : undefined;
             if (!inferred) {
                 try {
                     inferred = inferHeroFromVpk(mod.path);
+                    inferredSource = inferred ? 'vpk' : undefined;
                 } catch (err) {
                     console.warn(`[enrichMod] VPK hero inference failed for ${mod.fileName}:`, err);
                 }
             }
             if (inferred) {
-                setModMetadata(mod.fileName, { lockerHero: inferred });
+                setModMetadata(mod.fileName, { lockerHero: inferred, lockerHeroSource: inferredSource });
                 lockerHero = inferred;
+                lockerHeroSource = inferredSource;
             }
         }
         // Global (non-hero) cosmetic type. Classified once from the VPK tree
@@ -104,6 +108,7 @@ function enrichMod(mod: Mod): Mod {
             fileDescription: metadata.fileDescription,
             sourceFileName: metadata.sourceFileName,
             lockerHero,
+            lockerHeroSource,
             globalType: globalType ?? undefined,
             merged: metadata.merged,
             ignoreUpdates: metadata.ignoreUpdates,
@@ -377,6 +382,7 @@ ipcMain.handle(
         const trimmed = heroName?.trim() ?? '';
         setModMetadata(target.fileName, {
             lockerHero: trimmed.length > 0 ? trimmed : undefined,
+            lockerHeroSource: trimmed.length > 0 ? 'manual' : undefined,
         });
         return enrichMod(target);
     }
@@ -405,7 +411,7 @@ ipcMain.handle(
         setModMetadata(target.fileName, {
             globalType,
             // Assigning a global type moves the mod off the hero axis.
-            ...(globalType ? { lockerHero: undefined } : {}),
+            ...(globalType ? { lockerHero: undefined, lockerHeroSource: undefined } : {}),
         });
         return enrichMod(target);
     }
