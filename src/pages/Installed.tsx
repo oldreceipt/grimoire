@@ -4138,7 +4138,7 @@ function ModCard({
   const utilityActionClasses = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 cursor-pointer disabled:opacity-60';
   const menuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-primary hover:bg-bg-tertiary focus:outline-none focus-visible:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50';
   const dangerMenuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-state-danger hover:bg-state-danger/10 focus:outline-none focus-visible:bg-state-danger/10 disabled:cursor-not-allowed disabled:opacity-50';
-  const toggleHitboxClasses = 'inline-flex h-9 w-12 items-center justify-center rounded-md cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary';
+  const toggleHitboxClasses = 'inline-flex h-7 w-12 items-center justify-center rounded-md cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary';
   const toggleTrackClasses = `relative h-6 w-11 rounded-full transition-colors duration-200 ${
     mod.enabled ? 'bg-accent shadow-[0_0_0_1px_rgba(255,122,47,0.25)]' : 'bg-bg-tertiary border border-border group-hover/toggle:border-white/20'
   }`;
@@ -4159,7 +4159,7 @@ function ModCard({
     : isCompact
       ? 'flex flex-col gap-0 p-2'
       : 'flex flex-col gap-0 p-2.5';
-  const mediaSpacingClasses = isCompact ? 'mb-2' : 'mb-2.5';
+  const mediaSpacingClasses = 'mb-2';
   const mediaFrameClasses = isCompact ? 'h-[116px]' : 'aspect-video';
   const audioOverlayClasses = isCompact
     ? 'absolute bottom-2 left-2 right-2 z-20 flex h-[30px] cursor-pointer items-center rounded-md border border-white/[0.10] bg-bg-secondary/75 px-2 shadow-sm backdrop-blur-sm [&_*]:cursor-pointer'
@@ -4168,9 +4168,9 @@ function ModCard({
     ? 'w-full gap-2 [&>button:first-of-type]:h-6 [&>button:first-of-type]:w-6 [&>div]:h-1 [&>span]:text-[10px]'
     : 'w-full gap-2.5 [&>button:first-of-type]:h-7 [&>button:first-of-type]:w-7 [&>div]:h-1 [&>span]:text-[10px]';
   const titleClasses = isCompact
-    ? 'text-[14px] font-semibold leading-[18px] min-h-[36px] overflow-hidden [display:-webkit-box] [-webkit-line-clamp:2] [-webkit-box-orient:vertical]'
+    ? 'text-[14px] font-semibold leading-[18px] truncate'
     : 'text-[15px] font-medium leading-[19px] truncate';
-  const gridTagsClasses = viewMode === 'compact' ? 'h-[26px] flex-nowrap' : 'min-h-7 flex-wrap';
+  const gridTagsClasses = viewMode === 'compact' ? 'h-[26px] flex-nowrap' : 'h-7 flex-nowrap';
   const showCategoryChip = viewMode !== 'compact' || !mod.lockerHero;
   const compactBaseChipCount =
     (mod.lockerHero ? 1 : 0) + (showCategoryChip && mod.categoryName ? 1 : 0);
@@ -4665,7 +4665,7 @@ function ModCard({
             {mod.name}
           </h3>
           <div
-            className={`${isCompact ? 'mt-1.5 h-8' : 'mt-2'} grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3`}
+            className={`${isCompact ? 'mt-1.5 h-7' : 'mt-1.5'} grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3`}
             title={`${mod.fileName} | ${formatBytes(mod.size)} | installed ${formatAbsoluteDate(mod.installedAt)}`}
           >
             <div className={`flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-text-secondary ${gridTagsClasses}`}>
