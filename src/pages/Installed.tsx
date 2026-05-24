@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Package,
   Loader2,
@@ -6,7 +6,6 @@ import {
   Trash2,
   AlertTriangle,
   FolderOpen,
-  GripVertical,
   FilePlus,
   X,
   ImagePlus,
@@ -58,6 +57,94 @@ function formatBytes(bytes: number): string {
 }
 
 type DropPosition = 'before' | 'after';
+type DragSection = 'enabled' | 'disabled';
+type DragDraftOrder = {
+  section: DragSection;
+  keys: string[];
+} | null;
+type PendingDraftMove = {
+  entries: ModEntry[];
+  section: DragSection;
+  sourceKey: string;
+  targetKey: string;
+  position: DropPosition;
+};
+
+const DROP_SETTLE_DURATION_MS = 150;
+const DROP_STATE_RESET_DELAY_MS = DROP_SETTLE_DURATION_MS + 10;
+
+let activeDragPreview: HTMLElement | null = null;
+let activeDragEntryKey: string | null = null;
+let activeDropSettlePending = false;
+let activeDragPreviewOffset = { x: 0, y: 0 };
+
+function findEntryElement(key: string | null): HTMLElement | null {
+  if (!key) return null;
+  for (const el of document.querySelectorAll<HTMLElement>('[data-mod-entry-key]')) {
+    if (el.dataset.modEntryKey === key) return el;
+  }
+  return null;
+}
+
+function cleanupActiveDragPreview() {
+  activeDragPreview?.remove();
+  activeDragPreview = null;
+  activeDragEntryKey = null;
+  activeDropSettlePending = false;
+  activeDragPreviewOffset = { x: 0, y: 0 };
+}
+
+function moveActiveDragPreview(clientX: number, clientY: number) {
+  if (!activeDragPreview || clientX === 0 || clientY === 0) return;
+  const { x, y } = activeDragPreviewOffset;
+  activeDragPreview.style.transform = `translate3d(${clientX - x}px, ${clientY - y}px, 0) scale(1.03)`;
+}
+
+async function settleActiveDragPreviewToSlot(): Promise<void> {
+  const preview = activeDragPreview;
+  const slot = findEntryElement(activeDragEntryKey);
+  if (!preview || !slot) {
+    cleanupActiveDragPreview();
+    return;
+  }
+
+  const from = preview.getBoundingClientRect();
+  const to = slot.getBoundingClientRect();
+  preview.style.transformOrigin = 'top left';
+  preview.style.left = `${to.left}px`;
+  preview.style.top = `${to.top}px`;
+  preview.style.width = `${to.width}px`;
+  preview.style.height = `${to.height}px`;
+  preview.style.willChange = 'transform';
+  const translateX = from.left - to.left;
+  const translateY = from.top - to.top;
+  const scaleX = to.width === 0 ? 1 : from.width / to.width;
+  const scaleY = to.height === 0 ? 1 : from.height / to.height;
+
+  const animation = preview.animate(
+    [
+      {
+        transform: `translate3d(${translateX}px, ${translateY}px, 0) scale(${scaleX}, ${scaleY})`,
+        boxShadow: '0 18px 36px rgba(0,0,0,0.42), 0 0 0 1px rgba(255,122,47,0.45)',
+      },
+      {
+        transform: 'translate3d(0, 0, 0) scale(1)',
+        boxShadow: '0 8px 18px rgba(0,0,0,0.26), 0 0 0 1px rgba(255,122,47,0.18)',
+      },
+    ],
+    {
+      duration: DROP_SETTLE_DURATION_MS,
+      easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+      fill: 'forwards',
+    }
+  );
+
+  try {
+    await animation.finished;
+  } catch {
+    // The animation can be cancelled by window teardown or a new drag.
+  }
+}
 
 /**
  * Rows on the Installed page are either standalone mods or grouped files
@@ -83,6 +170,16 @@ type ModEntry =
       key: string;
     };
 
+function modEntryKey(mod: Mod): string {
+  if (typeof mod.gameBananaId === 'number' && typeof mod.gameBananaFileId === 'number') {
+    return `single:gb:${mod.gameBananaId}:${mod.gameBananaFileId}`;
+  }
+  if (mod.sha256) {
+    return `single:sha:${mod.sha256}`;
+  }
+  return `single:local:${mod.name}:${mod.size}`;
+}
+
 function buildModEntries(mods: Mod[]): ModEntry[] {
   const byGb = new Map<number, Mod[]>();
   const singles: Mod[] = [];
@@ -106,7 +203,7 @@ function buildModEntries(mods: Mod[]): ModEntry[] {
 
   const entries: ModEntry[] = [];
   for (const m of singles) {
-    entries.push({ kind: 'single', mod: m, key: `single:${m.id}` });
+    entries.push({ kind: 'single', mod: m, key: modEntryKey(m) });
   }
   for (const [gameBananaId, variants] of byGb) {
     // Sort variants by current priority so drag-reorder lines up with the
@@ -287,10 +384,17 @@ export default function Installed() {
   // Drag-and-drop reorder state. `draggingSection` scopes drops so dragging
   // an enabled card can't drop onto a disabled card and vice-versa.
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [draggingSection, setDraggingSection] = useState<'enabled' | 'disabled' | null>(null);
+  const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [draggingSection, setDraggingSection] = useState<DragSection | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<DropPosition | null>(null);
+  const [dragDraftOrder, setDragDraftOrder] = useState<DragDraftOrder>(null);
   const autoScrollRafRef = useRef<number | null>(null);
+  const dropCommitPendingRef = useRef(false);
+  const layoutAnimationRafRef = useRef<number | null>(null);
+  const draftMoveRafRef = useRef<number | null>(null);
+  const pendingDraftMoveRef = useRef<PendingDraftMove | null>(null);
 
   // Details overlay state
   const [detailsMod, setDetailsMod] = useState<GameBananaModDetails | null>(null);
@@ -1383,10 +1487,33 @@ export default function Installed() {
   selectModeRef.current = selectMode;
 
   const resetDragState = () => {
+    if (draftMoveRafRef.current !== null) {
+      cancelAnimationFrame(draftMoveRafRef.current);
+      draftMoveRafRef.current = null;
+    }
+    pendingDraftMoveRef.current = null;
     setDraggingId(null);
+    setDraggingKey(null);
     setDraggingSection(null);
     setDropTargetId(null);
+    setDropTargetKey(null);
     setDropPosition(null);
+    setDragDraftOrder(null);
+  };
+
+  const resetDragStateAfterDrop = () =>
+    new Promise<void>((resolve) => {
+      window.setTimeout(() => {
+        resetDragState();
+        dropCommitPendingRef.current = false;
+        resolve();
+      }, DROP_STATE_RESET_DELAY_MS);
+    });
+
+  const handleDragEnd = () => {
+    if (!dropCommitPendingRef.current) {
+      resetDragState();
+    }
   };
 
   /** Locate the entry that holds a given mod id within a section's entries. */
@@ -1396,38 +1523,165 @@ export default function Installed() {
     );
   };
 
+  const orderEntriesByKeys = (entries: ModEntry[], keys: string[]): ModEntry[] => {
+    const byKey = new Map(entries.map((entry) => [entry.key, entry]));
+    const ordered = keys
+      .map((key) => byKey.get(key))
+      .filter((entry): entry is ModEntry => !!entry);
+    const seen = new Set(ordered.map((entry) => entry.key));
+    const missing = entries.filter((entry) => !seen.has(entry.key));
+    return [...ordered, ...missing];
+  };
+
+  const sameOrder = (a: string[], b: string[]): boolean =>
+    a.length === b.length && a.every((key, index) => key === b[index]);
+
+  const captureEntryRects = (): Map<string, DOMRect> => {
+    const rects = new Map<string, DOMRect>();
+    document.querySelectorAll<HTMLElement>('[data-mod-entry-key]').forEach((el) => {
+      const key = el.dataset.modEntryKey;
+      if (key) rects.set(key, el.getBoundingClientRect());
+    });
+    return rects;
+  };
+
+  const animateEntryReflow = (before: Map<string, DOMRect>, skipKey?: string | null) => {
+    if (layoutAnimationRafRef.current !== null) {
+      cancelAnimationFrame(layoutAnimationRafRef.current);
+    }
+    layoutAnimationRafRef.current = requestAnimationFrame(() => {
+      layoutAnimationRafRef.current = null;
+      document.querySelectorAll<HTMLElement>('[data-mod-entry-key]').forEach((el) => {
+        const key = el.dataset.modEntryKey;
+        if (!key || key === skipKey) return;
+        const prev = before.get(key);
+        if (!prev) return;
+        const next = el.getBoundingClientRect();
+        const dx = prev.left - next.left;
+        const dy = prev.top - next.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        el.animate(
+          [
+            { transform: `translate3d(${dx}px, ${dy}px, 0)` },
+            { transform: 'translate3d(0, 0, 0)' },
+          ],
+          {
+            duration: 180,
+            easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
+          }
+        );
+      });
+    });
+  };
+
+  const reorderKeys = (
+    keys: string[],
+    sourceKey: string,
+    targetKey: string,
+    position: DropPosition
+  ): string[] => {
+    if (sourceKey === targetKey) return keys;
+    const working = keys.filter((key) => key !== sourceKey);
+    const targetIdx = working.indexOf(targetKey);
+    if (targetIdx === -1) return keys;
+    const insertAt = position === 'before' ? targetIdx : targetIdx + 1;
+    working.splice(insertAt, 0, sourceKey);
+    return working;
+  };
+
+  const beginDraftOrder = (entries: ModEntry[], section: DragSection) => {
+    setDragDraftOrder({ section, keys: entries.map((entry) => entry.key) });
+  };
+
+  const commitDraftMove = ({
+    entries,
+    section,
+    sourceKey,
+    targetKey,
+    position,
+  }: PendingDraftMove) => {
+    const before = captureEntryRects();
+    setDragDraftOrder((draft) => {
+      const keys = draft?.section === section
+        ? draft.keys
+        : entries.map((entry) => entry.key);
+      const next = reorderKeys(keys, sourceKey, targetKey, position);
+      if (next === keys || sameOrder(keys, next)) return draft;
+      animateEntryReflow(before, sourceKey);
+      return { section, keys: next };
+    });
+  };
+
+  const moveDraftOrder = (
+    entries: ModEntry[],
+    section: DragSection,
+    sourceKey: string,
+    targetKey: string,
+    position: DropPosition
+  ) => {
+    pendingDraftMoveRef.current = { entries, section, sourceKey, targetKey, position };
+    if (draftMoveRafRef.current !== null) return;
+    draftMoveRafRef.current = requestAnimationFrame(() => {
+      draftMoveRafRef.current = null;
+      const pending = pendingDraftMoveRef.current;
+      pendingDraftMoveRef.current = null;
+      if (pending) commitDraftMove(pending);
+    });
+  };
+
+  const previewEntriesForDrag = (
+    entries: ModEntry[],
+    section: DragSection
+  ): ModEntry[] => {
+    if (dragDraftOrder?.section !== section) {
+      return entries;
+    }
+    return orderEntriesByKeys(entries, dragDraftOrder.keys);
+  };
+
+  const previewEnabled = previewEntriesForDrag(visibleEnabled, 'enabled');
+  const previewDisabled = previewEntriesForDrag(visibleDisabled, 'disabled');
+
   /**
    * Entry-aware drag reorder. Singles move one mod; groups move all their
    * files as a block, keeping internal priority order. After the reshuffle
    * we flatten back to a filename list and hand it to reorderMods, which
    * renames pak##_ prefixes to lock in new priorities.
    */
-  const applyReorder = (
+  const applyReorder = async (
     sourceId: string,
     targetId: string,
     position: DropPosition,
-    section: 'enabled' | 'disabled'
-  ) => {
-    if (sourceId === targetId) return;
+    section: DragSection,
+    draftKeys?: string[]
+  ): Promise<boolean> => {
+    if (sourceId === targetId) return false;
     const entries = section === 'enabled' ? enabledEntries : disabledEntries;
     const sourceEntry = findEntryForModId(entries, sourceId);
     const targetEntry = findEntryForModId(entries, targetId);
-    if (!sourceEntry || !targetEntry || sourceEntry.key === targetEntry.key) return;
+    if (!sourceEntry || !targetEntry || sourceEntry.key === targetEntry.key) return false;
 
-    const working = entries.slice();
-    const sourceIdx = working.indexOf(sourceEntry);
-    working.splice(sourceIdx, 1);
-    const targetIdx = working.indexOf(targetEntry);
-    if (targetIdx === -1) return;
-    const insertAt = position === 'before' ? targetIdx : targetIdx + 1;
-    working.splice(insertAt, 0, sourceEntry);
+    const orderedEntries = draftKeys
+      ? orderEntriesByKeys(entries, draftKeys)
+      : (() => {
+          const working = entries.slice();
+          const sourceIdx = working.indexOf(sourceEntry);
+          working.splice(sourceIdx, 1);
+          const targetIdx = working.indexOf(targetEntry);
+          if (targetIdx === -1) return entries;
+          const insertAt = position === 'before' ? targetIdx : targetIdx + 1;
+          working.splice(insertAt, 0, sourceEntry);
+          return working;
+        })();
 
-    const next = flattenEntries(working);
+    const next = flattenEntries(orderedEntries);
     const prev = flattenEntries(entries);
+    if (next.length !== prev.length) return false;
     const unchanged = next.every((m, i) => m.id === prev[i]?.id);
-    if (unchanged) return;
+    if (unchanged) return false;
 
-    reorderMods(next.map((m) => m.fileName));
+    await reorderMods(next.map((m) => m.fileName));
+    return true;
   };
 
   const fixOrder = () => {
@@ -1438,11 +1692,10 @@ export default function Installed() {
   /**
    * Commit a typed priority from the right-click Load editor. When the target
    * slot is held by another enabled mod we can't just rename (the file would
-   * collide), so we rebuild the enabled-section order with this mod inserted
-   * before the collider and hand it to reorderMods. That mirrors drag-and-drop
-   * semantics: typing `N` is "drop me onto whoever owns N". When the slot is
-   * free we fall back to a single rename so the user gets the exact number
-   * they typed, even if disabled mods occupy nearby slots.
+   * collide), so we rebuild the enabled-section order around the collider and
+   * hand it to reorderMods. When moving down, the collider shifts up after the
+   * moved mod is removed, so we insert after it; when moving up, we insert
+   * before it. That preserves "type N, end at N" semantics.
    *
    * Calls the API directly (not the store wrappers) so errors propagate back
    * to PriorityEditor for inline display instead of being swallowed into
@@ -1475,10 +1728,11 @@ export default function Installed() {
       await loadMods();
       return;
     }
+    const insertAt = mod.priority < newPriority ? insertIdx + 1 : insertIdx;
     const reordered = [
-      ...withoutMoved.slice(0, insertIdx),
+      ...withoutMoved.slice(0, insertAt),
       mod,
-      ...withoutMoved.slice(insertIdx),
+      ...withoutMoved.slice(insertAt),
     ];
     await apiReorderMods(reordered.map((m) => m.fileName));
     await loadMods();
@@ -1505,6 +1759,7 @@ export default function Installed() {
     const entrySelected = isEntrySelected(entry);
     if (entry.kind === 'single') {
       const mod = entry.mod;
+      const sourceEntryKey = entry.key;
       return (
         <ModCard
           key={entry.key}
@@ -1514,6 +1769,7 @@ export default function Installed() {
           conflicts={conflictMap.get(mod.id) || []}
           soundVolume={soundVolume}
           updateAvailable={updatesAvailable.has(mod.id)}
+          entryKey={sourceEntryKey}
           onOpenDetails={
             mod.merged
               ? () => setMergedContentsMod(mod)
@@ -1532,32 +1788,59 @@ export default function Installed() {
           selected={entrySelected}
           onSelectToggle={() => toggleEntrySelection(entry)}
           draggable={!searchNeedle && !selectMode}
-          isDragging={draggingId === mod.id}
-          isDropTarget={dropTargetId === mod.id}
-          dropPosition={dropTargetId === mod.id ? dropPosition : null}
+          isDragging={draggingKey === sourceEntryKey}
+          isDropTarget={dropTargetKey === sourceEntryKey}
+          dropPosition={dropTargetKey === sourceEntryKey ? dropPosition : null}
           onDragStart={() => {
             setDraggingId(mod.id);
+            setDraggingKey(sourceEntryKey);
             setDraggingSection(section);
+            beginDraftOrder(section === 'enabled' ? visibleEnabled : visibleDisabled, section);
           }}
           onDragOver={(pos) => {
-            if (!draggingId || draggingId === mod.id) return;
+            if (!draggingId || draggingKey === sourceEntryKey) return;
             if (draggingSection !== section) return;
-            setDropTargetId(mod.id);
-            setDropPosition(pos);
+            if (dropTargetId !== mod.id) setDropTargetId(mod.id);
+            if (dropTargetKey !== sourceEntryKey) setDropTargetKey(sourceEntryKey);
+            if (dropPosition !== pos) setDropPosition(pos);
+            const sourceEntry = findEntryForModId(
+              section === 'enabled' ? enabledEntries : disabledEntries,
+              draggingId
+            );
+            if (sourceEntry) {
+              moveDraftOrder(
+                section === 'enabled' ? visibleEnabled : visibleDisabled,
+                section,
+                sourceEntry.key,
+                sourceEntryKey,
+                pos
+              );
+            }
           }}
           onDragLeaveCard={() => {
-            if (dropTargetId === mod.id) {
+            // While preview-order is active, the target card can move out from
+            // under the pointer because the grid reflows around the placeholder.
+            // Clearing here makes the order snap back, causing visible flicker.
+            if (draggingId) return;
+            if (dropTargetKey === sourceEntryKey) {
               setDropTargetId(null);
+              setDropTargetKey(null);
               setDropPosition(null);
             }
           }}
-          onDrop={() => {
-            if (draggingId && dropTargetId && dropPosition && draggingSection === section) {
-              applyReorder(draggingId, dropTargetId, dropPosition, section);
+          onDrop={async (visualSettle) => {
+            if (draggingId && draggingSection === section) {
+              dropCommitPendingRef.current = true;
+              await visualSettle;
+              if (dropTargetId && dropPosition) {
+                return applyReorder(draggingId, dropTargetId, dropPosition, section, dragDraftOrder?.keys)
+                  .then(resetDragStateAfterDrop, resetDragStateAfterDrop);
+              }
+              return resetDragStateAfterDrop();
             }
             resetDragState();
           }}
-          onDragEnd={resetDragState}
+          onDragEnd={handleDragEnd}
         />
       );
     }
@@ -1576,6 +1859,7 @@ export default function Installed() {
     // group. applyReorder maps this id back to the entry and moves the
     // whole file block.
     const dragRepId = entry.primary.id;
+    const sourceEntryKey = entry.key;
     return (
       <ModCard
         key={entry.key}
@@ -1596,6 +1880,7 @@ export default function Installed() {
         conflicts={aggregateConflicts}
         soundVolume={soundVolume}
         updateAvailable={anyUpdateAvailable}
+        entryKey={sourceEntryKey}
         onOpenDetails={() => setPickerGroupId(entry.gameBananaId)}
         onToggle={() => handleGroupToggle(entry)}
         onDelete={() =>
@@ -1610,32 +1895,59 @@ export default function Installed() {
         selected={entrySelected}
         onSelectToggle={() => toggleEntrySelection(entry)}
         draggable={!searchNeedle && !selectMode}
-        isDragging={draggingId === dragRepId}
-        isDropTarget={dropTargetId === dragRepId}
-        dropPosition={dropTargetId === dragRepId ? dropPosition : null}
+        isDragging={draggingKey === sourceEntryKey}
+        isDropTarget={dropTargetKey === sourceEntryKey}
+        dropPosition={dropTargetKey === sourceEntryKey ? dropPosition : null}
         onDragStart={() => {
           setDraggingId(dragRepId);
+          setDraggingKey(sourceEntryKey);
           setDraggingSection(section);
+          beginDraftOrder(section === 'enabled' ? visibleEnabled : visibleDisabled, section);
         }}
         onDragOver={(pos) => {
-          if (!draggingId || draggingId === dragRepId) return;
+          if (!draggingId || draggingKey === sourceEntryKey) return;
           if (draggingSection !== section) return;
-          setDropTargetId(dragRepId);
-          setDropPosition(pos);
+          if (dropTargetId !== dragRepId) setDropTargetId(dragRepId);
+          if (dropTargetKey !== sourceEntryKey) setDropTargetKey(sourceEntryKey);
+          if (dropPosition !== pos) setDropPosition(pos);
+          const sourceEntry = findEntryForModId(
+            section === 'enabled' ? enabledEntries : disabledEntries,
+            draggingId
+          );
+          if (sourceEntry) {
+            moveDraftOrder(
+              section === 'enabled' ? visibleEnabled : visibleDisabled,
+              section,
+              sourceEntry.key,
+              sourceEntryKey,
+              pos
+            );
+          }
         }}
         onDragLeaveCard={() => {
-          if (dropTargetId === dragRepId) {
+          // While preview-order is active, the target card can move out from
+          // under the pointer because the grid reflows around the placeholder.
+          // Clearing here makes the order snap back, causing visible flicker.
+          if (draggingId) return;
+          if (dropTargetKey === sourceEntryKey) {
             setDropTargetId(null);
+            setDropTargetKey(null);
             setDropPosition(null);
           }
         }}
-        onDrop={() => {
-          if (draggingId && dropTargetId && dropPosition && draggingSection === section) {
-            applyReorder(draggingId, dropTargetId, dropPosition, section);
+        onDrop={async (visualSettle) => {
+          if (draggingId && draggingSection === section) {
+            dropCommitPendingRef.current = true;
+            await visualSettle;
+            if (dropTargetId && dropPosition) {
+              return applyReorder(draggingId, dropTargetId, dropPosition, section, dragDraftOrder?.keys)
+                .then(resetDragStateAfterDrop, resetDragStateAfterDrop);
+            }
+            return resetDragStateAfterDrop();
           }
           resetDragState();
         }}
-        onDragEnd={resetDragState}
+        onDragEnd={handleDragEnd}
         group={{
           variantCount: entry.variants.length,
           // Display friendly names for enabled files when possible.
@@ -1734,7 +2046,7 @@ export default function Installed() {
   ) : null;
 
   return (
-    <div className="p-6">
+    <div className="px-4 py-5 sm:px-6">
       <PageHeader
         title="Installed Mods"
         action={
@@ -1814,8 +2126,8 @@ export default function Installed() {
 
       {visibleEnabled.length > 0 && (
         <div className="mb-6">
-          <div className="flex items-baseline justify-between mb-3">
-            <SectionHeader count={visibleEnabled.length} className="!mb-0">Enabled</SectionHeader>
+          <div className="flex items-baseline justify-between mb-[14px]">
+            <SectionHeader count={visibleEnabled.length} className="!mb-0 !text-xs !font-semibold !tracking-[0.06em]">Enabled</SectionHeader>
             <div className="flex items-center gap-4">
               {statusButtons}
               {!searchNeedle && (
@@ -1833,34 +2145,34 @@ export default function Installed() {
           <div
             className={
               viewMode === 'compact'
-                ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2'
+                ? 'grid [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))] gap-3'
                 : viewMode === 'grid'
-                  ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'
-                  : 'space-y-2'
+                  ? 'grid [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))] gap-4'
+                  : 'space-y-1.5'
             }
           >
-            {visibleEnabled.map((entry) => renderEntryCard(entry, 'enabled'))}
+            {previewEnabled.map((entry) => renderEntryCard(entry, 'enabled'))}
           </div>
         </div>
       )}
 
       {visibleDisabled.length > 0 && (
         <div>
-          <div className="flex items-baseline justify-between mb-3">
-            <SectionHeader count={visibleDisabled.length} className="!mb-0">Disabled</SectionHeader>
+          <div className="flex items-baseline justify-between mb-[14px]">
+            <SectionHeader count={visibleDisabled.length} className="!mb-0 !text-xs !font-semibold !tracking-[0.06em]">Disabled</SectionHeader>
             {/* Fall back here when there's nothing in the Enabled section to host the status buttons. */}
             {visibleEnabled.length === 0 && statusButtons}
           </div>
           <div
             className={
               viewMode === 'compact'
-                ? 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2'
+                ? 'grid [grid-template-columns:repeat(auto-fill,minmax(260px,1fr))] gap-3'
                 : viewMode === 'grid'
-                  ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'
-                  : 'space-y-2'
+                  ? 'grid [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))] gap-4'
+                  : 'space-y-1.5'
             }
           >
-            {visibleDisabled.map((entry) => renderEntryCard(entry, 'disabled'))}
+            {previewDisabled.map((entry) => renderEntryCard(entry, 'disabled'))}
           </div>
         </div>
       )}
@@ -3034,8 +3346,9 @@ interface ModCardProps {
   onDragStart?: () => void;
   onDragOver?: (position: DropPosition) => void;
   onDragLeaveCard?: () => void;
-  onDrop?: () => void;
+  onDrop?: (visualSettle: Promise<void>) => void | Promise<void>;
   onDragEnd?: () => void;
+  entryKey?: string;
   /** Present when this card represents grouped files from the same
    *  GameBanana mod. Swaps the filename meta for an enabled/total count and
    *  routes the card-body click to the picker modal. */
@@ -3046,6 +3359,307 @@ interface ModCardProps {
     enabledLabels: string[];
     onOpenPicker: () => void;
   };
+}
+
+interface ModMediaPreviewProps {
+  mod: ModCardProps['mod'];
+  hideNsfwPreviews: boolean;
+  soundVolume: number;
+  overlayBadges: ReactNode;
+  mediaSpacingClasses: string;
+  onOpenDetails?: () => void;
+  isGroupCard: boolean;
+}
+
+function SoundPlaceholder() {
+  const bars = [6, 10, 15, 21, 27, 19, 13, 23, 29, 18, 11, 16, 24];
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-bg-tertiary via-bg-secondary to-bg-tertiary text-text-secondary">
+      <div className="flex h-8 items-end gap-1 opacity-70">
+        {bars.map((height, index) => (
+          <span
+            key={index}
+            className="w-1 rounded-full bg-accent/70"
+            style={{ height }}
+          />
+        ))}
+      </div>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-secondary/80">
+        Sound Preview
+      </span>
+    </div>
+  );
+}
+
+function stopMediaDrag(e: React.DragEvent<HTMLElement>) {
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function ModMediaPreview({
+  mod,
+  hideNsfwPreviews,
+  soundVolume,
+  overlayBadges,
+  mediaSpacingClasses,
+  onOpenDetails,
+  isGroupCard,
+}: ModMediaPreviewProps) {
+  const isSound = mod.sourceSection === 'Sound' && !!mod.audioUrl;
+  const canOpen = !!onOpenDetails;
+  const detailsLabel = canOpen ? (isGroupCard ? `Choose files for ${mod.name}` : `View details for ${mod.name}`) : undefined;
+  // Prefer an explicit mod thumbnail. For sound-only mods without one, fall
+  // back to the inferred hero render before using the waveform placeholder.
+  // `lockerHero` is persisted from VPK path inference and catches titles that
+  // don't name the hero; title matching covers not-yet-enriched mods.
+  const soundHeroName = isSound && !mod.thumbnailUrl
+    ? mod.lockerHero ?? inferHeroFromTitle(mod.name)
+    : null;
+  const soundHeroRenderUrl = soundHeroName ? getHeroRenderPath(soundHeroName) : null;
+  const soundHeroFacePos = soundHeroName ? getHeroFacePosition(soundHeroName) : 50;
+  const image = (
+    <ModThumbnail
+      src={mod.thumbnailUrl}
+      alt={mod.name}
+      nsfw={mod.nsfw}
+      hideNsfw={hideNsfwPreviews}
+      className="w-full h-full"
+      imageClassName="origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
+      mergedSources={mod.merged?.sources}
+    />
+  );
+  const soundMedia = mod.thumbnailUrl ? image : soundHeroRenderUrl ? (
+    <img
+      src={soundHeroRenderUrl}
+      alt={soundHeroName ?? mod.name}
+      draggable={false}
+      className="block h-full w-full object-cover origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
+      style={{ objectPosition: `${soundHeroFacePos}% 25%` }}
+    />
+  ) : (
+    <SoundPlaceholder />
+  );
+
+  if (!isSound) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenDetails?.();
+        }}
+        disabled={!canOpen}
+        className={`group relative w-full aspect-video bg-bg-tertiary rounded-lg overflow-hidden block border border-white/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer ${mediaSpacingClasses}`}
+        aria-label={detailsLabel}
+        data-card-action="true"
+        draggable={false}
+        onDragStart={stopMediaDrag}
+      >
+        {image}
+        {canOpen && (
+          <div className="pointer-events-none absolute inset-0 bg-bg-primary/0 transition-colors duration-200 group-hover:bg-bg-primary/20" />
+        )}
+        {overlayBadges}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`group relative w-full aspect-video overflow-hidden rounded-lg bg-bg-tertiary border border-white/[0.08] ${mediaSpacingClasses}`}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenDetails?.();
+        }}
+        disabled={!canOpen}
+        className="absolute inset-0 h-full w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer"
+        aria-label={detailsLabel}
+        data-card-action="true"
+        draggable={false}
+        onDragStart={stopMediaDrag}
+      >
+        {soundMedia}
+        {(mod.thumbnailUrl || soundHeroRenderUrl) && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-bg-primary/80 via-bg-primary/25 to-transparent" />
+        )}
+        {canOpen && (
+          <div className="pointer-events-none absolute inset-0 bg-bg-primary/0 transition-colors duration-200 group-hover:bg-bg-primary/15" />
+        )}
+      </button>
+      {overlayBadges}
+      <div
+        className="absolute bottom-2.5 left-3 right-3 z-20 flex h-[34px] cursor-pointer items-center rounded-md border border-white/[0.10] bg-bg-secondary/75 px-2.5 shadow-sm backdrop-blur-sm [&_*]:cursor-pointer"
+        data-card-action="true"
+        draggable={false}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onDragStart={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+      >
+        <AudioPreviewPlayer
+          src={mod.audioUrl!}
+          compact
+          variant="inline"
+          volume={soundVolume}
+          className="w-full gap-2.5 [&>button:first-of-type]:h-7 [&>button:first-of-type]:w-7 [&>div]:h-1 [&>span]:text-[10px]"
+        />
+      </div>
+    </div>
+  );
+}
+
+interface ModListRowContentProps {
+  mod: ModCardProps['mod'];
+  hideNsfwPreviews: boolean;
+  soundVolume: number;
+  onOpenDetails?: () => void;
+  onCommitPriority?: (newPriority: number) => Promise<void>;
+  isGroupCard: boolean;
+  group?: ModCardProps['group'];
+  variantStatusLabel: string | null;
+  variantStatusTitle: string;
+  metaChipClasses: string;
+  technicalMetaClasses: string;
+  actions: ReactNode;
+}
+
+function ModListRowContent({
+  mod,
+  hideNsfwPreviews,
+  soundVolume,
+  onOpenDetails,
+  onCommitPriority,
+  isGroupCard,
+  group,
+  variantStatusLabel,
+  variantStatusTitle,
+  metaChipClasses,
+  technicalMetaClasses,
+  actions,
+}: ModListRowContentProps) {
+  const isSound = mod.sourceSection === 'Sound' && !!mod.audioUrl;
+  const canOpen = !!onOpenDetails;
+  const listHeroName = isSound && !mod.thumbnailUrl
+    ? mod.lockerHero ?? inferHeroFromTitle(mod.name)
+    : null;
+  const listHeroRenderUrl = listHeroName ? getHeroRenderPath(listHeroName) : null;
+  const listHeroFacePos = listHeroName ? getHeroFacePosition(listHeroName) : 50;
+
+  return (
+    <>
+      <div className="flex min-w-0 items-center justify-start">
+        {mod.enabled ? (
+          <span data-card-action="true">
+            <PriorityEditor
+              modId={mod.id}
+              modName={mod.name}
+            priority={mod.priority}
+            variant="inline"
+            onCommit={onCommitPriority}
+          />
+          </span>
+        ) : (
+          <span className="inline-flex h-5 items-center rounded border border-white/[0.06] bg-bg-tertiary/60 px-1.5 text-[11px] font-semibold text-text-secondary/70">
+            Off
+          </span>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onOpenDetails?.();
+        }}
+        disabled={!canOpen}
+        className="group relative h-11 w-[72px] flex-shrink-0 overflow-hidden rounded-md bg-bg-tertiary border border-white/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer"
+        aria-label={canOpen ? (isGroupCard ? `Choose files for ${mod.name}` : `View details for ${mod.name}`) : undefined}
+        data-card-action="true"
+        draggable={false}
+        onDragStart={stopMediaDrag}
+      >
+        {listHeroRenderUrl ? (
+          <img
+            src={listHeroRenderUrl}
+            alt={listHeroName ?? mod.name}
+            draggable={false}
+            className="block h-full w-full object-cover origin-center transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
+            style={{ objectPosition: `${listHeroFacePos}% 25%` }}
+          />
+        ) : isSound && !mod.thumbnailUrl ? (
+          <SoundPlaceholder />
+        ) : (
+          <ModThumbnail
+            src={mod.thumbnailUrl}
+            alt={mod.name}
+            nsfw={mod.nsfw}
+            hideNsfw={hideNsfwPreviews}
+            className="w-full h-full"
+            imageClassName="origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
+            mergedSources={mod.merged?.sources}
+          />
+        )}
+        {canOpen && (
+          <div className="pointer-events-none absolute inset-0 bg-bg-primary/0 transition-colors duration-200 group-hover:bg-bg-primary/20" />
+        )}
+      </button>
+
+      <div className="min-w-0">
+        <h3 className="min-w-0 truncate text-[14px] font-semibold leading-5 text-text-primary" title={mod.name}>
+          {mod.name}
+        </h3>
+        <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-xs text-text-secondary">
+          {mod.categoryName && <span className={metaChipClasses}>{mod.categoryName}</span>}
+          {isSound && (
+            <Tag tone="info" icon={Volume2} className="flex-shrink-0">
+              Sound
+            </Tag>
+          )}
+          {mod.nsfw && <Tag tone="danger" className="flex-shrink-0">18+</Tag>}
+          <span className="flex-shrink-0">{formatBytes(mod.size)}</span>
+          <span className="flex-shrink-0 tabular-nums" title={`Installed ${formatAbsoluteDate(mod.installedAt)}`}>
+            {formatRelativeDate(mod.installedAt)}
+          </span>
+          {group && (
+            <span
+              className="flex-shrink-0 rounded-sm border border-accent/25 bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-accent"
+              title={variantStatusTitle}
+            >
+              {variantStatusLabel} files
+            </span>
+          )}
+          {!group && (
+            <span className={technicalMetaClasses} title={mod.fileName}>
+              {mod.fileName}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="ml-auto flex min-w-0 items-center justify-end gap-2">
+        {isSound && (
+          <div
+            className="hidden w-48 min-w-0 flex-shrink items-center rounded-md border border-white/[0.06] bg-bg-secondary/45 px-2 py-1 opacity-85 transition-opacity duration-200 group-hover/card:opacity-100 lg:flex"
+            data-card-action="true"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <AudioPreviewPlayer
+              src={mod.audioUrl!}
+              compact
+              variant="inline"
+              volume={soundVolume}
+              className="w-full gap-2 [&>button:first-of-type]:h-6 [&>button:first-of-type]:w-6 [&>div]:h-1 [&>span]:text-[10px]"
+            />
+          </div>
+        )}
+        {actions}
+      </div>
+    </>
+  );
 }
 
 function ModCard({
@@ -3075,10 +3689,11 @@ function ModCard({
   onDragLeaveCard,
   onDrop,
   onDragEnd,
+  entryKey,
   group,
 }: ModCardProps) {
   const hasConflicts = conflicts.length > 0;
-  const handleDownRef = useRef<boolean>(false);
+  const suppressCardDragRef = useRef(false);
   const isGroupCard = !!group;
   const variantStatusLabel = group ? `${group.enabledCount}/${group.variantCount}` : null;
   const enabledTitle = group?.enabledLabels.join(', ') ?? '';
@@ -3096,25 +3711,26 @@ function ModCard({
   const hasListTags =
     viewMode === 'list' &&
     (hasConflicts || mod.isUnknown || mod.sourceSection === 'Sound' || mod.nsfw || updateAvailable || mod.enabled);
+  const hasUtilityActions = mod.isUnknown || (mod.merged && (!!onCopyShareCode || !!onUnmerge));
 
   const indicatorClasses = (() => {
     if (!isDropTarget || !dropPosition) return '';
-    const base = 'absolute bg-accent pointer-events-none rounded-full';
+    const base = 'absolute z-20 bg-accent pointer-events-none rounded-full shadow-[0_0_0_3px_var(--color-bg-primary),0_0_18px_rgba(255,122,47,0.45)]';
     if (viewMode === 'list') {
       return dropPosition === 'before'
-        ? `${base} left-2 right-2 -top-[3px] h-[3px]`
-        : `${base} left-2 right-2 -bottom-[3px] h-[3px]`;
+        ? `${base} left-3 right-3 -top-[4px] h-1`
+        : `${base} left-3 right-3 -bottom-[4px] h-1`;
     }
     return dropPosition === 'before'
-      ? `${base} top-2 bottom-2 -left-[3px] w-[3px]`
-      : `${base} top-2 bottom-2 -right-[3px] w-[3px]`;
+      ? `${base} top-3 bottom-3 -left-[4px] w-1`
+      : `${base} top-3 bottom-3 -right-[4px] w-1`;
   })();
 
   const stateClasses = hasConflicts
-    ? 'bg-state-warning/5 border-state-warning/50'
+    ? 'bg-state-warning/5 border-state-warning/45'
     : mod.enabled
-      ? 'bg-accent/5 border-accent/40'
-      : 'bg-bg-secondary/60 border-border/70 text-text-primary/80 hover:bg-bg-secondary hover:text-text-primary';
+      ? 'bg-[#242424] border-white/[0.08] hover:border-white/[0.14] hover:bg-bg-secondary'
+      : 'bg-[#242424]/85 border-white/[0.08] text-text-primary/80 hover:border-white/[0.14] hover:bg-bg-secondary hover:text-text-primary';
 
   // Merged mods get a "stacked card" silhouette via two offset box-shadows
   // that read as cards-behind-the-card. Uses only neutral surface/border
@@ -3125,24 +3741,133 @@ function ModCard({
     mod.merged && viewMode === 'grid'
       ? 'shadow-[3px_3px_0_0_var(--color-bg-secondary),3px_3px_0_1px_var(--color-border),6px_6px_0_0_var(--color-bg-secondary),6px_6px_0_1px_var(--color-border)] mr-1.5 mb-1.5'
       : '';
-
+  const metaChipClasses = 'inline-flex h-[18px] flex-shrink-0 items-center rounded border border-white/[0.06] bg-bg-tertiary/65 px-1.5 text-[11px] leading-none text-text-secondary/80';
+  const technicalMetaClasses = 'min-w-0 truncate font-mono text-[11px] text-text-secondary/55 hover:text-text-secondary cursor-help';
+  const actionRevealClasses = 'opacity-0 group-hover/card:opacity-70 focus:opacity-100 hover:opacity-100 focus-within:opacity-100';
+  const utilityActionClasses = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 cursor-pointer disabled:opacity-60';
+  const deleteActionClasses = `inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-state-danger/10 hover:text-state-danger focus:outline-none focus-visible:ring-2 focus-visible:ring-state-danger/70 cursor-pointer ${actionRevealClasses}`;
+  const toggleClasses = `relative h-5 w-10 rounded-full transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary ${
+    mod.enabled ? 'bg-accent shadow-[0_0_0_1px_rgba(255,122,47,0.25)]' : 'bg-bg-tertiary border border-border hover:border-white/20'
+  }`;
+  const dragSourceClasses =
+    draggable && !selectMode ? 'cursor-grab active:cursor-grabbing' : '';
+  const draggingPlaceholderClasses =
+    'border-dashed border-accent/45 bg-bg-tertiary/25 shadow-none opacity-100';
+  const isList = viewMode === 'list';
+  const shellClasses = isList
+    ? 'grid min-h-[62px] grid-cols-[48px_72px_minmax(0,1fr)_auto] items-center gap-2 px-3.5 py-2'
+    : 'flex flex-col gap-0 p-3';
+  const actionAreaClasses = isList
+    ? 'flex-row items-center justify-end gap-2 self-center'
+    : 'h-6 items-center justify-end gap-2 self-end pr-1 pb-0.5';
+  const mediaSpacingClasses = 'mb-3';
+  const titleClasses = 'h-10 text-[15px] font-semibold leading-[19px] [-webkit-line-clamp:2]';
+  const gridTagsClasses = 'h-[22px] flex-nowrap overflow-hidden';
+  const actions = (
+    <div className="ml-auto flex items-center gap-1">
+      {hasUtilityActions && (
+        <div
+          className={`flex items-center gap-1 rounded-md border border-border/60 bg-bg-secondary/45 p-0.5 transition-opacity duration-200 ${isList ? '' : 'opacity-0 group-hover/card:opacity-90 focus-within:opacity-100'}`}
+          data-card-action="true"
+        >
+          {mod.isUnknown && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onFixUnknown?.();
+              }}
+              disabled={!onFixUnknown}
+              className={utilityActionClasses}
+              title="Fix unknown mod"
+              aria-label={`Fix unknown mod ${mod.name}`}
+            >
+              {fixingUnknown ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Wrench className="w-4 h-4" />
+              )}
+            </button>
+          )}
+          {mod.merged && onCopyShareCode && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopyShareCode();
+              }}
+              className={utilityActionClasses}
+              title="Copy share code (paste into any Grimoire to import the sources)"
+              aria-label={`Copy share code for ${mod.name}`}
+            >
+              <Share2 className="w-4 h-4" />
+            </button>
+          )}
+          {mod.merged && onUnmerge && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUnmerge();
+              }}
+              className={utilityActionClasses}
+              title="Unmerge (restore source mods)"
+              aria-label={`Unmerge ${mod.name}`}
+            >
+              <Scissors className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
+      <button
+        onClick={onDelete}
+        className={deleteActionClasses}
+        title="Delete mod"
+        aria-label={`Delete ${mod.name}`}
+        data-card-action="true"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+      <button
+        onClick={onToggle}
+        aria-pressed={mod.enabled}
+        aria-label={mod.enabled ? 'Disable mod' : 'Enable mod'}
+        title={mod.enabled ? 'Disable mod' : 'Enable mod'}
+        className={toggleClasses}
+        data-card-action="true"
+      >
+        <span
+          className={`absolute top-[2px] left-[2px] h-4 w-4 rounded-full bg-text-primary shadow-sm transition-transform duration-200 ${
+            mod.enabled ? 'translate-x-5' : 'translate-x-0'
+          }`}
+          aria-hidden
+        />
+      </button>
+    </div>
+  );
   return (
     <div
-      className={`relative rounded-lg border transition-colors ${stateClasses} ${mergedStackShadow} ${updateAvailable ? 'update-stripes' : ''} ${viewMode === 'compact' ? 'p-2 flex flex-col gap-2' : viewMode === 'grid' ? 'p-3 flex flex-col gap-3' : 'flex items-start sm:items-center gap-3 p-3'} ${
-        isDragging ? 'opacity-40' : ''
-      } ${selected ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg-primary' : ''}`}
+      data-mod-entry-key={entryKey}
+      className={`group/card relative rounded-[10px] border transform-gpu transition-[transform,box-shadow,border-color,background-color,opacity] duration-200 ease-out ${stateClasses} ${isDropTarget ? 'ring-1 ring-accent/50' : ''} ${mergedStackShadow} ${updateAvailable ? 'update-stripes' : ''} ${shellClasses} ${
+        isDragging ? draggingPlaceholderClasses : ''
+      } ${dragSourceClasses} ${selected ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg-primary' : ''}`}
       draggable={draggable}
+      onPointerDownCapture={(e) => {
+        const target = e.target as HTMLElement | null;
+        suppressCardDragRef.current = !!target?.closest('[data-card-action="true"]');
+      }}
       onDragStart={(e) => {
         if (!draggable || !onDragStart) {
           e.preventDefault();
           return;
         }
-        // Require drag to originate from the grip handle so clicks on toggle/delete don't start a drag
-        if (!handleDownRef.current) {
+        const target = e.target as HTMLElement | null;
+        if (suppressCardDragRef.current || target?.closest('[data-card-action="true"]')) {
+          suppressCardDragRef.current = false;
           e.preventDefault();
           return;
         }
-        handleDownRef.current = false;
+        suppressCardDragRef.current = false;
         e.dataTransfer.effectAllowed = 'move';
         // Firefox needs setData to start a drag
         try {
@@ -3150,10 +3875,51 @@ function ModCard({
         } catch {
           // ignore
         }
+        const rect = e.currentTarget.getBoundingClientRect();
+        cleanupActiveDragPreview();
+        activeDragPreviewOffset = {
+          x: e.clientX - rect.left,
+          y: e.clientY - rect.top,
+        };
+        const preview = e.currentTarget.cloneNode(true) as HTMLElement;
+        preview.setAttribute('aria-hidden', 'true');
+        preview.style.position = 'fixed';
+        preview.style.top = '0';
+        preview.style.left = '0';
+        preview.style.width = `${rect.width}px`;
+        preview.style.height = `${rect.height}px`;
+        preview.style.pointerEvents = 'none';
+        preview.style.opacity = '1';
+        preview.style.background = 'var(--color-bg-secondary)';
+        preview.style.transformOrigin = 'center center';
+        preview.style.boxShadow = '0 18px 36px rgba(0,0,0,0.42), 0 0 0 1px rgba(255,122,47,0.45)';
+        preview.style.zIndex = '9999';
+        preview.style.willChange = 'transform';
+        preview.style.transition = 'none';
+        document.body.appendChild(preview);
+        activeDragPreview = preview;
+        activeDragEntryKey = entryKey ?? null;
+        activeDropSettlePending = false;
+        moveActiveDragPreview(e.clientX, e.clientY);
+        const transparentDragImage = document.createElement('canvas');
+        transparentDragImage.width = 1;
+        transparentDragImage.height = 1;
+        transparentDragImage.style.position = 'fixed';
+        transparentDragImage.style.top = '-10px';
+        transparentDragImage.style.left = '-10px';
+        document.body.appendChild(transparentDragImage);
+        e.dataTransfer.setDragImage(transparentDragImage, 0, 0);
+        window.setTimeout(() => {
+          transparentDragImage.remove();
+        }, 0);
         onDragStart();
+      }}
+      onDrag={(e) => {
+        moveActiveDragPreview(e.clientX, e.clientY);
       }}
       onDragOver={(e) => {
         if (!draggable || !onDragOver) return;
+        moveActiveDragPreview(e.clientX, e.clientY);
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         const rect = e.currentTarget.getBoundingClientRect();
@@ -3174,13 +3940,25 @@ function ModCard({
       onDrop={(e) => {
         if (!draggable || !onDrop) return;
         e.preventDefault();
-        onDrop();
+        activeDropSettlePending = true;
+        const settlePromise = settleActiveDragPreviewToSlot();
+        Promise.resolve(onDrop(settlePromise)).finally(() => {
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(cleanupActiveDragPreview);
+          });
+        });
       }}
-      onDragEnd={() => onDragEnd?.()}
+      onDragEnd={() => {
+        if (!activeDropSettlePending) {
+          cleanupActiveDragPreview();
+        }
+        onDragEnd?.();
+      }}
     >
       {indicatorClasses && <div className={indicatorClasses} />}
 
-      {selectMode && (
+      <div className={isDragging ? 'pointer-events-none opacity-0' : isList ? 'contents' : ''}>
+        {selectMode && (
         <>
           {/* Full-card click target. Sits above thumbnail button, toggle, and
               delete (their non-positioned containers stack below this absolute
@@ -3202,14 +3980,30 @@ function ModCard({
             {selected && <Check className="w-4 h-4 text-white" strokeWidth={3} />}
           </div>
         </>
-      )}
+        )}
 
-      {viewMode !== 'list' && (() => {
-        const isSoundCard = mod.sourceSection === 'Sound' && !!mod.audioUrl;
+        {isList ? (
+          <ModListRowContent
+            mod={mod}
+            hideNsfwPreviews={hideNsfwPreviews}
+            soundVolume={soundVolume}
+            onOpenDetails={onOpenDetails}
+            onCommitPriority={onCommitPriority}
+            isGroupCard={isGroupCard}
+            group={group}
+            variantStatusLabel={variantStatusLabel}
+            variantStatusTitle={variantStatusTitle}
+            metaChipClasses={metaChipClasses}
+            technicalMetaClasses={technicalMetaClasses}
+            actions={actions}
+          />
+        ) : (
+        <>
+        {(() => {
         const overlayBadges = (
           <>
             {mod.enabled && !selectMode && (
-              <div className="absolute top-2 left-2 z-10 flex flex-col items-start gap-1">
+              <div className="absolute top-2 left-2 z-10 flex h-5 items-start" data-card-action="true">
                 <PriorityEditor
                   modId={mod.id}
                   modName={mod.name}
@@ -3219,7 +4013,7 @@ function ModCard({
                 />
               </div>
             )}
-            <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+              <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
               {hasConflicts && (
                 <Tag
                   tone="warning"
@@ -3265,115 +4059,39 @@ function ModCard({
           </>
         );
 
-        if (isSoundCard) {
-          // Prefer mod.lockerHero (persisted from VPK path inference: catches
-          // mods like "We don't talk Animal" whose title doesn't name the
-          // hero but whose VPK ships sounds/abilities/werewolf/*). Fall back
-          // to title matching for not-yet-enriched mods.
-          const inferredHero = mod.lockerHero ?? inferHeroFromTitle(mod.name);
-          const heroRenderUrl = inferredHero ? getHeroRenderPath(inferredHero) : null;
-          const heroFacePos = inferredHero ? getHeroFacePosition(inferredHero) : 50;
-          return (
-            <div className="group relative w-full aspect-video rounded-md overflow-hidden bg-gradient-to-br from-bg-tertiary via-bg-secondary to-bg-tertiary border border-border">
-              {overlayBadges}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpenDetails?.();
-                }}
-                disabled={!onOpenDetails}
-                className="absolute inset-0 w-full h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer"
-                title={onOpenDetails ? (isGroupCard ? 'Choose files' : 'View mod details') : undefined}
-                aria-label={onOpenDetails ? (isGroupCard ? `Choose files for ${mod.name}` : `View details for ${mod.name}`) : undefined}
-              >
-                {heroRenderUrl ? (
-                  <>
-                    <img
-                      src={heroRenderUrl}
-                      alt={inferredHero ?? mod.name}
-                      className="block w-full h-full object-cover origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
-                      style={{ objectPosition: `${heroFacePos}% 25%` }}
-                    />
-                    {/* Gradient so the overlaid player stays legible */}
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full gap-1 text-text-secondary group-hover:text-accent transition-colors">
-                    <div className="flex items-end gap-0.5 h-6 opacity-60">
-                      {[4, 7, 12, 16, 20, 14, 8, 12, 18, 10, 6, 14, 9].map((h, i) => (
-                        <span
-                          key={i}
-                          className="w-1 rounded-full bg-accent/70"
-                          style={{ height: `${h}px` }}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-[10px] font-semibold uppercase tracking-wider">Sound preview</span>
-                  </div>
-                )}
-              </button>
-              <div
-                className="absolute inset-x-2 bottom-2 z-20"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <AudioPreviewPlayer
-                  src={mod.audioUrl!}
-                  compact
-                  volume={soundVolume}
-                  className="w-full backdrop-blur-md bg-bg-primary/70 border border-white/10 rounded-md"
-                />
-              </div>
-            </div>
-          );
-        }
-
         return (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenDetails?.();
-            }}
-            disabled={!onOpenDetails}
-            className="group relative w-full aspect-video bg-bg-tertiary rounded-md overflow-hidden block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer"
-            title={onOpenDetails ? (isGroupCard ? 'Choose files' : 'View mod details') : undefined}
-            aria-label={onOpenDetails ? (isGroupCard ? `Choose files for ${mod.name}` : `View details for ${mod.name}`) : undefined}
-          >
-            <ModThumbnail
-              src={mod.thumbnailUrl}
-              alt={mod.name}
-              nsfw={mod.nsfw}
-              hideNsfw={hideNsfwPreviews}
-              className="w-full h-full"
-              imageClassName="origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
-              mergedSources={mod.merged?.sources}
-            />
-            {onOpenDetails && (
-              <div className="pointer-events-none absolute inset-0 bg-black/0 transition-colors duration-200 group-hover:bg-black/20" />
-            )}
-            {overlayBadges}
-          </button>
+          <ModMediaPreview
+            mod={mod}
+            hideNsfwPreviews={hideNsfwPreviews}
+            soundVolume={soundVolume}
+            overlayBadges={overlayBadges}
+            mediaSpacingClasses={mediaSpacingClasses}
+            onOpenDetails={onOpenDetails}
+            isGroupCard={isGroupCard}
+          />
         );
-      })()}
+        })()}
 
-      <div className={viewMode !== 'list' ? 'flex items-center gap-3' : 'contents'}>
-        {draggable && (
-          <div
-            onMouseDown={() => {
-              handleDownRef.current = true;
-            }}
-            onMouseUp={() => {
-              handleDownRef.current = false;
-            }}
-            className="p-1 text-text-secondary hover:text-text-primary cursor-grab active:cursor-grabbing select-none"
-            title="Drag to reorder"
-            aria-label="Drag to reorder"
-          >
-            <GripVertical className="w-5 h-5" />
+        <div className={viewMode !== 'list' ? 'mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-3 px-0.5' : 'contents'}>
+        {viewMode === 'list' && (
+          <div className="flex min-w-0 items-center justify-start">
+            {mod.enabled && !selectMode ? (
+              <span data-card-action="true">
+                <PriorityEditor
+                  modId={mod.id}
+                  modName={mod.name}
+                  priority={mod.priority}
+                  variant="inline"
+                  onCommit={onCommitPriority}
+                />
+              </span>
+            ) : (
+              <span className="inline-flex h-5 items-center rounded border border-white/[0.06] bg-bg-tertiary/60 px-1.5 text-[11px] font-semibold text-text-secondary/70">
+                Off
+              </span>
+            )}
           </div>
         )}
-
         {viewMode === 'list' && (
           <button
             type="button"
@@ -3382,7 +4100,7 @@ function ModCard({
               onOpenDetails?.();
             }}
             disabled={!onOpenDetails}
-            className="group relative w-24 h-16 sm:w-32 sm:h-20 flex-shrink-0 rounded-md overflow-hidden bg-bg-tertiary border border-border focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer"
+            className="group relative h-[52px] w-[76px] flex-shrink-0 overflow-hidden rounded-md bg-bg-tertiary border border-white/[0.08] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 disabled:cursor-default enabled:cursor-pointer md:h-14 md:w-[88px]"
             title={onOpenDetails ? (isGroupCard ? 'Choose files' : 'View mod details') : undefined}
             aria-label={onOpenDetails ? (isGroupCard ? `Choose files for ${mod.name}` : `View details for ${mod.name}`) : undefined}
           >
@@ -3405,48 +4123,65 @@ function ModCard({
               />
             )}
             {onOpenDetails && (
-              <div className="pointer-events-none absolute inset-0 bg-black/0 transition-colors duration-200 group-hover:bg-black/20" />
+              <div className="pointer-events-none absolute inset-0 bg-bg-primary/0 transition-colors duration-200 group-hover:bg-bg-primary/20" />
             )}
           </button>
         )}
 
-        <div className="flex-1 min-w-0">
+        <div className={`flex-1 min-w-0 ${viewMode === 'list' ? '' : 'min-w-0'}`}>
           {viewMode === 'list' ? (
-            <h3 className="font-medium truncate min-w-0" title={mod.name}>{mod.name}</h3>
+            <h3 className="min-w-0 truncate text-[14px] font-semibold leading-5 text-text-primary" title={mod.name}>{mod.name}</h3>
           ) : (
-            <div className="flex items-center gap-2 min-w-0">
-              <h3 className="font-medium truncate flex-1 min-w-0" title={mod.name}>{mod.name}</h3>
-              {mod.sourceSection === 'Sound' && (
-                <Tag tone="accent" icon={Volume2} className="flex-shrink-0">
-                  Sound
-                </Tag>
-              )}
-              {mod.nsfw && (
-                <Tag tone="danger" className="flex-shrink-0">18+</Tag>
-              )}
+            <div className="min-w-0">
+              <h3
+                className={`min-w-0 overflow-hidden text-text-primary [display:-webkit-box] [-webkit-box-orient:vertical] ${
+                  titleClasses
+                }`}
+                title={mod.name}
+              >
+                {mod.name}
+              </h3>
             </div>
           )}
-          <div className="flex flex-nowrap items-center gap-2 text-xs text-text-secondary mt-1 min-w-0 overflow-hidden">
+          <div
+            className={`flex items-center gap-1.5 text-xs text-text-secondary min-w-0 ${
+              viewMode === 'list' ? 'mt-1 flex-nowrap overflow-hidden' : `mt-2 ${gridTagsClasses}`
+            }`}
+            title={viewMode !== 'list' ? `${mod.fileName} | ${formatBytes(mod.size)} | installed ${formatAbsoluteDate(mod.installedAt)}` : undefined}
+          >
             {mod.categoryName && (
-              <span className="flex-shrink-0 px-1.5 py-0.5 bg-bg-tertiary rounded text-xs">{mod.categoryName}</span>
+              <span className={metaChipClasses}>{mod.categoryName}</span>
             )}
-            <span className="flex-shrink-0">{formatBytes(mod.size)}</span>
-            <span
-              className="flex-shrink-0 tabular-nums"
-              title={`Installed ${formatAbsoluteDate(mod.installedAt)}`}
-            >
-              {formatRelativeDate(mod.installedAt)}
-            </span>
-            {group ? (
+            {mod.sourceSection === 'Sound' && (
+              <Tag tone="info" icon={Volume2} className="flex-shrink-0">
+                Sound
+              </Tag>
+            )}
+            {mod.nsfw && (
+              <Tag tone="danger" className="flex-shrink-0">18+</Tag>
+            )}
+            {viewMode === 'list' && (
+              <>
+                <span className="flex-shrink-0">{formatBytes(mod.size)}</span>
+                <span
+                  className="flex-shrink-0 tabular-nums"
+                  title={`Installed ${formatAbsoluteDate(mod.installedAt)}`}
+                >
+                  {formatRelativeDate(mod.installedAt)}
+                </span>
+              </>
+            )}
+            {group && (
               <span
-                className="flex-shrink-0 px-1.5 py-0.5 bg-accent/15 text-accent rounded text-xs font-medium tabular-nums"
+                className="flex-shrink-0 rounded-sm border border-accent/25 bg-accent/10 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-accent"
                 title={variantStatusTitle}
               >
-                {variantStatusLabel}
+                {variantStatusLabel} files
               </span>
-            ) : (
+            )}
+            {viewMode === 'list' && !group && (
               <span
-                className="font-mono truncate opacity-60 hover:opacity-100 cursor-help min-w-0"
+                className={technicalMetaClasses}
                 title={mod.fileName}
               >
                 {mod.fileName}
@@ -3469,14 +4204,6 @@ function ModCard({
                   Unknown
                 </Tag>
               )}
-              {mod.sourceSection === 'Sound' && (
-                <Tag tone="accent" icon={Volume2} className="flex-shrink-0">
-                  Sound
-                </Tag>
-              )}
-              {mod.nsfw && (
-                <Tag tone="danger" className="flex-shrink-0">18+</Tag>
-              )}
               {updateAvailable && (
                 <Tag
                   tone="accent"
@@ -3487,117 +4214,113 @@ function ModCard({
                   Update
                 </Tag>
               )}
-              {mod.enabled && (
-                <span className="flex-shrink-0">
-                  <PriorityEditor
-                    modId={mod.id}
-                    modName={mod.name}
-                    priority={mod.priority}
-                    variant="inline"
-                    onCommit={onCommitPriority}
-                  />
-                </span>
-              )}
             </div>
           )}
         </div>
 
-        {/* List-mode: audio preview sits between meta and delete, using the
-            empty right-side space. Grid mode puts it below the card body. */}
-        {viewMode === 'list' && mod.sourceSection === 'Sound' && mod.audioUrl && (
-          <div
-            className="hidden md:flex w-72 flex-shrink-0 items-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <AudioPreviewPlayer
-              src={mod.audioUrl}
-              compact
-              volume={soundVolume}
-              className="w-full border border-border"
-            />
-          </div>
-        )}
-
         <div
           className={`flex flex-shrink-0 ${
-            viewMode === 'list'
-              ? 'flex-row items-center gap-2 self-center'
-              : 'flex-col items-center gap-1.5'
+            actionAreaClasses
           }`}
         >
-          <div className={viewMode === 'list' ? 'contents' : 'flex items-center gap-1.5'}>
-            {mod.isUnknown && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onFixUnknown?.();
-                }}
-                disabled={!onFixUnknown}
-                className="p-1 text-text-secondary hover:text-orange-500 transition-colors cursor-pointer disabled:opacity-60"
-                title="Fix unknown mod"
-                aria-label={`Fix unknown mod ${mod.name}`}
+          {viewMode === 'list' && mod.sourceSection === 'Sound' && mod.audioUrl && (
+            <div
+              className="hidden w-56 flex-shrink-0 items-center opacity-85 transition-opacity duration-200 group-hover/card:opacity-100 xl:flex"
+              onClick={(e) => e.stopPropagation()}
+              data-card-action="true"
+            >
+              <AudioPreviewPlayer
+                src={mod.audioUrl}
+                compact
+                volume={soundVolume}
+                className="w-full border border-white/[0.08] bg-bg-secondary/70"
+              />
+            </div>
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            {hasUtilityActions && (
+              <div
+                className={`flex items-center gap-1 rounded-md border border-border/60 bg-bg-secondary/45 p-0.5 transition-opacity duration-200 ${viewMode === 'list' ? '' : 'opacity-0 group-hover/card:opacity-90 focus-within:opacity-100'}`}
+                data-card-action="true"
               >
-                {fixingUnknown ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Wrench className="w-4 h-4" />
+                {mod.isUnknown && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFixUnknown?.();
+                    }}
+                    disabled={!onFixUnknown}
+                    className={utilityActionClasses}
+                    title="Fix unknown mod"
+                    aria-label={`Fix unknown mod ${mod.name}`}
+                  >
+                    {fixingUnknown ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Wrench className="w-4 h-4" />
+                    )}
+                  </button>
                 )}
-              </button>
-            )}
-            {mod.merged && onCopyShareCode && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCopyShareCode();
-                }}
-                className="p-1 text-text-secondary hover:text-accent transition-colors cursor-pointer"
-                title="Copy share code (paste into any Grimoire to import the sources)"
-                aria-label={`Copy share code for ${mod.name}`}
-              >
-                <Share2 className="w-4 h-4" />
-              </button>
-            )}
-            {mod.merged && onUnmerge && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onUnmerge();
-                }}
-                className="p-1 text-text-secondary hover:text-accent transition-colors cursor-pointer"
-                title="Unmerge (restore source mods)"
-                aria-label={`Unmerge ${mod.name}`}
-              >
-                <Scissors className="w-4 h-4" />
-              </button>
+                {mod.merged && onCopyShareCode && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCopyShareCode();
+                    }}
+                    className={utilityActionClasses}
+                    title="Copy share code (paste into any Grimoire to import the sources)"
+                    aria-label={`Copy share code for ${mod.name}`}
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+                )}
+                {mod.merged && onUnmerge && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onUnmerge();
+                    }}
+                    className={utilityActionClasses}
+                    title="Unmerge (restore source mods)"
+                    aria-label={`Unmerge ${mod.name}`}
+                  >
+                    <Scissors className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             )}
             <button
               onClick={onDelete}
-              className="p-1 text-text-secondary hover:text-red-500 transition-colors cursor-pointer"
+              className={deleteActionClasses}
               title="Delete mod"
+              aria-label={`Delete ${mod.name}`}
+              data-card-action="true"
             >
               <Trash2 className="w-4 h-4" />
             </button>
+            <button
+              onClick={onToggle}
+              aria-pressed={mod.enabled}
+              aria-label={mod.enabled ? 'Disable mod' : 'Enable mod'}
+              title={mod.enabled ? 'Disable mod' : 'Enable mod'}
+              className={toggleClasses}
+              data-card-action="true"
+            >
+              <span
+                className={`absolute top-[2px] left-[2px] h-4 w-4 rounded-full bg-text-primary shadow-sm transition-transform duration-200 ${
+                  mod.enabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+                aria-hidden
+              />
+            </button>
           </div>
-          <button
-            onClick={onToggle}
-            aria-pressed={mod.enabled}
-            aria-label={mod.enabled ? 'Disable mod' : 'Enable mod'}
-            title={mod.enabled ? 'Disable mod' : 'Enable mod'}
-            className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
-              mod.enabled ? 'bg-accent' : 'bg-bg-tertiary border border-border'
-            }`}
-          >
-            <span
-              className={`absolute top-[2px] left-[2px] w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                mod.enabled ? 'translate-x-4' : 'translate-x-0'
-              }`}
-              aria-hidden
-            />
-          </button>
         </div>
+      </div>
+      </>
+        )}
       </div>
 
     </div>
