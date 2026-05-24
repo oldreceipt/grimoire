@@ -46,7 +46,7 @@ import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition, HERO_NAMES 
 import { setModLockerHero } from '../lib/api';
 import { formatRelativeDate, formatAbsoluteDate } from '../lib/dates';
 import { Button, Tag } from '../components/common/ui';
-import { PageHeader, ViewModeToggle, EmptyState, ConfirmModal, SectionHeader, type ViewMode } from '../components/common/PageComponents';
+import { ViewModeToggle, EmptyState, ConfirmModal, SectionHeader, type ViewMode } from '../components/common/PageComponents';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -2065,18 +2065,15 @@ export default function Installed() {
 
   return (
     <div className="px-4 py-5 sm:px-6">
-      <PageHeader
-        title="Installed Mods"
-        action={
-          <div className="flex items-center gap-3">
-            <div className="relative">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="relative flex-1 min-w-[12rem] max-w-md">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary pointer-events-none" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search installed..."
-                className={`bg-bg-secondary border border-border rounded-lg pl-8 ${search ? 'pr-8' : 'pr-3'} py-2 text-sm text-text-primary placeholder:text-text-primary/55 focus:outline-none focus:ring-2 focus:ring-accent w-40`}
+                className={`bg-bg-secondary border border-border rounded-lg pl-8 ${search ? 'pr-8' : 'pr-3'} py-2 text-sm text-text-primary placeholder:text-text-primary/55 focus:outline-none focus:ring-2 focus:ring-accent w-full`}
               />
               {search && (
                 <button
@@ -2089,22 +2086,23 @@ export default function Installed() {
                 </button>
               )}
             </div>
+            <div className="flex flex-wrap items-center gap-3">
             <Button
               variant="secondary"
               onClick={() => setImportOpen(true)}
               icon={FilePlus}
-              title="Import a VPK from disk with a custom name and thumbnail"
-            >
-              Add Custom Mod
-            </Button>
+              className="!px-2.5"
+              aria-label="Add custom mod"
+              title="Add custom mod: import a VPK from disk with a custom name and thumbnail"
+            />
             <Button
               variant="secondary"
               onClick={() => openModsFolder().catch(() => {})}
               icon={FolderOpen}
+              className="!px-2.5"
+              aria-label="Open mods folder"
               title="Open mods folder"
-            >
-              Open Folder
-            </Button>
+            />
             <Button
               variant={selectMode ? 'primary' : 'secondary'}
               onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
@@ -2124,10 +2122,8 @@ export default function Installed() {
               ]}
               onChange={setViewMode}
             />
-          </div>
-        }
-        className="mb-4 !flex-nowrap"
-      />
+            </div>
+      </div>
 
       {searchNeedle && totalMatches === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
@@ -3739,6 +3735,15 @@ function ModCard({
       ? 'bg-[#242424] border-white/[0.08] hover:border-white/[0.14] hover:bg-bg-secondary'
       : 'bg-[#242424]/85 border-white/[0.08] text-text-primary/80 hover:border-white/[0.14] hover:bg-bg-secondary hover:text-text-primary';
 
+  // Glass surface for grid/compact cards: a translucent base over which a
+  // blurred copy of the cover art (see glassBackdropUrl) bleeds, so the card
+  // is tinted by its own thumbnail. List view keeps the solid stateClasses.
+  const glassStateClasses = hasConflicts
+    ? 'border-state-warning/45 bg-state-warning/[0.07]'
+    : mod.enabled
+      ? 'border-white/[0.12] bg-[#141414]/65 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] hover:border-white/[0.2]'
+      : 'border-white/[0.08] bg-[#141414]/55 text-text-primary/75 hover:border-white/[0.16] hover:text-text-primary';
+
   // Merged mods get a "stacked card" silhouette via two offset box-shadows
   // that read as cards-behind-the-card. Uses only neutral surface/border
   // tokens so it stays correct under any accent color the user picks.
@@ -3761,11 +3766,17 @@ function ModCard({
   const draggingPlaceholderClasses =
     'border-dashed border-accent/45 bg-bg-tertiary/25 shadow-none opacity-100';
   const isList = viewMode === 'list';
+  // Cover-art source for the glass backdrop. Skipped when NSFW previews are
+  // hidden so we never bleed hidden imagery, even blurred.
+  const glassBackdropUrl =
+    !isList && mod.thumbnailUrl && !(mod.nsfw && hideNsfwPreviews)
+      ? mod.thumbnailUrl
+      : null;
   const shellClasses = isList
     ? 'grid min-h-[62px] grid-cols-[48px_72px_minmax(0,1fr)_auto] items-center gap-2 px-3.5 py-2'
-    : 'flex flex-col gap-0 p-3';
-  const mediaSpacingClasses = 'mb-3';
-  const titleClasses = 'h-10 text-[15px] font-semibold leading-[19px] [-webkit-line-clamp:2]';
+    : 'flex flex-col gap-0 p-2.5';
+  const mediaSpacingClasses = 'mb-2';
+  const titleClasses = 'text-[15px] font-semibold leading-[19px]';
   const gridTagsClasses = 'h-[22px] flex-nowrap overflow-hidden';
   const actions = (
     <div className="ml-auto flex items-center gap-1">
@@ -3852,7 +3863,7 @@ function ModCard({
   return (
     <div
       data-mod-entry-key={entryKey}
-      className={`group/card relative rounded-[10px] border transform-gpu transition-[transform,box-shadow,border-color,background-color,opacity] duration-200 ease-out ${stateClasses} ${isDropTarget ? 'ring-1 ring-accent/50' : ''} ${mergedStackShadow} ${updateAvailable ? 'update-stripes' : ''} ${shellClasses} ${
+      className={`group/card relative rounded-[10px] border transform-gpu transition-[transform,box-shadow,border-color,background-color,opacity] duration-200 ease-out ${isList ? stateClasses : glassStateClasses} ${isDropTarget ? 'ring-1 ring-accent/50' : ''} ${mergedStackShadow} ${updateAvailable ? 'update-stripes' : ''} ${shellClasses} ${
         isDragging ? draggingPlaceholderClasses : ''
       } ${dragSourceClasses} ${selected ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg-primary' : ''}`}
       draggable={draggable}
@@ -4003,6 +4014,20 @@ function ModCard({
           />
         ) : (
         <>
+        {glassBackdropUrl && (
+          <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden rounded-[10px]">
+            <img
+              src={glassBackdropUrl}
+              alt=""
+              aria-hidden
+              draggable={false}
+              className={`h-full w-full scale-[1.35] object-cover blur-2xl saturate-[1.4] transition-opacity duration-200 ${
+                mod.enabled ? 'opacity-55' : 'opacity-30 grayscale-[0.4]'
+              }`}
+            />
+            <div className="absolute inset-0 bg-gradient-to-b from-[#0f0f0f]/45 via-[#0f0f0f]/65 to-[#0f0f0f]/[0.88]" />
+          </div>
+        )}
         {(() => {
         const overlayBadges = (
           <>
@@ -4080,16 +4105,14 @@ function ModCard({
         <div className="min-w-0">
           <div className="min-w-0">
             <h3
-              className={`min-w-0 overflow-hidden text-text-primary [display:-webkit-box] [-webkit-box-orient:vertical] ${
-                titleClasses
-              }`}
+              className={`min-w-0 truncate text-text-primary ${titleClasses}`}
               title={mod.name}
             >
               {mod.name}
             </h3>
           </div>
           <div
-            className={`mt-2 flex items-center gap-1.5 text-xs text-text-secondary min-w-0 ${gridTagsClasses}`}
+            className={`mt-1.5 flex items-center gap-1.5 text-xs text-text-secondary min-w-0 ${gridTagsClasses}`}
             title={`${mod.fileName} | ${formatBytes(mod.size)} | installed ${formatAbsoluteDate(mod.installedAt)}`}
           >
             {mod.categoryName && (
@@ -4111,6 +4134,12 @@ function ModCard({
                 {variantStatusLabel} files
               </span>
             )}
+            <span
+              className="ml-auto flex-shrink-0 pl-1.5 text-[11px] tabular-nums text-text-secondary/55 opacity-0 transition-opacity duration-200 group-hover/card:opacity-100"
+              title={`Installed ${formatAbsoluteDate(mod.installedAt)}`}
+            >
+              {formatRelativeDate(mod.installedAt)}
+            </span>
           </div>
         </div>
 
