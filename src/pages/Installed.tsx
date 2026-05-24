@@ -45,7 +45,7 @@ import MergeModsModal from '../components/MergeModsModal';
 import MergedContentsModal from '../components/MergedContentsModal';
 import PriorityEditor from '../components/PriorityEditor';
 import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition, HERO_NAMES, GLOBAL_MOD_TYPE_ORDER, GLOBAL_MOD_TYPE_LABELS } from '../lib/lockerUtils';
-import { setModLockerHero, setModGlobalType } from '../lib/api';
+import { setModGlobalType } from '../lib/api';
 import { formatRelativeDate, formatAbsoluteDate } from '../lib/dates';
 import { Button, Tag } from '../components/common/ui';
 import { ViewModeToggle, EmptyState, ConfirmModal, SectionHeader, type ViewMode } from '../components/common/PageComponents';
