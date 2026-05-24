@@ -296,7 +296,7 @@ export default function Locker() {
       <div className="p-6 space-y-6">
         <PageHeader
           title="Hero Locker"
-          description="Pick the active skin per hero. Selecting one disables other skins for that hero."
+          description="Manage hero-specific mods"
         />
         <div
           className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3"
@@ -327,7 +327,7 @@ export default function Locker() {
       <div className="p-6 space-y-6">
       <PageHeader
         title="Hero Locker"
-        description="Pick the active skin per hero. Selecting one disables other skins for that hero."
+        description="Manage hero-specific mods"
         stats={`${heroList.length} heroes • ${installedSkinCount} installed skins`}
         action={
           <div className="flex items-center gap-3">

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { setModPriority } from '../lib/api';
 import { useAppStore } from '../stores/appStore';
-import { Tag } from './common/ui';
 
 interface Props {
   modId: string;
@@ -15,8 +15,8 @@ interface Props {
 }
 
 /**
- * Click-to-edit Load order badge. Replaces the static Tag with an inline
- * numeric input so users can retype a priority instead of dragging through
+ * Click-to-edit load order chip. Opens a small popover so users can retype
+ * a priority instead of dragging through
  * a long list. Right-click is supported too because some users reach for
  * a context menu first — we suppress the native menu in that case.
  *
@@ -36,7 +36,9 @@ export default function PriorityEditor({
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const chipRef = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -48,11 +50,19 @@ export default function PriorityEditor({
     setDraft(String(priority));
     setEditing(true);
     setError(null);
+    const rect = chipRef.current?.getBoundingClientRect();
+    if (rect) {
+      setPopoverPos({
+        top: rect.bottom + 6,
+        left: Math.min(Math.max(rect.left, 8), window.innerWidth - 168),
+      });
+    }
   };
 
   const cancel = () => {
     setEditing(false);
     setError(null);
+    setPopoverPos(null);
   };
 
   const commit = async () => {
@@ -74,6 +84,7 @@ export default function PriorityEditor({
       }
       setEditing(false);
       setError(null);
+      setPopoverPos(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -82,54 +93,7 @@ export default function PriorityEditor({
   };
 
   if (editing) {
-    return (
-      <span
-        className="inline-flex items-center gap-1"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <span
-          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-xs font-medium border tabular-nums ${
-            variant === 'overlay'
-              ? 'bg-bg-secondary/90 border-accent text-text-primary backdrop-blur-sm'
-              : 'bg-bg-tertiary border-accent text-text-primary'
-          }`}
-        >
-          <span className="text-text-secondary">#</span>
-          <input
-            ref={inputRef}
-            type="text"
-            inputMode="numeric"
-            value={draft}
-            disabled={busy}
-            onChange={(e) => setDraft(e.target.value.replace(/\D/g, '').slice(0, 2))}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void commit();
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                cancel();
-              }
-            }}
-            onBlur={() => {
-              if (!busy) void commit();
-            }}
-            className="w-7 bg-transparent text-text-primary focus:outline-none text-xs tabular-nums"
-            aria-label={`Set load order for ${modName}`}
-            aria-invalid={!!error}
-          />
-        </span>
-        {error && (
-          <span
-            className="text-[10px] text-red-300 max-w-[10rem] truncate"
-            role="alert"
-            title={error}
-          >
-            {error}
-          </span>
-        )}
-      </span>
-    );
+    // Fall through so the chip stays stable while the popover is open.
   }
 
   // Rendered as a span+role=button rather than a <button> because this widget
@@ -138,6 +102,7 @@ export default function PriorityEditor({
   return (
     <span
       role="button"
+      ref={chipRef}
       tabIndex={0}
       onClick={startEdit}
       onContextMenu={startEdit}
@@ -146,13 +111,66 @@ export default function PriorityEditor({
           startEdit(e);
         }
       }}
-      className="inline-flex cursor-text focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded-sm"
-      title={`Load #${priority}. Click (or right-click) to retype. Lower numbers load first.`}
+      className="group/order-chip relative inline-flex min-h-7 min-w-7 cursor-pointer items-center justify-center rounded-md focus:outline-none"
       aria-label={`Load order ${priority}. Click to change.`}
     >
-      <Tag tone="accent" variant={variant} className="tabular-nums">
-        Load #{priority}
-      </Tag>
+      <span
+        className={`inline-flex h-[22px] min-w-[30px] items-center justify-center rounded-md border border-accent/55 bg-[rgba(10,20,24,0.72)] px-2 text-[11px] font-bold leading-none tabular-nums text-accent shadow-none transition-colors duration-150 group-hover/order-chip:border-accent/85 group-hover/order-chip:bg-accent/10 group-focus-visible/order-chip:outline group-focus-visible/order-chip:outline-2 group-focus-visible/order-chip:outline-accent/35 ${
+          variant === 'overlay' ? 'backdrop-blur-sm' : ''
+        }`}
+      >
+        #{priority}
+      </span>
+      {!editing && (
+        <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-1.5 -translate-y-1/2 whitespace-nowrap rounded-md border border-white/10 bg-bg-primary/95 px-2 py-1 text-[11px] font-medium text-text-secondary opacity-0 shadow-lg transition-opacity duration-150 group-hover/order-chip:opacity-100 group-focus-visible/order-chip:opacity-100">
+          Load order
+        </span>
+      )}
+      {editing && popoverPos && createPortal(
+        <div
+          className="fixed z-[9999] w-40 rounded-lg border border-white/10 bg-bg-primary/95 p-2.5 text-left shadow-xl"
+          style={{ top: popoverPos.top, left: popoverPos.left }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <span className="mb-2 block text-xs font-semibold text-text-primary">Load order</span>
+          <span className="inline-flex h-8 w-full items-center rounded-md border border-accent/55 bg-bg-tertiary/80 px-2 text-sm text-text-primary">
+            <span className="mr-1 text-text-secondary">#</span>
+            <input
+              ref={inputRef}
+              type="text"
+              inputMode="numeric"
+              value={draft}
+              disabled={busy}
+              onChange={(e) => setDraft(e.target.value.replace(/\D/g, '').slice(0, 2))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void commit();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  cancel();
+                }
+              }}
+              onBlur={() => {
+                if (!busy) void commit();
+              }}
+              className="min-w-0 flex-1 bg-transparent text-sm tabular-nums text-text-primary focus:outline-none"
+              aria-label={`Set load order for ${modName}`}
+              aria-invalid={!!error}
+            />
+          </span>
+          <span className="mt-2 block text-[11px] leading-4 text-text-secondary">
+            Lower numbers load first.
+          </span>
+          {error && (
+            <span className="mt-1 block max-w-full truncate text-[10px] text-red-300" role="alert">
+              {error}
+            </span>
+          )}
+        </div>,
+        document.body
+      )}
     </span>
   );
 }
