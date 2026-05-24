@@ -205,7 +205,7 @@ export default function LockerHero() {
   const applyMinaPreset = async (presetFileName: string) => {
     try {
       await setMinaPreset(presetFileName);
-      await loadMods();
+      await loadMods({ silent: true });
     } catch (err) {
       setCategoriesError(String(err));
     }
@@ -237,7 +237,7 @@ export default function LockerHero() {
         selectedMinaVariant.label,
         hero.name === 'Mina' ? hero.id : undefined
       );
-      await loadMods();
+      await loadMods({ silent: true });
     } catch (err) {
       setMinaVariantsError(String(err));
     }
