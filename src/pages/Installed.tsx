@@ -3665,6 +3665,7 @@ interface ModListRowContentProps {
   variantStatusLabel: string | null;
   variantStatusTitle: string;
   metaChipClasses: string;
+  manualTagChipClasses: string;
   technicalMetaClasses: string;
   actions: ReactNode;
 }
@@ -3680,6 +3681,7 @@ function ModListRowContent({
   variantStatusLabel,
   variantStatusTitle,
   metaChipClasses,
+  manualTagChipClasses,
   technicalMetaClasses,
   actions,
 }: ModListRowContentProps) {
@@ -3759,7 +3761,8 @@ function ModListRowContent({
         <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-xs text-text-secondary">
           {mod.categoryName && <span className={metaChipClasses}>{mod.categoryName}</span>}
           {mod.lockerHero && (
-            <span className={metaChipClasses} title={`Manual Locker tag: ${mod.lockerHero}`}>
+            <span className={manualTagChipClasses} title={`Manual hero: ${mod.lockerHero}`}>
+              <TagIcon className="h-3 w-3 flex-shrink-0" aria-hidden />
               {mod.lockerHero}
             </span>
           )}
@@ -3924,6 +3927,7 @@ function ModCard({
       ? 'shadow-[3px_3px_0_0_var(--color-bg-secondary),3px_3px_0_1px_var(--color-border),6px_6px_0_0_var(--color-bg-secondary),6px_6px_0_1px_var(--color-border)] mr-1.5 mb-1.5'
       : '';
   const metaChipClasses = 'inline-flex h-[18px] min-w-0 max-w-full items-center overflow-hidden truncate rounded border border-white/[0.06] bg-bg-tertiary/65 px-1.5 text-[11px] leading-none text-text-secondary/80';
+  const manualTagChipClasses = 'inline-flex h-[18px] min-w-0 max-w-full items-center gap-1 overflow-hidden truncate rounded border border-accent/30 bg-accent/10 px-1.5 text-[11px] leading-none text-accent';
   const technicalMetaClasses = 'min-w-0 truncate font-mono text-[11px] text-text-secondary/55 hover:text-text-secondary cursor-help';
   const utilityActionClasses = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 cursor-pointer disabled:opacity-60';
   const menuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-primary hover:bg-bg-tertiary focus:outline-none focus-visible:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50';
@@ -4283,6 +4287,7 @@ function ModCard({
             variantStatusLabel={variantStatusLabel}
             variantStatusTitle={variantStatusTitle}
             metaChipClasses={metaChipClasses}
+            manualTagChipClasses={manualTagChipClasses}
             technicalMetaClasses={technicalMetaClasses}
             actions={actions}
           />
@@ -4400,7 +4405,8 @@ function ModCard({
               <span className={metaChipClasses}>{mod.categoryName}</span>
             )}
             {mod.lockerHero && (
-              <span className={metaChipClasses} title={`Manual Locker tag: ${mod.lockerHero}`}>
+              <span className={manualTagChipClasses} title={`Manual hero: ${mod.lockerHero}`}>
+                <TagIcon className="h-3 w-3 flex-shrink-0" aria-hidden />
                 {mod.lockerHero}
               </span>
             )}
