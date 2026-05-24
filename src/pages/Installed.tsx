@@ -3983,7 +3983,7 @@ function ModCard({
                 className={menuItemClasses}
               >
                 <Pencil className="w-3.5 h-3.5" />
-                Edit local metadata
+                Edit
               </button>
             )}
             {onOpenDetails && (
@@ -4013,7 +4013,7 @@ function ModCard({
                   className={menuItemClasses}
                 >
                   <TagIcon className="w-3.5 h-3.5" />
-                  Tag for Locker
+                  Set hero
                 </button>
                 {tagPickerOpen && (
                   <div className="my-1 max-h-56 overflow-y-auto rounded-md border border-border bg-bg-primary/40 p-1">
@@ -4529,9 +4529,9 @@ function EditLocalModModal({ mod, onClose, onSave }: EditLocalModModalProps) {
             <Pencil className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-lg font-semibold text-text-primary">Edit local mod</h3>
+            <h3 className="text-lg font-semibold text-text-primary">Edit mod</h3>
             <p className="mt-1 text-sm text-text-secondary">
-              Update the local metadata shown in Grimoire. The VPK filename stays engine-safe.
+              Change the name, image, or NSFW mark.
             </p>
           </div>
         </div>
@@ -4552,17 +4552,17 @@ function EditLocalModModal({ mod, onClose, onSave }: EditLocalModModalProps) {
           placeholder="Mod name"
         />
         <p className="mt-2 truncate text-xs text-text-secondary" title={mod.fileName}>
-          {mod.fileName}
+          File: {mod.fileName}
         </p>
 
         <div className="mt-5">
           <label className="block text-sm font-medium text-text-primary mb-1.5">
-            Thumbnail image <span className="text-text-secondary font-normal">(optional)</span>
+            Image
           </label>
           <div
             role="button"
             tabIndex={0}
-            aria-label={thumbnailDataUrl ? 'Thumbnail selected. Press Enter to change.' : 'Drop an image here or press Enter to browse'}
+            aria-label={thumbnailDataUrl ? 'Image selected. Press Enter to change.' : 'Drop an image here or press Enter to browse'}
             onClick={pickImage}
             onKeyDown={(e) => onZoneKeyDown(e, pickImage)}
             onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setImgDragActive(true); }}
@@ -4593,8 +4593,8 @@ function EditLocalModModal({ mod, onClose, onSave }: EditLocalModModalProps) {
                 </>
               ) : thumbnailDataUrl ? (
                 <>
-                  <div className="text-sm text-text-primary font-medium">Current thumbnail</div>
-                  <div className="text-xs text-text-secondary">Click or drop an image to replace</div>
+                  <div className="text-sm text-text-primary font-medium">Current image</div>
+                  <div className="text-xs text-text-secondary">Click or drop to replace</div>
                 </>
               ) : (
                 <>
@@ -4613,7 +4613,7 @@ function EditLocalModModal({ mod, onClose, onSave }: EditLocalModModalProps) {
               }}
               className="mt-2 text-xs text-text-secondary hover:text-text-primary cursor-pointer"
             >
-              Remove thumbnail
+              Remove image
             </button>
           )}
         </div>
@@ -4625,7 +4625,7 @@ function EditLocalModModal({ mod, onClose, onSave }: EditLocalModModalProps) {
             onChange={(e) => setNsfw(e.target.checked)}
             className="w-4 h-4 accent-accent cursor-pointer"
           />
-          Mark as NSFW
+          NSFW
         </label>
 
         {error && (
