@@ -3736,7 +3736,7 @@ function lockerHeroSourceLabel(source: Mod['lockerHeroSource']): string {
 }
 
 function ChipText({ children }: { children: ReactNode }) {
-  return <span className="relative -top-[0.5px] min-w-0 truncate leading-[14px]">{children}</span>;
+  return <span className="relative top-[1.5px] min-w-0 truncate leading-[14px]">{children}</span>;
 }
 
 function HeroTagLabel({ heroName, iconClassName = 'h-4 w-4' }: { heroName: string; iconClassName?: string }) {
