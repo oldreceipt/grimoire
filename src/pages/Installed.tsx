@@ -765,14 +765,63 @@ export default function Installed() {
   const handleDetailsDownload = async (fileId: number, fileName: string) => {
     if (!detailsMod) return;
     try {
-      // Same-file picks (true reinstall/update) replace the source install;
-      // different-file picks add a new entry and the download backend will
-      // auto-disable any prior enabled sibling files of the same GameBanana mod.
+      // Decide whether this pick replaces the source install or adds a sibling:
+      //  - same-file pick = a true reinstall -> replace.
+      //  - different-file pick when the source has an update available = a
+      //    version update -> delete the old version like "Update all" does, so
+      //    the superseded file isn't left lingering (disabled) on disk.
+      //  - different-file pick with no update available = an intentional variant
+      //    add -> leave the source in place (the download backend auto-disables
+      //    the prior enabled sibling instead of deleting it).
       const sourceMod = detailsSourceModId ? mods.find((m) => m.id === detailsSourceModId) : null;
-      if (sourceMod && sourceMod.gameBananaFileId === fileId) {
+      const pickedIsArchived = !!detailsMod.files?.find((f) => f.id === fileId)?.isArchived;
+      const isReinstall = !!sourceMod && sourceMod.gameBananaFileId === fileId;
+      // A not-installed, non-archived file picked while the source has an update
+      // available is the update target. Guard on !installed so clicking a
+      // *different* file the user already owns (a second variant) reinstalls it
+      // rather than deleting the source; guard on !archived so picking an old
+      // file from the archived list never replaces a newer install.
+      const isUpdate =
+        !!sourceMod &&
+        detailsUpdateAvailable &&
+        !detailsInstalledFileIds.has(fileId) &&
+        !pickedIsArchived;
+      const replacing = isReinstall || isUpdate;
+      const restoreEnabled = replacing && !!sourceMod?.enabled;
+
+      if (replacing && sourceMod) {
+        // Snapshot before the destructive delete so the user can roll back,
+        // matching runUpdate's pre-update snapshot. Non-fatal on failure: a
+        // missing snapshot must not block the update the user just asked for.
+        try {
+          await createSnapshot('pre-update');
+        } catch (err) {
+          console.warn('[Update] failed to capture pre-update snapshot:', err);
+        }
         await deleteMod(sourceMod.id);
       }
+
       await downloadMod(detailsMod.id, fileId, fileName, detailsSection, detailsCategoryId);
+
+      // Deleting the source removes the only enabled sibling, so the backend's
+      // auto-disable promotion never fires and the freshly downloaded file stays
+      // in /disabled. Re-enable it so an update/reinstall preserves the source's
+      // enabled state instead of silently turning the mod off. (Match by GB ids;
+      // the local mod id changes on reinstall.)
+      if (restoreEnabled) {
+        await loadMods();
+        const newMod = useAppStore
+          .getState()
+          .mods.find((m) => m.gameBananaId === detailsMod.id && m.gameBananaFileId === fileId);
+        if (newMod && !newMod.enabled) {
+          try {
+            await toggleMod(newMod.id);
+          } catch (err) {
+            console.warn('[Update] failed to re-enable updated mod:', err);
+          }
+        }
+      }
+
       closeModDetails();
       loadMods();
     } catch (err) {
@@ -836,18 +885,24 @@ export default function Installed() {
         continue;
       }
 
-      const liveFiles = details.files ?? [];
+      // Consider only current (non-archived) files, mirroring the update-check
+      // effect below. An author's most common "update" is to archive the old
+      // version and upload a new current file; counting archived files as live
+      // would let the installed-but-now-archived row match Pass 1 1:1, so we'd
+      // re-download the same stale file (the mod stays flagged "update
+      // available" forever and "Update all" silently no-ops).
+      const liveFiles = (details.files ?? []).filter((f) => !f.isArchived);
       const liveFileIds = new Set(liveFiles.map((f) => f.id));
 
       // Resolve every snapshot to a target file *before* any delete/download
       // runs, so an unrecoverable row keeps its existing install rather than
       // getting deleted into a failed re-download.
       //
-      // Pass 1: rows whose stored fileId is still on GameBanana (genuine
-      // multi-file mods stay 1:1).
-      // Pass 2: rows whose fileId is gone. Fall back to a single-file
-      // consolidation only when the mod now ships exactly one file and no
-      // other row already claimed it.
+      // Pass 1: rows whose stored fileId is still a current file on GameBanana
+      // (genuine multi-file mods stay 1:1).
+      // Pass 2: rows whose fileId is gone or archived. Fall back to a
+      // single-file consolidation only when the mod now ships exactly one
+      // current file and no other row already claimed it.
       type Resolution =
         | { ok: true; snapshot: (typeof snapshots)[number]; fileId: number; fileName: string }
         | { ok: false; snapshot: (typeof snapshots)[number]; reason: string };
