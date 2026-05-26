@@ -1,4 +1,24 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import {
   Package,
   Loader2,
@@ -58,95 +78,14 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-type DropPosition = 'before' | 'after';
+type ReorderPosition = 'before' | 'after';
 type DragSection = 'enabled' | 'disabled';
 type DragDraftOrder = {
   section: DragSection;
   keys: string[];
 } | null;
-type PendingDraftMove = {
-  entries: ModEntry[];
-  section: DragSection;
-  sourceKey: string;
-  targetKey: string;
-  position: DropPosition;
-};
 
-const DROP_SETTLE_DURATION_MS = 150;
-const DROP_STATE_RESET_DELAY_MS = DROP_SETTLE_DURATION_MS + 10;
-
-let activeDragPreview: HTMLElement | null = null;
-let activeDragEntryKey: string | null = null;
-let activeDropSettlePending = false;
-let activeDragPreviewOffset = { x: 0, y: 0 };
-
-function findEntryElement(key: string | null): HTMLElement | null {
-  if (!key) return null;
-  for (const el of document.querySelectorAll<HTMLElement>('[data-mod-entry-key]')) {
-    if (el.dataset.modEntryKey === key) return el;
-  }
-  return null;
-}
-
-function cleanupActiveDragPreview() {
-  activeDragPreview?.remove();
-  activeDragPreview = null;
-  activeDragEntryKey = null;
-  activeDropSettlePending = false;
-  activeDragPreviewOffset = { x: 0, y: 0 };
-}
-
-function moveActiveDragPreview(clientX: number, clientY: number) {
-  if (!activeDragPreview || clientX === 0 || clientY === 0) return;
-  const { x, y } = activeDragPreviewOffset;
-  activeDragPreview.style.transform = `translate3d(${clientX - x}px, ${clientY - y}px, 0) scale(1.03)`;
-}
-
-async function settleActiveDragPreviewToSlot(): Promise<void> {
-  const preview = activeDragPreview;
-  const slot = findEntryElement(activeDragEntryKey);
-  if (!preview || !slot) {
-    cleanupActiveDragPreview();
-    return;
-  }
-
-  const from = preview.getBoundingClientRect();
-  const to = slot.getBoundingClientRect();
-  preview.style.transformOrigin = 'top left';
-  preview.style.left = `${to.left}px`;
-  preview.style.top = `${to.top}px`;
-  preview.style.width = `${to.width}px`;
-  preview.style.height = `${to.height}px`;
-  preview.style.willChange = 'transform';
-  const translateX = from.left - to.left;
-  const translateY = from.top - to.top;
-  const scaleX = to.width === 0 ? 1 : from.width / to.width;
-  const scaleY = to.height === 0 ? 1 : from.height / to.height;
-
-  const animation = preview.animate(
-    [
-      {
-        transform: `translate3d(${translateX}px, ${translateY}px, 0) scale(${scaleX}, ${scaleY})`,
-        boxShadow: '0 18px 36px rgba(0,0,0,0.42), 0 0 0 1px rgba(255,122,47,0.45)',
-      },
-      {
-        transform: 'translate3d(0, 0, 0) scale(1)',
-        boxShadow: '0 8px 18px rgba(0,0,0,0.26), 0 0 0 1px rgba(255,122,47,0.18)',
-      },
-    ],
-    {
-      duration: DROP_SETTLE_DURATION_MS,
-      easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
-      fill: 'forwards',
-    }
-  );
-
-  try {
-    await animation.finished;
-  } catch {
-    // The animation can be cancelled by window teardown or a new drag.
-  }
-}
+const DROP_STATE_RESET_DELAY_MS = 160;
 
 /**
  * Rows on the Installed page are either standalone mods or grouped files
@@ -249,6 +188,49 @@ function entryName(entry: ModEntry): string {
 
 function flattenEntries(entries: ModEntry[]): Mod[] {
   return entries.flatMap((entry) => (entry.kind === 'single' ? [entry.mod] : entry.variants));
+}
+
+function entryRepresentativeId(entry: ModEntry): string {
+  return entry.kind === 'single' ? entry.mod.id : entry.primary.id;
+}
+
+function SortableModEntry({
+  id,
+  disabled,
+  children,
+}: {
+  id: string;
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled });
+
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.32 : undefined,
+    position: 'relative',
+    zIndex: isDragging ? 1 : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={disabled ? undefined : 'cursor-grab active:cursor-grabbing'}
+      style={style}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
 }
 
 function entryFilesByEnabledState(entry: ModEntry, enabled: boolean): Mod[] {
@@ -394,20 +376,20 @@ export default function Installed() {
   const unknownRequestSeqRef = useRef(0);
   const unknownRequestIdsRef = useRef<Record<string, number>>({});
 
-  // Drag-and-drop reorder state. `draggingSection` scopes drops so dragging
-  // an enabled card can't drop onto a disabled card and vice-versa.
-  const [draggingId, setDraggingId] = useState<string | null>(null);
+  // Drag-and-drop reorder state. `draggingSection` scopes overlays so dragging
+  // an enabled card can't render against a disabled section and vice versa.
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [draggingSection, setDraggingSection] = useState<DragSection | null>(null);
-  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
-  const [dropPosition, setDropPosition] = useState<DropPosition | null>(null);
   const [dragDraftOrder, setDragDraftOrder] = useState<DragDraftOrder>(null);
-  const autoScrollRafRef = useRef<number | null>(null);
   const dropCommitPendingRef = useRef(false);
-  const layoutAnimationRafRef = useRef<number | null>(null);
-  const draftMoveRafRef = useRef<number | null>(null);
-  const pendingDraftMoveRef = useRef<PendingDraftMove | null>(null);
+  const sortableSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // Details overlay state
   const [detailsMod, setDetailsMod] = useState<GameBananaModDetails | null>(null);
@@ -1345,7 +1327,7 @@ export default function Installed() {
   const reorderVariantTo = async (
     source: Mod,
     neighbor: Mod,
-    position: DropPosition
+    position: ReorderPosition
   ) => {
     if (source.id === neighbor.id) return;
     if (source.enabled !== neighbor.enabled) return;
@@ -1391,63 +1373,6 @@ export default function Installed() {
     const neighbor = reorderableSiblings[neighborIdx];
     await reorderVariantTo(target, neighbor, direction === 'up' ? 'before' : 'after');
   };
-
-  // Auto-scroll the installed-page container while drag-reordering. Native HTML
-  // drag-and-drop doesn't fire pointer events, so we hook `dragover` at the
-  // window and start a rAF loop whenever the cursor is near the top/bottom
-  // edge of the scroll container.
-  useEffect(() => {
-    if (!draggingId) return;
-    const container = installedScrollRef.current;
-    if (!container) return;
-    const EDGE = 80;
-    const MAX_STEP = 18;
-    let pointerY = -1;
-
-    const tick = () => {
-      const rect = container.getBoundingClientRect();
-      const fromTop = pointerY - rect.top;
-      const fromBottom = rect.bottom - pointerY;
-      let dy = 0;
-      if (fromTop >= 0 && fromTop < EDGE) dy = -Math.round(((EDGE - fromTop) / EDGE) * MAX_STEP);
-      else if (fromBottom >= 0 && fromBottom < EDGE) dy = Math.round(((EDGE - fromBottom) / EDGE) * MAX_STEP);
-      if (dy !== 0) container.scrollBy({ top: dy });
-      autoScrollRafRef.current = requestAnimationFrame(tick);
-    };
-
-    const onDragOver = (e: DragEvent) => {
-      pointerY = e.clientY;
-      if (autoScrollRafRef.current === null) {
-        autoScrollRafRef.current = requestAnimationFrame(tick);
-      }
-    };
-    window.addEventListener('dragover', onDragOver);
-    return () => {
-      window.removeEventListener('dragover', onDragOver);
-      if (autoScrollRafRef.current !== null) {
-        cancelAnimationFrame(autoScrollRafRef.current);
-        autoScrollRafRef.current = null;
-      }
-    };
-  }, [draggingId]);
-
-  useEffect(() => {
-    return () => {
-      cleanupActiveDragPreview();
-      if (autoScrollRafRef.current !== null) {
-        cancelAnimationFrame(autoScrollRafRef.current);
-        autoScrollRafRef.current = null;
-      }
-      if (layoutAnimationRafRef.current !== null) {
-        cancelAnimationFrame(layoutAnimationRafRef.current);
-        layoutAnimationRafRef.current = null;
-      }
-      if (draftMoveRafRef.current !== null) {
-        cancelAnimationFrame(draftMoveRafRef.current);
-        draftMoveRafRef.current = null;
-      }
-    };
-  }, []);
 
   useEffect(() => {
     loadSettings();
@@ -1692,17 +1617,8 @@ export default function Installed() {
   selectModeRef.current = selectMode;
 
   const resetDragState = () => {
-    if (draftMoveRafRef.current !== null) {
-      cancelAnimationFrame(draftMoveRafRef.current);
-      draftMoveRafRef.current = null;
-    }
-    pendingDraftMoveRef.current = null;
-    setDraggingId(null);
     setDraggingKey(null);
     setDraggingSection(null);
-    setDropTargetId(null);
-    setDropTargetKey(null);
-    setDropPosition(null);
     setDragDraftOrder(null);
   };
 
@@ -1714,12 +1630,6 @@ export default function Installed() {
         resolve();
       }, DROP_STATE_RESET_DELAY_MS);
     });
-
-  const handleDragEnd = () => {
-    if (!dropCommitPendingRef.current) {
-      resetDragState();
-    }
-  };
 
   /** Locate the entry that holds a given mod id within a section's entries. */
   const findEntryForModId = (entries: ModEntry[], id: string): ModEntry | undefined => {
@@ -1738,102 +1648,6 @@ export default function Installed() {
     return [...ordered, ...missing];
   };
 
-  const sameOrder = (a: string[], b: string[]): boolean =>
-    a.length === b.length && a.every((key, index) => key === b[index]);
-
-  const captureEntryRects = (): Map<string, DOMRect> => {
-    const rects = new Map<string, DOMRect>();
-    document.querySelectorAll<HTMLElement>('[data-mod-entry-key]').forEach((el) => {
-      const key = el.dataset.modEntryKey;
-      if (key) rects.set(key, el.getBoundingClientRect());
-    });
-    return rects;
-  };
-
-  const animateEntryReflow = (before: Map<string, DOMRect>, skipKey?: string | null) => {
-    if (layoutAnimationRafRef.current !== null) {
-      cancelAnimationFrame(layoutAnimationRafRef.current);
-    }
-    layoutAnimationRafRef.current = requestAnimationFrame(() => {
-      layoutAnimationRafRef.current = null;
-      document.querySelectorAll<HTMLElement>('[data-mod-entry-key]').forEach((el) => {
-        const key = el.dataset.modEntryKey;
-        if (!key || key === skipKey) return;
-        const prev = before.get(key);
-        if (!prev) return;
-        const next = el.getBoundingClientRect();
-        const dx = prev.left - next.left;
-        const dy = prev.top - next.top;
-        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-        el.animate(
-          [
-            { transform: `translate3d(${dx}px, ${dy}px, 0)` },
-            { transform: 'translate3d(0, 0, 0)' },
-          ],
-          {
-            duration: 180,
-            easing: 'cubic-bezier(0.25, 1, 0.5, 1)',
-          }
-        );
-      });
-    });
-  };
-
-  const reorderKeys = (
-    keys: string[],
-    sourceKey: string,
-    targetKey: string,
-    position: DropPosition
-  ): string[] => {
-    if (sourceKey === targetKey) return keys;
-    const working = keys.filter((key) => key !== sourceKey);
-    const targetIdx = working.indexOf(targetKey);
-    if (targetIdx === -1) return keys;
-    const insertAt = position === 'before' ? targetIdx : targetIdx + 1;
-    working.splice(insertAt, 0, sourceKey);
-    return working;
-  };
-
-  const beginDraftOrder = (entries: ModEntry[], section: DragSection) => {
-    setDragDraftOrder({ section, keys: entries.map((entry) => entry.key) });
-  };
-
-  const commitDraftMove = ({
-    entries,
-    section,
-    sourceKey,
-    targetKey,
-    position,
-  }: PendingDraftMove) => {
-    const before = captureEntryRects();
-    setDragDraftOrder((draft) => {
-      const keys = draft?.section === section
-        ? draft.keys
-        : entries.map((entry) => entry.key);
-      const next = reorderKeys(keys, sourceKey, targetKey, position);
-      if (next === keys || sameOrder(keys, next)) return draft;
-      animateEntryReflow(before, sourceKey);
-      return { section, keys: next };
-    });
-  };
-
-  const moveDraftOrder = (
-    entries: ModEntry[],
-    section: DragSection,
-    sourceKey: string,
-    targetKey: string,
-    position: DropPosition
-  ) => {
-    pendingDraftMoveRef.current = { entries, section, sourceKey, targetKey, position };
-    if (draftMoveRafRef.current !== null) return;
-    draftMoveRafRef.current = requestAnimationFrame(() => {
-      draftMoveRafRef.current = null;
-      const pending = pendingDraftMoveRef.current;
-      pendingDraftMoveRef.current = null;
-      if (pending) commitDraftMove(pending);
-    });
-  };
-
   const previewEntriesForDrag = (
     entries: ModEntry[],
     section: DragSection
@@ -1847,6 +1661,52 @@ export default function Installed() {
   const previewEnabled = previewEntriesForDrag(visibleEnabled, 'enabled');
   const previewDisabled = previewEntriesForDrag(visibleDisabled, 'disabled');
 
+  const sortableEnabled = !searchNeedle && !selectMode;
+
+  const visibleEntriesForSection = (section: DragSection): ModEntry[] =>
+    section === 'enabled' ? visibleEnabled : visibleDisabled;
+
+  const previewEntriesForSection = (section: DragSection): ModEntry[] =>
+    section === 'enabled' ? previewEnabled : previewDisabled;
+
+  const handleSortableDragStart = ({ active }: DragStartEvent, section: DragSection) => {
+    const activeKey = String(active.id);
+    const entry = visibleEntriesForSection(section).find((candidate) => candidate.key === activeKey);
+    if (!entry) return;
+    setDraggingKey(entry.key);
+    setDraggingSection(section);
+  };
+
+  const handleSortableDragEnd = async ({ active, over }: DragEndEvent, section: DragSection) => {
+    const activeKey = String(active.id);
+    const overKey = over ? String(over.id) : null;
+    if (!overKey || activeKey === overKey) {
+      resetDragState();
+      return;
+    }
+
+    const entries = visibleEntriesForSection(section);
+    const oldIndex = entries.findIndex((entry) => entry.key === activeKey);
+    const newIndex = entries.findIndex((entry) => entry.key === overKey);
+    if (oldIndex === -1 || newIndex === -1) {
+      resetDragState();
+      return;
+    }
+
+    const sourceEntry = entries[oldIndex];
+    const targetEntry = entries[newIndex];
+    const draftKeys = arrayMove(entries.map((entry) => entry.key), oldIndex, newIndex);
+    setDragDraftOrder({ section, keys: draftKeys });
+    dropCommitPendingRef.current = true;
+
+    await applyReorder(
+      entryRepresentativeId(sourceEntry),
+      entryRepresentativeId(targetEntry),
+      section,
+      draftKeys
+    ).then(resetDragStateAfterDrop, resetDragStateAfterDrop);
+  };
+
   /**
    * Entry-aware drag reorder. Singles move one mod; groups move all their
    * files as a block, keeping internal priority order. After the reshuffle
@@ -1856,9 +1716,8 @@ export default function Installed() {
   const applyReorder = async (
     sourceId: string,
     targetId: string,
-    position: DropPosition,
     section: DragSection,
-    draftKeys?: string[]
+    draftKeys: string[]
   ): Promise<boolean> => {
     if (sourceId === targetId) return false;
     const entries = section === 'enabled' ? enabledEntries : disabledEntries;
@@ -1866,19 +1725,7 @@ export default function Installed() {
     const targetEntry = findEntryForModId(entries, targetId);
     if (!sourceEntry || !targetEntry || sourceEntry.key === targetEntry.key) return false;
 
-    const orderedEntries = draftKeys
-      ? orderEntriesByKeys(entries, draftKeys)
-      : (() => {
-          const working = entries.slice();
-          const sourceIdx = working.indexOf(sourceEntry);
-          working.splice(sourceIdx, 1);
-          const targetIdx = working.indexOf(targetEntry);
-          if (targetIdx === -1) return entries;
-          const insertAt = position === 'before' ? targetIdx : targetIdx + 1;
-          working.splice(insertAt, 0, sourceEntry);
-          return working;
-        })();
-
+    const orderedEntries = orderEntriesByKeys(entries, draftKeys);
     const next = flattenEntries(orderedEntries);
     const prev = flattenEntries(entries);
     if (next.length !== prev.length) return false;
@@ -1960,7 +1807,7 @@ export default function Installed() {
    *   - Conflicts shown are the union of conflicts on every currently-enabled
    *     variant.
    */
-  const renderEntryCard = (entry: ModEntry, section: 'enabled' | 'disabled') => {
+  const renderEntryCard = (entry: ModEntry) => {
     const entrySelected = isEntrySelected(entry);
     if (entry.kind === 'single') {
       const mod = entry.mod;
@@ -1997,60 +1844,6 @@ export default function Installed() {
           selectMode={selectMode}
           selected={entrySelected}
           onSelectToggle={() => toggleEntrySelection(entry)}
-          draggable={!searchNeedle && !selectMode}
-          isDragging={draggingKey === sourceEntryKey}
-          isDropTarget={dropTargetKey === sourceEntryKey}
-          dropPosition={dropTargetKey === sourceEntryKey ? dropPosition : null}
-          onDragStart={() => {
-            setDraggingId(mod.id);
-            setDraggingKey(sourceEntryKey);
-            setDraggingSection(section);
-            beginDraftOrder(section === 'enabled' ? visibleEnabled : visibleDisabled, section);
-          }}
-          onDragOver={(pos) => {
-            if (!draggingId || draggingKey === sourceEntryKey) return;
-            if (draggingSection !== section) return;
-            if (dropTargetId !== mod.id) setDropTargetId(mod.id);
-            if (dropTargetKey !== sourceEntryKey) setDropTargetKey(sourceEntryKey);
-            if (dropPosition !== pos) setDropPosition(pos);
-            const sourceEntry = findEntryForModId(
-              section === 'enabled' ? enabledEntries : disabledEntries,
-              draggingId
-            );
-            if (sourceEntry) {
-              moveDraftOrder(
-                section === 'enabled' ? visibleEnabled : visibleDisabled,
-                section,
-                sourceEntry.key,
-                sourceEntryKey,
-                pos
-              );
-            }
-          }}
-          onDragLeaveCard={() => {
-            // While preview-order is active, the target card can move out from
-            // under the pointer because the grid reflows around the placeholder.
-            // Clearing here makes the order snap back, causing visible flicker.
-            if (draggingId) return;
-            if (dropTargetKey === sourceEntryKey) {
-              setDropTargetId(null);
-              setDropTargetKey(null);
-              setDropPosition(null);
-            }
-          }}
-          onDrop={async (visualSettle) => {
-            if (draggingId && draggingSection === section) {
-              dropCommitPendingRef.current = true;
-              await visualSettle;
-              if (dropTargetId && dropPosition) {
-                return applyReorder(draggingId, dropTargetId, dropPosition, section, dragDraftOrder?.keys)
-                  .then(resetDragStateAfterDrop, resetDragStateAfterDrop);
-              }
-              return resetDragStateAfterDrop();
-            }
-            resetDragState();
-          }}
-          onDragEnd={handleDragEnd}
         />
       );
     }
@@ -2065,10 +1858,6 @@ export default function Installed() {
       }
     }
     const anyUpdateAvailable = entry.variants.some((v) => updatesAvailable.has(v.id));
-    // Drag uses the primary's mod id as the representative for the whole
-    // group. applyReorder maps this id back to the entry and moves the
-    // whole file block.
-    const dragRepId = entry.primary.id;
     const sourceEntryKey = entry.key;
     return (
       <ModCard
@@ -2114,60 +1903,6 @@ export default function Installed() {
         selectMode={selectMode}
         selected={entrySelected}
         onSelectToggle={() => toggleEntrySelection(entry)}
-        draggable={!searchNeedle && !selectMode}
-        isDragging={draggingKey === sourceEntryKey}
-        isDropTarget={dropTargetKey === sourceEntryKey}
-        dropPosition={dropTargetKey === sourceEntryKey ? dropPosition : null}
-        onDragStart={() => {
-          setDraggingId(dragRepId);
-          setDraggingKey(sourceEntryKey);
-          setDraggingSection(section);
-          beginDraftOrder(section === 'enabled' ? visibleEnabled : visibleDisabled, section);
-        }}
-        onDragOver={(pos) => {
-          if (!draggingId || draggingKey === sourceEntryKey) return;
-          if (draggingSection !== section) return;
-          if (dropTargetId !== dragRepId) setDropTargetId(dragRepId);
-          if (dropTargetKey !== sourceEntryKey) setDropTargetKey(sourceEntryKey);
-          if (dropPosition !== pos) setDropPosition(pos);
-          const sourceEntry = findEntryForModId(
-            section === 'enabled' ? enabledEntries : disabledEntries,
-            draggingId
-          );
-          if (sourceEntry) {
-            moveDraftOrder(
-              section === 'enabled' ? visibleEnabled : visibleDisabled,
-              section,
-              sourceEntry.key,
-              sourceEntryKey,
-              pos
-            );
-          }
-        }}
-        onDragLeaveCard={() => {
-          // While preview-order is active, the target card can move out from
-          // under the pointer because the grid reflows around the placeholder.
-          // Clearing here makes the order snap back, causing visible flicker.
-          if (draggingId) return;
-          if (dropTargetKey === sourceEntryKey) {
-            setDropTargetId(null);
-            setDropTargetKey(null);
-            setDropPosition(null);
-          }
-        }}
-        onDrop={async (visualSettle) => {
-          if (draggingId && draggingSection === section) {
-            dropCommitPendingRef.current = true;
-            await visualSettle;
-            if (dropTargetId && dropPosition) {
-              return applyReorder(draggingId, dropTargetId, dropPosition, section, dragDraftOrder?.keys)
-                .then(resetDragStateAfterDrop, resetDragStateAfterDrop);
-            }
-            return resetDragStateAfterDrop();
-          }
-          resetDragState();
-        }}
-        onDragEnd={handleDragEnd}
         group={{
           variantCount: entry.variants.length,
           // Display friendly names for enabled files when possible.
@@ -2181,6 +1916,50 @@ export default function Installed() {
           onOpenPicker: () => setPickerGroupId(entry.gameBananaId),
         }}
       />
+    );
+  };
+
+  const renderSortableSection = (section: DragSection) => {
+    const entries = previewEntriesForSection(section);
+    const activeEntry = draggingSection === section
+      ? entries.find((entry) => entry.key === draggingKey)
+      : undefined;
+    const gridClasses = viewMode === 'compact'
+      ? 'grid [grid-template-columns:repeat(auto-fill,minmax(210px,1fr))] gap-3'
+      : viewMode === 'grid'
+        ? 'grid [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))] gap-4'
+        : 'space-y-1.5';
+
+    return (
+      <DndContext
+        sensors={sortableSensors}
+        collisionDetection={closestCenter}
+        onDragStart={(event) => handleSortableDragStart(event, section)}
+        onDragEnd={(event) => {
+          void handleSortableDragEnd(event, section);
+        }}
+        onDragCancel={resetDragState}
+      >
+        <SortableContext
+          items={entries.map((entry) => entry.key)}
+          strategy={viewMode === 'list' ? verticalListSortingStrategy : rectSortingStrategy}
+        >
+          <div className={gridClasses}>
+            {entries.map((entry) => (
+              <SortableModEntry key={entry.key} id={entry.key} disabled={!sortableEnabled}>
+                {renderEntryCard(entry)}
+              </SortableModEntry>
+            ))}
+          </div>
+        </SortableContext>
+        <DragOverlay>
+          {activeEntry ? (
+            <div className="pointer-events-none opacity-95 shadow-2xl">
+              {renderEntryCard(activeEntry)}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
     );
   };
 
@@ -2358,17 +2137,7 @@ export default function Installed() {
           <div className="flex items-baseline justify-between mb-[14px]">
             <SectionHeader count={visibleEnabled.length} className="!mb-0 !text-xs !font-semibold !tracking-[0.06em]">Enabled</SectionHeader>
           </div>
-          <div
-            className={
-              viewMode === 'compact'
-                ? 'grid [grid-template-columns:repeat(auto-fill,minmax(210px,1fr))] gap-3'
-                : viewMode === 'grid'
-                  ? 'grid [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))] gap-4'
-                  : 'space-y-1.5'
-            }
-          >
-            {previewEnabled.map((entry) => renderEntryCard(entry, 'enabled'))}
-          </div>
+          {renderSortableSection('enabled')}
         </div>
       )}
 
@@ -2379,17 +2148,7 @@ export default function Installed() {
             {/* Fall back here when there's nothing in the Enabled section to host the status buttons. */}
             {visibleEnabled.length === 0 && statusButtons}
           </div>
-          <div
-            className={
-              viewMode === 'compact'
-                ? 'grid [grid-template-columns:repeat(auto-fill,minmax(210px,1fr))] gap-3'
-                : viewMode === 'grid'
-                  ? 'grid [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))] gap-4'
-                  : 'space-y-1.5'
-            }
-          >
-            {previewDisabled.map((entry) => renderEntryCard(entry, 'disabled'))}
-          </div>
+          {renderSortableSection('disabled')}
         </div>
       )}
 
@@ -3591,15 +3350,6 @@ interface ModCardProps {
   selectMode?: boolean;
   selected?: boolean;
   onSelectToggle?: () => void;
-  draggable?: boolean;
-  isDragging?: boolean;
-  isDropTarget?: boolean;
-  dropPosition?: DropPosition | null;
-  onDragStart?: () => void;
-  onDragOver?: (position: DropPosition) => void;
-  onDragLeaveCard?: () => void;
-  onDrop?: (visualSettle: Promise<void>) => void | Promise<void>;
-  onDragEnd?: () => void;
   entryKey?: string;
   /** Present when this card represents grouped files from the same
    *  GameBanana mod. Swaps the filename meta for an enabled/total count and
@@ -4059,20 +3809,10 @@ function ModCard({
   selectMode,
   selected,
   onSelectToggle,
-  draggable,
-  isDragging,
-  isDropTarget,
-  dropPosition,
-  onDragStart,
-  onDragOver,
-  onDragLeaveCard,
-  onDrop,
-  onDragEnd,
   entryKey,
   group,
 }: ModCardProps) {
   const hasConflicts = conflicts.length > 0;
-  const suppressCardDragRef = useRef(false);
   const isGroupCard = !!group;
   const variantStatusLabel = group ? `${group.enabledCount}/${group.variantCount}` : null;
   const enabledTitle = group?.enabledLabels.join(', ') ?? '';
@@ -4156,19 +3896,6 @@ function ModCard({
     }
   };
 
-  const indicatorClasses = (() => {
-    if (!isDropTarget || !dropPosition) return '';
-    const base = 'absolute z-20 bg-accent pointer-events-none rounded-full shadow-[0_0_0_3px_var(--color-bg-primary),0_0_18px_rgba(255,122,47,0.45)]';
-    if (viewMode === 'list') {
-      return dropPosition === 'before'
-        ? `${base} left-3 right-3 -top-[4px] h-1`
-        : `${base} left-3 right-3 -bottom-[4px] h-1`;
-    }
-    return dropPosition === 'before'
-      ? `${base} top-3 bottom-3 -left-[4px] w-1`
-      : `${base} top-3 bottom-3 -right-[4px] w-1`;
-  })();
-
   const stateClasses = hasConflicts
     ? 'bg-state-warning/5 border-state-warning/45'
     : mod.enabled
@@ -4217,10 +3944,6 @@ function ModCard({
   const toggleTrackClasses = `relative h-6 w-11 rounded-full transition-colors duration-200 ${
     mod.enabled ? 'bg-accent shadow-[0_0_0_1px_rgba(255,122,47,0.25)]' : 'bg-bg-tertiary border border-border group-hover/toggle:border-white/20'
   }`;
-  const dragSourceClasses =
-    draggable && !selectMode ? 'cursor-grab active:cursor-grabbing' : '';
-  const draggingPlaceholderClasses =
-    'border-dashed border-accent/45 bg-bg-tertiary/25 shadow-none opacity-100';
   const isList = viewMode === 'list';
   const isCompact = viewMode === 'compact';
   // Cover-art source for the glass backdrop. Skipped when NSFW previews are
@@ -4486,116 +4209,9 @@ function ModCard({
   return (
     <div
       data-mod-entry-key={entryKey}
-      className={`group/card relative rounded-[10px] border transform-gpu transition-[transform,box-shadow,border-color,background-color,opacity] duration-200 ease-out ${isList ? stateClasses : glassStateClasses} ${isDropTarget ? 'ring-1 ring-accent/50' : ''} ${mergedStackShadow} ${updateAvailable ? 'update-stripes' : ''} ${shellClasses} ${
-        isDragging ? draggingPlaceholderClasses : ''
-      } ${dragSourceClasses} ${selected ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg-primary' : ''}`}
-      draggable={draggable}
-      onPointerDownCapture={(e) => {
-        const target = e.target as HTMLElement | null;
-        suppressCardDragRef.current = !!target?.closest('[data-card-action="true"]');
-      }}
-      onDragStart={(e) => {
-        if (!draggable || !onDragStart) {
-          e.preventDefault();
-          return;
-        }
-        const target = e.target as HTMLElement | null;
-        if (suppressCardDragRef.current || target?.closest('[data-card-action="true"]')) {
-          suppressCardDragRef.current = false;
-          e.preventDefault();
-          return;
-        }
-        suppressCardDragRef.current = false;
-        e.dataTransfer.effectAllowed = 'move';
-        // Firefox needs setData to start a drag
-        try {
-          e.dataTransfer.setData('text/plain', mod.id);
-        } catch {
-          // ignore
-        }
-        const rect = e.currentTarget.getBoundingClientRect();
-        cleanupActiveDragPreview();
-        activeDragPreviewOffset = {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
-        };
-        const preview = e.currentTarget.cloneNode(true) as HTMLElement;
-        preview.setAttribute('aria-hidden', 'true');
-        preview.style.position = 'fixed';
-        preview.style.top = '0';
-        preview.style.left = '0';
-        preview.style.width = `${rect.width}px`;
-        preview.style.height = `${rect.height}px`;
-        preview.style.pointerEvents = 'none';
-        preview.style.opacity = '1';
-        preview.style.background = 'var(--color-bg-secondary)';
-        preview.style.transformOrigin = 'center center';
-        preview.style.boxShadow = '0 18px 36px rgba(0,0,0,0.42), 0 0 0 1px rgba(255,122,47,0.45)';
-        preview.style.zIndex = '9999';
-        preview.style.willChange = 'transform';
-        preview.style.transition = 'none';
-        document.body.appendChild(preview);
-        activeDragPreview = preview;
-        activeDragEntryKey = entryKey ?? null;
-        activeDropSettlePending = false;
-        moveActiveDragPreview(e.clientX, e.clientY);
-        const transparentDragImage = document.createElement('canvas');
-        transparentDragImage.width = 1;
-        transparentDragImage.height = 1;
-        transparentDragImage.style.position = 'fixed';
-        transparentDragImage.style.top = '-10px';
-        transparentDragImage.style.left = '-10px';
-        document.body.appendChild(transparentDragImage);
-        e.dataTransfer.setDragImage(transparentDragImage, 0, 0);
-        window.setTimeout(() => {
-          transparentDragImage.remove();
-        }, 0);
-        onDragStart();
-      }}
-      onDrag={(e) => {
-        moveActiveDragPreview(e.clientX, e.clientY);
-      }}
-      onDragOver={(e) => {
-        if (!draggable || !onDragOver) return;
-        moveActiveDragPreview(e.clientX, e.clientY);
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        const rect = e.currentTarget.getBoundingClientRect();
-        if (viewMode === 'list') {
-          const mid = rect.top + rect.height / 2;
-          onDragOver(e.clientY < mid ? 'before' : 'after');
-        } else {
-          const mid = rect.left + rect.width / 2;
-          onDragOver(e.clientX < mid ? 'before' : 'after');
-        }
-      }}
-      onDragLeave={(e) => {
-        // Only count leaves where we're exiting the card itself
-        const related = e.relatedTarget as Node | null;
-        if (related && e.currentTarget.contains(related)) return;
-        onDragLeaveCard?.();
-      }}
-      onDrop={(e) => {
-        if (!draggable || !onDrop) return;
-        e.preventDefault();
-        activeDropSettlePending = true;
-        const settlePromise = settleActiveDragPreviewToSlot();
-        Promise.resolve(onDrop(settlePromise)).finally(() => {
-          window.requestAnimationFrame(() => {
-            window.requestAnimationFrame(cleanupActiveDragPreview);
-          });
-        });
-      }}
-      onDragEnd={() => {
-        if (!activeDropSettlePending) {
-          cleanupActiveDragPreview();
-        }
-        onDragEnd?.();
-      }}
+      className={`group/card relative rounded-[10px] border transform-gpu transition-[transform,box-shadow,border-color,background-color,opacity] duration-200 ease-out ${isList ? stateClasses : glassStateClasses} ${mergedStackShadow} ${updateAvailable ? 'update-stripes' : ''} ${shellClasses} ${selected ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg-primary' : ''}`}
     >
-      {indicatorClasses && <div className={indicatorClasses} />}
-
-      <div className={isDragging ? (isList ? 'hidden' : 'pointer-events-none opacity-0') : isList ? 'contents' : ''}>
+      <div className={isList ? 'contents' : ''}>
         {selectMode && (
         <>
           {/* Full-card click target. Sits above thumbnail button, toggle, and
