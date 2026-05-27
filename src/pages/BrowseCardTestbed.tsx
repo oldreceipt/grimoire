@@ -9,6 +9,7 @@ import {
   Layers,
   Loader2,
   Play,
+  Power,
   ShieldCheck,
   ThumbsUp,
 } from 'lucide-react';
@@ -239,26 +240,26 @@ function actionTone(card: SampleCard): string {
     case 'downloading':
       return 'border-accent/30 bg-accent/[0.055] text-accent';
     case 'enable':
-      return 'border-state-success/30 bg-state-success/[0.055] text-state-success hover:border-state-success/50';
+      return 'border-accent/35 bg-accent/[0.055] text-accent hover:border-accent/55 hover:bg-accent/[0.09] hover:text-text-primary';
     case 'disable':
       return 'border-white/[0.08] bg-white/[0.025] text-text-secondary/85 hover:border-white/[0.14]';
     case 'update':
       return 'border-state-warning/35 bg-state-warning/[0.06] text-state-warning hover:border-state-warning/55';
     default:
-      return 'border-accent/30 bg-accent/[0.055] text-accent hover:border-accent/50';
+      return 'border-white/[0.12] bg-white/[0.025] text-text-secondary/85 hover:border-accent/35 hover:bg-accent/[0.055] hover:text-text-primary';
   }
 }
 
 function chipTone(tone: ChipTone = 'neutral'): string {
   switch (tone) {
     case 'accent':
-      return 'border-accent/15 bg-accent/[0.045] text-accent/75';
+      return 'border-accent/14 bg-accent/[0.04] text-accent/72';
     case 'danger':
-      return 'border-state-danger/25 bg-state-danger/[0.07] text-state-danger/85';
+      return 'border-state-danger/20 bg-state-danger/[0.05] text-state-danger/80';
     case 'info':
-      return 'border-state-info/15 bg-state-info/[0.045] text-state-info/75';
+      return 'border-state-info/14 bg-state-info/[0.04] text-state-info/72';
     default:
-      return 'border-white/[0.08] bg-white/[0.028] text-text-tertiary';
+      return 'border-white/[0.06] bg-white/[0.018] text-text-tertiary/72';
   }
 }
 
@@ -319,23 +320,25 @@ function FooterActionButton({ card }: { card: SampleCard }) {
     <button
       type="button"
       aria-label={`${label} ${card.title}`}
-      className={`inline-flex h-7 w-[98px] shrink-0 items-center justify-center rounded-md border px-[9px] text-xs font-semibold leading-none transition-colors ${actionTone(
+      className={`inline-flex h-7 min-w-[108px] shrink-0 items-center justify-center rounded-md border px-3 text-xs font-semibold leading-none transition-colors ${actionTone(
         card
       )} ${passive ? 'cursor-default' : ''}`}
     >
-      <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
         {card.action === 'downloading' ? (
           <Loader2 className="h-[13px] w-[13px] shrink-0 animate-spin" />
-        ) : card.action === 'installed' || card.action === 'enable' || card.action === 'selected' ? (
+        ) : card.action === 'installed' || card.action === 'selected' ? (
           <Check className="h-[13px] w-[13px] shrink-0" />
+        ) : card.action === 'enable' ? (
+          <Power className="h-[13px] w-[13px] shrink-0" />
         ) : card.action === 'queued' ? (
           <Clock className="h-[13px] w-[13px] shrink-0" />
         ) : card.action === 'update' ? (
           <AlertTriangle className="h-[13px] w-[13px] shrink-0" />
         ) : (
-          <Download className="h-[13px] w-[13px] shrink-0 -translate-y-0.5" />
+          <Download className="h-[13px] w-[13px] shrink-0" />
         )}
-        <span className="min-w-0 truncate leading-none">{label}</span>
+        <span className="leading-none">{label}</span>
       </span>
     </button>
   );
@@ -364,11 +367,11 @@ function SoundPlaceholderArt({ card }: { card: SampleCard }) {
   );
 }
 
-function ThumbnailAudioPreview({ card }: { card: SampleCard }) {
+function SoundAudioPreview({ card }: { card: SampleCard }) {
   if (card.kind !== 'sound') return null;
 
   return (
-    <div className="absolute inset-x-3 bottom-3 flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-[#0a0c10]/75 px-2 text-text-secondary shadow-[0_2px_10px_rgba(0,0,0,0.55)] backdrop-blur-md">
+    <div className="mt-2 flex h-9 items-center gap-2 rounded-[10px] border border-white/10 bg-bg-primary/55 px-2 text-text-secondary shadow-[0_1px_0_rgba(255,255,255,0.03)]">
       <button
         type="button"
         className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-bg-primary"
@@ -414,26 +417,20 @@ function Thumbnail({ card }: { card: SampleCard }) {
         className="pointer-events-none absolute inset-x-0 bottom-[-2px] h-[calc(3rem+2px)] bg-gradient-to-b from-transparent via-bg-secondary/45 to-bg-secondary shadow-[inset_0_-4px_0_var(--color-bg-secondary)]"
         aria-hidden="true"
       />
-
-      <ThumbnailAudioPreview card={card} />
     </div>
   );
 }
 
 function StatsRow({ card }: { card: SampleCard }) {
   return (
-    <div className="flex h-4 min-w-0 items-center gap-1.5 overflow-visible text-[10px] font-medium leading-[11px] text-text-tertiary/60">
-      <span className="inline-flex h-4 items-center gap-0.5 tabular-nums">
-        <ThumbsUp className="h-3 w-3 shrink-0" />
-        <span className="leading-[11px]">{card.likes}</span>
+    <div className="flex h-4 min-w-0 items-center gap-2 overflow-visible text-[11px] font-semibold leading-4 text-text-tertiary/72">
+      <span className="inline-flex h-4 items-center gap-1 tabular-nums">
+        <ThumbsUp className="h-[13px] w-[13px] shrink-0" />
+        <span className="leading-4">{card.likes}</span>
       </span>
-      <span className="inline-flex h-4 items-center gap-0.5 tabular-nums">
-        <Eye className="h-3 w-3 shrink-0" />
-        <span className="leading-[11px]">{card.views}</span>
-      </span>
-      <span className="inline-flex h-4 items-center gap-0.5 tabular-nums">
-        <Download className="h-3 w-3 shrink-0" />
-        <span className="leading-[11px]">{card.downloads}</span>
+      <span className="inline-flex h-4 items-center gap-1 tabular-nums">
+        <Eye className="h-[13px] w-[13px] shrink-0" />
+        <span className="leading-4">{card.views}</span>
       </span>
     </div>
   );
@@ -475,6 +472,8 @@ function ProductModCard({ card, bodyHeight }: { card: SampleCard; bodyHeight: nu
           <p className="mt-1 truncate text-xs font-medium leading-tight text-text-secondary">by {card.author}</p>
           <FreshnessLabel card={card} />
         </div>
+
+        <SoundAudioPreview card={card} />
 
         <div className="mt-auto flex h-7 items-center justify-between gap-3">
           <StatsRow card={card} />

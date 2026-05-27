@@ -179,13 +179,13 @@ function getReadableDensity(targetWidth: number): BrowseReadableDensity {
 function readableChipTone(tone: BrowseReadableChipTone = 'neutral'): string {
   switch (tone) {
     case 'accent':
-      return 'border-accent/10 bg-accent/[0.03] text-accent/60';
+      return 'border-accent/14 bg-accent/[0.04] text-accent/72';
     case 'danger':
-      return 'border-state-danger/16 bg-state-danger/[0.04] text-state-danger/72';
+      return 'border-state-danger/20 bg-state-danger/[0.05] text-state-danger/80';
     case 'info':
-      return 'border-state-info/10 bg-state-info/[0.03] text-state-info/60';
+      return 'border-state-info/14 bg-state-info/[0.04] text-state-info/72';
     default:
-      return 'border-white/[0.06] bg-white/[0.02] text-text-tertiary/78';
+      return 'border-white/[0.06] bg-white/[0.018] text-text-tertiary/72';
   }
 }
 
@@ -282,7 +282,7 @@ function BrowseReadableChipRow({
         <div className="group/hidden relative shrink-0">
           <span
             title={`${hiddenChips.length} more`}
-            className="inline-flex h-6 items-center rounded-sm border border-white/[0.06] bg-white/[0.02] px-2 text-[10px] font-medium leading-none text-text-tertiary/78"
+            className="inline-flex h-6 items-center rounded-sm border border-white/[0.06] bg-white/[0.018] px-2 text-[10px] font-medium leading-none text-text-tertiary/72"
           >
             +{hiddenChips.length}
           </span>
@@ -364,9 +364,8 @@ function BrowseStatItem({
 
 function BrowseReadableStatsRow({ mod, density }: { mod: GameBananaMod; density: BrowseReadableDensity }) {
   const isMicro = density === 'micro';
-  const showDownloads = typeof mod.downloadCount === 'number' && mod.downloadCount > 0;
   const groupClass = isMicro
-    ? `grid w-full ${showDownloads ? 'grid-cols-3' : 'grid-cols-2'} items-center`
+    ? 'grid w-full grid-cols-2 items-center'
     : 'flex h-4 min-w-0 flex-1 items-center gap-[clamp(5px,2.5cqw,10px)] text-text-tertiary/60';
   const itemEmphasis = isMicro ? 'strong' : 'muted';
 
@@ -388,16 +387,6 @@ function BrowseReadableStatsRow({ mod, density }: { mod: GameBananaMod; density:
         align="start"
         emphasis={itemEmphasis}
       />
-      {showDownloads && (
-        <BrowseStatItem
-          type="downloads"
-          icon={Download}
-          value={formatCount(mod.downloadCount)}
-          title={`${mod.downloadCount ?? 0} downloads`}
-          align="start"
-          emphasis={itemEmphasis}
-        />
-      )}
     </div>
   );
 }
@@ -471,7 +460,15 @@ function BrowseReadableAction({
     ? `browse-action-button browse-action-button--icon browse-action-button--${action}`
     : `browse-action-button browse-action-button--${action}`;
   const icon =
-    action === 'downloading' ? Loader2 : action === 'installed' || action === 'enable' ? Check : action === 'queued' ? Clock : Download;
+    action === 'downloading'
+      ? Loader2
+      : action === 'installed'
+        ? Check
+        : action === 'enable'
+          ? Power
+          : action === 'queued'
+            ? Clock
+            : Download;
   const content = (
     iconOnly ? (
       <span className={`browse-action-button-icon browse-action-button-icon--${action}`}>
@@ -2438,9 +2435,39 @@ function ReadableBrowseModCard({
           className="pointer-events-none absolute inset-x-0 bottom-[-2px] h-[calc(3rem+2px)] bg-gradient-to-b from-transparent via-bg-secondary/45 to-bg-secondary shadow-[inset_0_-4px_0_var(--color-bg-secondary)]"
           aria-hidden="true"
         />
+      </div>
+
+      <div className={`relative z-10 -mt-[2px] flex flex-none flex-col bg-bg-secondary ${bodyPaddingClass}`}>
+        {showChips && (
+          <BrowseReadableChipRow
+            chips={chips}
+            availableWidth={chipRowWidth}
+            maxVisible={readableDensity === 'compact' ? 2 : BROWSE_READABLE_MAX_VISIBLE_CHIPS}
+          />
+        )}
+
+        <div className={`${titleMarginClass} min-w-0`}>
+          <h3
+            className={`block truncate font-bold text-[#eee8df] ${
+              isMicro
+                ? 'text-[13px] leading-4'
+                : 'text-[clamp(11px,5.3571cqw,17px)] leading-[1.28] pb-px'
+            }`}
+            title={mod.name}
+          >
+            {mod.name}
+          </h3>
+          {showAuthor && (
+            <p className="mt-0 truncate text-[clamp(10px,4.2857cqw,13px)] font-normal leading-[1.12] text-text-secondary/64">
+              by {mod.submitter?.name ?? 'Unknown author'}
+            </p>
+          )}
+          {showUpdated && <BrowseReadableUpdatedLine timestamp={mod.dateModified} />}
+        </div>
+
         {isSoundSection && hasAudioPreview && !isMicro && (
           <div
-            className="absolute inset-x-[clamp(11px,4.2857cqw,14px)] bottom-[clamp(11px,4.2857cqw,14px)] flex h-[clamp(33px,12.8571cqw,41px)] items-center rounded-[clamp(9px,3.5714cqw,12px)] border border-white/10 bg-[#0a0c10]/75 px-[clamp(7px,2.8571cqw,9px)] text-text-secondary shadow-[0_2px_10px_rgba(0,0,0,0.55)] backdrop-blur-md"
+            className="mt-[clamp(8px,3.5714cqw,10px)] flex h-[clamp(33px,12.8571cqw,41px)] items-center rounded-[clamp(9px,3.5714cqw,12px)] border border-white/10 bg-bg-primary/55 px-[clamp(7px,2.8571cqw,9px)] text-text-secondary shadow-[0_1px_0_rgba(255,255,255,0.03)]"
             onClick={(event) => event.stopPropagation()}
           >
             <AudioPreviewPlayer
@@ -2484,35 +2511,6 @@ function ReadableBrowseModCard({
             </div>
           </div>
         )}
-      </div>
-
-      <div className={`relative z-10 -mt-[2px] flex flex-none flex-col bg-bg-secondary ${bodyPaddingClass}`}>
-        {showChips && (
-          <BrowseReadableChipRow
-            chips={chips}
-            availableWidth={chipRowWidth}
-            maxVisible={readableDensity === 'compact' ? 2 : BROWSE_READABLE_MAX_VISIBLE_CHIPS}
-          />
-        )}
-
-        <div className={`${titleMarginClass} min-w-0`}>
-          <h3
-            className={`block truncate font-bold text-[#eee8df] ${
-              isMicro
-                ? 'text-[13px] leading-4'
-                : 'text-[clamp(11px,5.3571cqw,17px)] leading-[1.28] pb-px'
-            }`}
-            title={mod.name}
-          >
-            {mod.name}
-          </h3>
-          {showAuthor && (
-            <p className="mt-0 truncate text-[clamp(10px,4.2857cqw,13px)] font-normal leading-[1.12] text-text-secondary/64">
-              by {mod.submitter?.name ?? 'Unknown author'}
-            </p>
-          )}
-          {showUpdated && <BrowseReadableUpdatedLine timestamp={mod.dateModified} />}
-        </div>
 
         <div className={`${footerMarginClass} flex ${footerHeightClass} items-center justify-between gap-[clamp(6px,4.2857cqw,14px)]`}>
           <BrowseReadableStatsRow mod={mod} density={readableDensity} />
