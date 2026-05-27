@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -344,14 +344,19 @@ function StatsRow({ card }: { card: SampleCard }) {
   );
 }
 
-function ProductModCard({ card }: { card: SampleCard }) {
+function ProductModCard({ card, bodyHeight }: { card: SampleCard; bodyHeight: number }) {
+  const cardHeight = 160 + bodyHeight;
+
   return (
-    <article className="group flex h-[274px] w-[280px] flex-col overflow-hidden rounded-md border border-white/[0.07] bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-[0_10px_24px_rgba(0,0,0,0.22)]">
+    <article
+      className="group flex w-[280px] flex-col overflow-hidden rounded-md border border-white/[0.07] bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-[0_10px_24px_rgba(0,0,0,0.22)]"
+      style={{ height: cardHeight }}
+    >
       <Thumbnail card={card} />
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 p-3">
-        <div className="h-[58px] min-w-0 overflow-hidden">
-          <h3 className="line-clamp-2 text-[15px] font-bold leading-[1.25] text-[#eee8df]">{card.title}</h3>
+        <div className="h-[42px] min-w-0 overflow-hidden">
+          <h3 className="truncate text-[15px] font-bold leading-[1.25] text-[#eee8df]" title={card.title}>{card.title}</h3>
           <p className="mt-1 truncate text-xs font-medium text-text-secondary">by {card.author}</p>
         </div>
 
@@ -368,10 +373,12 @@ function GridExample({
   title,
   description,
   cards,
+  bodyHeight,
 }: {
   title: string;
   description: string;
   cards: SampleCard[];
+  bodyHeight: number;
 }) {
   return (
     <section>
@@ -382,7 +389,7 @@ function GridExample({
 
       <div className="grid grid-cols-[repeat(auto-fill,280px)] justify-start gap-4">
         {cards.map((card) => (
-          <ProductModCard key={card.id} card={card} />
+          <ProductModCard key={card.id} card={card} bodyHeight={bodyHeight} />
         ))}
       </div>
     </section>
@@ -390,6 +397,8 @@ function GridExample({
 }
 
 export default function BrowseCardTestbed() {
+  const [bodyHeight, setBodyHeight] = useState(94);
+
   return (
     <div className="min-h-full bg-bg-primary text-text-primary">
       <div className="mx-auto flex w-full max-w-[932px] flex-col gap-8 px-5 py-6">
@@ -411,16 +420,42 @@ export default function BrowseCardTestbed() {
           </div>
         </header>
 
+        <section className="rounded-md border border-border bg-bg-secondary p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-text-primary">Body spacing test</h2>
+              <p className="mt-1 text-xs text-text-secondary">
+                Compresses the body slot between thumbnail and footer. Current card height: {160 + bodyHeight}px.
+              </p>
+            </div>
+            <span className="rounded-sm border border-white/10 bg-bg-primary px-2 py-1 text-[11px] font-medium tabular-nums text-text-tertiary">
+              body {bodyHeight}px
+            </span>
+          </div>
+          <input
+            type="range"
+            min="82"
+            max="114"
+            step="2"
+            value={bodyHeight}
+            onChange={(event) => setBodyHeight(Number(event.target.value))}
+            className="mt-3 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-bg-primary accent-accent"
+            aria-label="Card body height"
+          />
+        </section>
+
         <GridExample
           title="Mods grid"
           description="No audio treatment. Tests normal, installed, NSFW hidden, and outdated states with the same fixed card geometry."
           cards={MOD_GRID_CARDS}
+          bodyHeight={bodyHeight}
         />
 
         <GridExample
           title="Sounds grid"
           description="Every card has audio preview in the thumbnail. Body and footer stay identical to the Mods grid."
           cards={SOUND_GRID_CARDS}
+          bodyHeight={bodyHeight}
         />
       </div>
     </div>
