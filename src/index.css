@@ -186,6 +186,147 @@ body {
   @apply w-full;
 }
 
+.browse-stat-item {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(3px, 1.6cqw, 5px);
+  min-width: 0;
+  white-space: nowrap;
+  font-size: clamp(11px, 4.3cqw, 13px);
+  line-height: 16px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.browse-stat-item--start {
+  justify-self: start;
+}
+
+.browse-stat-item--center {
+  justify-self: center;
+}
+
+.browse-stat-item--end {
+  justify-self: end;
+}
+
+.browse-stat-icon {
+  width: clamp(13px, 4.8cqw, 15px);
+  height: clamp(13px, 4.8cqw, 15px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 clamp(13px, 4.8cqw, 15px);
+  color: color-mix(in srgb, var(--color-text-secondary) 75%, transparent);
+}
+
+.browse-stat-icon--strong {
+  color: color-mix(in srgb, var(--color-text-secondary) 90%, transparent);
+}
+
+.browse-stat-icon svg {
+  width: clamp(13px, 4.8cqw, 15px);
+  height: clamp(13px, 4.8cqw, 15px);
+  display: block;
+  stroke-width: 1.75;
+}
+
+.browse-stat-value {
+  line-height: 16px;
+}
+
+.browse-action-button {
+  height: clamp(24px, 10cqw, 32px);
+  min-width: clamp(88px, 36cqw, 112px);
+  padding: 0 clamp(8px, 3.2cqw, 10px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(4px, 2.2cqw, 7px);
+  flex: 0 0 auto;
+  border-radius: 7px;
+  border: 1px solid rgba(120, 140, 170, 0.28);
+  background: rgba(255, 255, 255, 0.025);
+  color: color-mix(in srgb, var(--color-text-secondary) 76%, transparent);
+  font-size: clamp(10px, 4.3cqw, 13px);
+  line-height: 16px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.browse-action-button:hover {
+  color: var(--color-text-primary);
+  border-color: rgba(120, 140, 170, 0.4);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.browse-action-button--icon {
+  height: clamp(24px, 17cqw, 28px);
+  min-width: clamp(24px, 17cqw, 28px);
+  padding: 0;
+  align-items: center;
+  gap: 0;
+  border-radius: 4px;
+}
+
+.browse-action-button--install:hover {
+  color: var(--color-accent);
+  border-color: rgba(80, 140, 255, 0.55);
+  background: rgba(80, 140, 255, 0.08);
+}
+
+.browse-action-button--installed,
+.browse-action-button--enable {
+  border-color: rgb(74 222 128 / 0.3);
+  background: rgb(74 222 128 / 0.055);
+  color: rgb(74 222 128);
+}
+
+.browse-action-button--installed:hover,
+.browse-action-button--enable:hover {
+  border-color: rgb(74 222 128 / 0.5);
+  background: rgb(74 222 128 / 0.09);
+  color: rgb(74 222 128);
+}
+
+.browse-action-button--queued {
+  border-color: rgb(96 165 250 / 0.3);
+  background: rgb(96 165 250 / 0.055);
+  color: rgb(96 165 250);
+}
+
+.browse-action-button--downloading {
+  border-color: rgb(249 115 22 / 0.3);
+  background: rgb(249 115 22 / 0.055);
+  color: rgb(249 115 22);
+}
+
+.browse-action-button-icon {
+  width: clamp(12px, 4.8cqw, 15px);
+  height: clamp(12px, 4.8cqw, 15px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 clamp(12px, 4.8cqw, 15px);
+  color: currentColor;
+}
+
+.browse-action-button-icon svg {
+  width: clamp(12px, 4.8cqw, 15px);
+  height: clamp(12px, 4.8cqw, 15px);
+  display: block;
+  stroke-width: 2;
+}
+
+.browse-action-button-label {
+  line-height: 16px;
+}
+
 /* Locker Hero animations */
 @keyframes slideInLeft {
   from {

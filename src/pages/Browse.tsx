@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Check,
   Search,
@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Upload,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import {
   browseMods,
   getModDetails,
@@ -178,13 +179,13 @@ function getReadableDensity(targetWidth: number): BrowseReadableDensity {
 function readableChipTone(tone: BrowseReadableChipTone = 'neutral'): string {
   switch (tone) {
     case 'accent':
-      return 'border-accent/15 bg-accent/[0.045] text-accent/75';
+      return 'border-accent/10 bg-accent/[0.03] text-accent/60';
     case 'danger':
-      return 'border-state-danger/25 bg-state-danger/[0.07] text-state-danger/85';
+      return 'border-state-danger/16 bg-state-danger/[0.04] text-state-danger/72';
     case 'info':
-      return 'border-state-info/15 bg-state-info/[0.045] text-state-info/75';
+      return 'border-state-info/10 bg-state-info/[0.03] text-state-info/60';
     default:
-      return 'border-white/[0.08] bg-white/[0.028] text-text-tertiary';
+      return 'border-white/[0.06] bg-white/[0.02] text-text-tertiary/78';
   }
 }
 
@@ -219,6 +220,12 @@ function getReadableCardChips(mod: GameBananaMod, section: string, inferredHero:
   if (isSoundSection) addReadableChip(chips, 'Audio', 'neutral');
   if (mod.nsfw) addReadableChip(chips, '18+', 'danger');
 
+  chips.sort((a, b) => {
+    const aPriority = a.label === '18+' ? 0 : 1;
+    const bPriority = b.label === '18+' ? 0 : 1;
+    return aPriority - bPriority;
+  });
+
   return chips;
 }
 
@@ -238,11 +245,12 @@ function BrowseReadableChipRow({
   const visibleChips: BrowseReadableChip[] = [];
   let usedWidth = 0;
   const rowWidth = Math.max(48, availableWidth);
+  const orderedChips = [...chips];
 
-  for (const [index, chip] of chips.entries()) {
+  for (const [index, chip] of orderedChips.entries()) {
     if (visibleChips.length >= maxVisible) break;
 
-    const remainingAfter = chips.length - index - 1;
+    const remainingAfter = orderedChips.length - index - 1;
     const chipWidth = estimateReadableChipWidth(chip.label);
     const gapBefore = visibleChips.length > 0 ? BROWSE_READABLE_CHIP_GAP_WIDTH : 0;
     const overflowReserve = remainingAfter > 0 ? BROWSE_READABLE_CHIP_GAP_WIDTH + BROWSE_READABLE_CHIP_OVERFLOW_WIDTH : 0;
@@ -253,15 +261,17 @@ function BrowseReadableChipRow({
     usedWidth += gapBefore + chipWidth;
   }
 
-  const hiddenChips = chips.slice(visibleChips.length);
+  const hiddenChips = orderedChips.filter(
+    (chip) => !visibleChips.some((visible) => visible.label === chip.label && visible.tone === chip.tone)
+  );
 
   return (
-    <div className="flex min-h-[clamp(22px,8.5714cqw,26px)] min-w-0 items-start gap-[clamp(5px,2.1429cqw,7px)] overflow-hidden">
+    <div className="flex h-6 min-w-0 items-start gap-[clamp(5px,2.1429cqw,7px)] overflow-visible">
       {visibleChips.map((chip, index) => (
         <span
           key={`${chip.label}-${index}`}
           title={chip.label}
-          className={`inline-flex h-[clamp(18px,7.1429cqw,22px)] shrink-0 items-center whitespace-nowrap rounded-sm border px-[clamp(5px,2.1429cqw,7px)] text-[clamp(9px,3.5714cqw,11px)] font-medium leading-none ${readableChipTone(
+          className={`inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-sm border px-2 text-[10px] font-medium leading-none ${readableChipTone(
             chip.tone
           )}`}
         >
@@ -269,12 +279,26 @@ function BrowseReadableChipRow({
         </span>
       ))}
       {hiddenChips.length > 0 && (
-        <span
-          title={hiddenChips.map((chip) => chip.label).join(', ')}
-          className="inline-flex h-[clamp(18px,7.1429cqw,22px)] shrink-0 items-center rounded-sm border border-white/[0.08] bg-white/[0.028] px-[clamp(5px,2.1429cqw,7px)] text-[clamp(9px,3.5714cqw,11px)] font-medium leading-none text-text-tertiary"
-        >
-          +{hiddenChips.length}
-        </span>
+        <div className="group/hidden relative shrink-0">
+          <span
+            title={`${hiddenChips.length} more`}
+            className="inline-flex h-6 items-center rounded-sm border border-white/[0.06] bg-white/[0.02] px-2 text-[10px] font-medium leading-none text-text-tertiary/78"
+          >
+            +{hiddenChips.length}
+          </span>
+          <div className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-20 hidden min-w-max max-w-[180px] flex-wrap gap-1 rounded-md border border-white/[0.08] bg-bg-secondary/96 p-2 shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-md group-hover/hidden:flex">
+            {hiddenChips.map((chip, index) => (
+              <span
+                key={`${chip.label}-overflow-${index}`}
+                className={`inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-sm border px-2 text-[10px] font-medium leading-none ${readableChipTone(
+                  chip.tone
+                )}`}
+              >
+                {chip.label}
+              </span>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -297,8 +321,8 @@ function BrowseReadableUpdatedLine({ timestamp }: { timestamp?: number }) {
 
   return (
     <p
-      className={`mt-1 truncate text-[clamp(10px,4.2857cqw,13px)] font-normal leading-[1.12] ${
-        isOutdated ? 'text-state-warning/88' : 'text-text-secondary/52'
+      className={`mt-0.5 truncate text-[clamp(9px,3.5714cqw,11px)] font-normal leading-[1.05] ${
+        isOutdated ? 'text-state-warning/70' : 'text-text-tertiary/42'
       }`}
       title={absolute ? `${isOutdated ? 'Outdated. ' : ''}Last updated on GameBanana: ${absolute}` : undefined}
     >
@@ -307,48 +331,72 @@ function BrowseReadableUpdatedLine({ timestamp }: { timestamp?: number }) {
   );
 }
 
+function BrowseStatItem({
+  type,
+  icon: Icon,
+  value,
+  title,
+  align = 'start',
+  emphasis = 'muted',
+}: {
+  type: 'likes' | 'views' | 'downloads';
+  icon: LucideIcon;
+  value: string;
+  title: string;
+  align?: 'start' | 'center' | 'end';
+  emphasis?: 'muted' | 'strong';
+}) {
+  const alignmentClass =
+    align === 'center' ? 'browse-stat-item--center' : align === 'end' ? 'browse-stat-item--end' : 'browse-stat-item--start';
+
+  return (
+    <span
+      className={`browse-stat-item ${alignmentClass}`}
+      title={title}
+    >
+      <span className={`browse-stat-icon browse-stat-icon--${type}${emphasis === 'strong' ? ' browse-stat-icon--strong' : ''}`}>
+        <Icon aria-hidden="true" />
+      </span>
+      <span className="browse-stat-value">{value}</span>
+    </span>
+  );
+}
+
 function BrowseReadableStatsRow({ mod, density }: { mod: GameBananaMod; density: BrowseReadableDensity }) {
   const isMicro = density === 'micro';
   const showDownloads = typeof mod.downloadCount === 'number' && mod.downloadCount > 0;
   const groupClass = isMicro
-    ? `grid w-full ${showDownloads ? 'grid-cols-3' : 'grid-cols-2'} items-center text-[clamp(11px,6.7857cqw,17px)] font-semibold leading-[clamp(12px,7.1429cqw,18px)]`
-    : 'flex min-w-0 flex-1 items-center overflow-visible gap-[clamp(4px,2.5cqw,8px)] text-[clamp(9px,4.2857cqw,12px)] font-medium leading-[clamp(10px,4.2857cqw,13px)]';
-  const itemClass = isMicro
-    ? 'min-w-0 items-center gap-1 tabular-nums'
-    : 'min-w-0 gap-[clamp(1px,0.8929cqw,3px)]';
-  const iconClass = isMicro
-    ? 'h-[clamp(13px,7.1429cqw,19px)] w-[clamp(13px,7.1429cqw,19px)] text-text-secondary/90'
-    : 'h-[clamp(10px,4.6429cqw,14px)] w-[clamp(10px,4.6429cqw,14px)]';
-  const textClass = isMicro
-    ? 'leading-[clamp(12px,7.1429cqw,18px)]'
-    : 'leading-[clamp(10px,4.2857cqw,13px)]';
+    ? `grid w-full ${showDownloads ? 'grid-cols-3' : 'grid-cols-2'} items-center`
+    : 'flex h-4 min-w-0 flex-1 items-center gap-[clamp(5px,2.5cqw,10px)] text-text-tertiary/60';
+  const itemEmphasis = isMicro ? 'strong' : 'muted';
 
   return (
-    <div
-      className={`min-w-0 text-text-tertiary/60 ${groupClass}`}
-    >
-      <span
-        className={`inline-flex justify-self-start ${itemClass}`}
+    <div className={groupClass}>
+      <BrowseStatItem
+        type="likes"
+        icon={ThumbsUp}
+        value={formatCount(mod.likeCount)}
         title={`${mod.likeCount ?? 0} likes`}
-      >
-        <ThumbsUp className={`shrink-0 ${iconClass}`} />
-        <span className={textClass}>{formatCount(mod.likeCount)}</span>
-      </span>
-      <span
-        className={`inline-flex justify-self-center ${itemClass}`}
+        align="start"
+        emphasis={itemEmphasis}
+      />
+      <BrowseStatItem
+        type="views"
+        icon={Eye}
+        value={formatCount(mod.viewCount)}
         title={`${mod.viewCount ?? 0} views`}
-      >
-        <Eye className={`shrink-0 ${iconClass}`} />
-        <span className={textClass}>{formatCount(mod.viewCount)}</span>
-      </span>
+        align="start"
+        emphasis={itemEmphasis}
+      />
       {showDownloads && (
-        <span
-          className={`inline-flex justify-self-end ${itemClass}`}
+        <BrowseStatItem
+          type="downloads"
+          icon={Download}
+          value={formatCount(mod.downloadCount)}
           title={`${mod.downloadCount ?? 0} downloads`}
-        >
-          <Download className={`shrink-0 ${iconClass}`} />
-          <span className={textClass}>{formatCount(mod.downloadCount)}</span>
-        </span>
+          align="start"
+          emphasis={itemEmphasis}
+        />
       )}
     </div>
   );
@@ -418,35 +466,25 @@ function BrowseReadableAction({
           : action === 'queued'
             ? `Queued ${queuePosition}`
             : 'Install';
-  const tone =
-    action === 'installed'
-      ? 'border-state-success/30 bg-state-success/[0.055] text-state-success'
-      : action === 'queued'
-        ? 'border-state-info/30 bg-state-info/[0.055] text-state-info'
-        : action === 'downloading'
-          ? 'border-accent/30 bg-accent/[0.055] text-accent'
-          : action === 'enable'
-            ? 'border-state-success/30 bg-state-success/[0.055] text-state-success hover:border-state-success/50'
-            : 'border-accent/30 bg-accent/[0.055] text-accent hover:border-accent/50';
   const iconOnly = iconOnlyOverride ?? density === 'micro';
   const className = iconOnly
-    ? `inline-flex h-[clamp(22px,17.1429cqw,28px)] w-[clamp(22px,17.1429cqw,28px)] shrink-0 items-center justify-center rounded-md border text-[clamp(10px,4.2857cqw,13px)] font-semibold leading-none transition-colors ${tone}`
-    : `inline-flex h-[clamp(24px,10cqw,32px)] w-[clamp(76px,35cqw,112px)] shrink-0 items-center justify-center rounded-md border px-[clamp(7px,3.2143cqw,10px)] text-[clamp(10px,4.2857cqw,13px)] font-semibold leading-none transition-colors ${tone}`;
+    ? `browse-action-button browse-action-button--icon browse-action-button--${action}`
+    : `browse-action-button browse-action-button--${action}`;
   const icon =
-    action === 'downloading' ? (
-      <Loader2 className="block h-[clamp(12px,4.6429cqw,15px)] w-[clamp(12px,4.6429cqw,15px)] shrink-0 animate-spin" />
-    ) : action === 'installed' || action === 'enable' ? (
-      <Check className="block h-[clamp(12px,4.6429cqw,15px)] w-[clamp(12px,4.6429cqw,15px)] shrink-0" />
-    ) : action === 'queued' ? (
-      <Clock className="block h-[clamp(12px,4.6429cqw,15px)] w-[clamp(12px,4.6429cqw,15px)] shrink-0" />
-    ) : (
-      <Download className="block h-[clamp(12px,4.6429cqw,15px)] w-[clamp(12px,4.6429cqw,15px)] shrink-0 -translate-y-0.5" />
-    );
+    action === 'downloading' ? Loader2 : action === 'installed' || action === 'enable' ? Check : action === 'queued' ? Clock : Download;
   const content = (
-    <span className="inline-flex min-w-0 items-center gap-[clamp(4px,2.1429cqw,7px)]">
-      {icon}
-      <span className={iconOnly ? 'sr-only' : 'min-w-0 truncate leading-none'}>{label}</span>
-    </span>
+    iconOnly ? (
+      <span className={`browse-action-button-icon browse-action-button-icon--${action}`}>
+        {React.createElement(icon, { 'aria-hidden': true, className: action === 'downloading' ? 'animate-spin' : undefined })}
+      </span>
+    ) : (
+      <>
+        <span className={`browse-action-button-icon browse-action-button-icon--${action}`}>
+          {React.createElement(icon, { 'aria-hidden': true, className: action === 'downloading' ? 'animate-spin' : undefined })}
+        </span>
+        <span className="browse-action-button-label">{label}</span>
+      </>
+    )
   );
 
   if (action === 'install') {
@@ -2265,6 +2303,8 @@ function ReadableBrowseModCard({
   onQuickDownload,
   onEnable,
 }: ModCardProps) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [measuredCardWidth, setMeasuredCardWidth] = useState(0);
   const thumbnail = getModThumbnail(mod);
   const audioPreview = section === 'Sound' ? getSoundPreviewUrl(mod) : undefined;
   const isSoundSection = section === 'Sound';
@@ -2274,10 +2314,11 @@ function ReadableBrowseModCard({
   const heroFacePos = inferredHero ? getHeroFacePosition(inferredHero) : 55;
   const shouldHideNsfw = Boolean(mod.nsfw && hideNsfwPreviews);
   const readableCardTargetWidth = getReadableCardTargetWidth(cardSize);
-  const readableDensity = getReadableDensity(readableCardTargetWidth);
+  const readableCardWidth = measuredCardWidth || readableCardTargetWidth;
+  const readableDensity = getReadableDensity(readableCardWidth);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
-  const readableScale = readableCardTargetWidth / BROWSE_READABLE_CARD_GOLDEN;
-  const chipRowWidth = Math.round(readableCardTargetWidth - 24 * readableScale);
+  const readableScale = readableCardWidth / BROWSE_READABLE_CARD_GOLDEN;
+  const chipRowWidth = Math.round(readableCardWidth - 24 * readableScale);
   const chips = getReadableCardChips(mod, section, inferredHero);
   const showChips = readableDensity !== 'micro';
   const showAuthor = readableDensity !== 'micro';
@@ -2293,7 +2334,7 @@ function ReadableBrowseModCard({
       ? 'h-[56cqw]'
       : 'h-[57.1429cqw]';
   const bodyPaddingClass = isMicro
-    ? 'px-[clamp(9px,5.7143cqw,12px)] pb-[clamp(9px,6.4286cqw,12px)] pt-[clamp(8px,5.3571cqw,11px)]'
+    ? 'px-[clamp(8px,5cqw,10px)] pb-[clamp(7px,4.6429cqw,9px)] pt-[clamp(7px,4.6429cqw,9px)]'
     : isCompactReadable
       ? 'px-[clamp(12px,5cqw,14px)] pb-[clamp(12px,5cqw,14px)] pt-[clamp(12px,5cqw,14px)]'
       : 'px-[clamp(14px,5cqw,16px)] pb-[clamp(14px,5cqw,16px)] pt-[clamp(14px,5cqw,16px)]';
@@ -2303,11 +2344,32 @@ function ReadableBrowseModCard({
       : 'mt-[clamp(5px,2.8571cqw,9px)]'
     : 'mt-0';
   const footerMarginClass = isMicro
-    ? 'mt-[clamp(7px,4.2857cqw,10px)]'
+    ? 'mt-[clamp(6px,3.5714cqw,8px)]'
     : 'mt-[clamp(10px,4.2857cqw,14px)]';
   const footerHeightClass = isMicro
-    ? 'h-auto'
-    : 'h-[clamp(22px,10cqw,32px)]';
+    ? 'h-6'
+    : 'h-[clamp(24px,10cqw,32px)]';
+
+  useLayoutEffect(() => {
+    const node = cardRef.current;
+    if (!node) return;
+
+    const measure = () => {
+      const nextWidth = Math.round(node.getBoundingClientRect().width);
+      setMeasuredCardWidth((previousWidth) => (previousWidth === nextWidth ? previousWidth : nextWidth));
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const media = isSoundSection ? (
     <div className="relative h-full w-full overflow-hidden bg-bg-tertiary">
@@ -2354,6 +2416,7 @@ function ReadableBrowseModCard({
 
   return (
     <div
+      ref={cardRef}
       onClick={onClick}
       onKeyDown={(e) => handleCardKeyDown(e, onClick)}
       role="button"
@@ -2370,7 +2433,7 @@ function ReadableBrowseModCard({
       <div className={`relative ${mediaHeightClass} overflow-hidden rounded-t-md bg-bg-tertiary`}>
         {media}
         <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent via-bg-secondary/45 to-bg-secondary"
+          className="pointer-events-none absolute inset-x-0 bottom-[-2px] h-[calc(3rem+2px)] bg-gradient-to-b from-transparent via-bg-secondary/45 to-bg-secondary shadow-[inset_0_-4px_0_var(--color-bg-secondary)]"
           aria-hidden="true"
         />
         {isSoundSection && hasAudioPreview && !isMicro && (
@@ -2419,24 +2482,9 @@ function ReadableBrowseModCard({
             </div>
           </div>
         )}
-        {isMicro && (
-          <div className="absolute right-[clamp(8px,5cqw,11px)] top-[clamp(8px,5cqw,11px)]">
-            <BrowseReadableAction
-              modName={mod.name}
-              installed={installed}
-              installedDisabled={installedDisabled}
-              downloading={downloading}
-              queuePosition={queuePosition}
-              density={readableDensity}
-              iconOnlyOverride
-              onQuickDownload={onQuickDownload}
-              onEnable={onEnable}
-            />
-          </div>
-        )}
       </div>
 
-      <div className={`flex flex-none flex-col bg-bg-secondary ${bodyPaddingClass}`}>
+      <div className={`relative z-10 -mt-[2px] flex flex-none flex-col bg-bg-secondary ${bodyPaddingClass}`}>
         {showChips && (
           <BrowseReadableChipRow
             chips={chips}
@@ -2449,7 +2497,7 @@ function ReadableBrowseModCard({
           <h3
             className={`block truncate font-bold text-[#eee8df] ${
               isMicro
-                ? 'text-[clamp(13px,7.1429cqw,18px)] leading-[1.28] pb-px'
+                ? 'text-[13px] leading-4'
                 : 'text-[clamp(11px,5.3571cqw,17px)] leading-[1.28] pb-px'
             }`}
             title={mod.name}
@@ -2466,18 +2514,17 @@ function ReadableBrowseModCard({
 
         <div className={`${footerMarginClass} flex ${footerHeightClass} items-center justify-between gap-[clamp(6px,4.2857cqw,14px)]`}>
           <BrowseReadableStatsRow mod={mod} density={readableDensity} />
-          {!isMicro && (
-            <BrowseReadableAction
-              modName={mod.name}
-              installed={installed}
-              installedDisabled={installedDisabled}
-              downloading={downloading}
-              queuePosition={queuePosition}
-              density={readableDensity}
-              onQuickDownload={onQuickDownload}
-              onEnable={onEnable}
-            />
-          )}
+          <BrowseReadableAction
+            modName={mod.name}
+            installed={installed}
+            installedDisabled={installedDisabled}
+            downloading={downloading}
+            queuePosition={queuePosition}
+            density={readableDensity}
+            iconOnlyOverride={isMicro}
+            onQuickDownload={onQuickDownload}
+            onEnable={onEnable}
+          />
         </div>
       </div>
     </div>
@@ -2940,4 +2987,5 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
     </div>
   );
 }
+
 

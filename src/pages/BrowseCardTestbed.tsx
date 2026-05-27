@@ -411,7 +411,7 @@ function Thumbnail({ card }: { card: SampleCard }) {
       )}
 
       <div
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-b from-transparent via-bg-secondary/45 to-bg-secondary"
+        className="pointer-events-none absolute inset-x-0 bottom-[-2px] h-[calc(3rem+2px)] bg-gradient-to-b from-transparent via-bg-secondary/45 to-bg-secondary shadow-[inset_0_-4px_0_var(--color-bg-secondary)]"
         aria-hidden="true"
       />
 
@@ -446,11 +446,11 @@ function FreshnessLabel({ card }: { card: SampleCard }) {
 
   return (
     <span
-      className="mt-0.5 inline-flex h-3.5 shrink-0 items-center gap-0.5 text-[10px] font-medium leading-[11px] tabular-nums text-text-tertiary/60"
+      className="mt-0.5 inline-flex h-3 shrink-0 items-center gap-0.5 text-[9px] font-normal leading-[10px] tabular-nums text-text-tertiary/42"
       title={`Last updated on GameBanana: ${absolute}`}
     >
-      <History className="h-3 w-3 shrink-0 -translate-y-0.5" />
-      <span className="leading-[11px]">{relative}</span>
+      <History className="h-2.5 w-2.5 shrink-0 -translate-y-px" />
+      <span className="leading-[10px]">{relative}</span>
     </span>
   );
 }
@@ -465,7 +465,7 @@ function ProductModCard({ card, bodyHeight }: { card: SampleCard; bodyHeight: nu
     >
       <Thumbnail card={card} />
 
-      <div className="flex min-h-0 flex-1 flex-col p-3">
+      <div className="relative z-10 -mt-[2px] flex min-h-0 flex-1 flex-col bg-bg-secondary p-3">
         <ChipRow chips={card.chips} />
 
         <div className="mt-2 min-w-0">
