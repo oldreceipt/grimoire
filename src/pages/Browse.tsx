@@ -214,15 +214,15 @@ function estimateBrowseRowHeight(
   const bodyHeight =
     density === 'micro'
       ? section === 'Sound'
-        ? 110
-        : 84
+        ? 96
+        : 64
       : density === 'compact'
         ? section === 'Sound'
           ? 164
-          : 120
+          : 104
         : section === 'Sound'
           ? 208
-          : 160;
+          : 120;
 
   return Math.ceil(mediaHeight + bodyHeight);
 }
