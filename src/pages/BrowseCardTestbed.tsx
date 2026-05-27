@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import {
   AlertTriangle,
+  Calendar,
   Check,
   Clock,
   Download,
@@ -12,11 +13,17 @@ import {
   ThumbsUp,
   Volume2,
 } from 'lucide-react';
+import { formatAbsoluteDate, formatRelativeDate } from '../lib/dates';
 import { getHeroFacePosition, getHeroRenderPath } from '../lib/lockerUtils';
 
 type SampleKind = 'mod' | 'sound';
-type SampleAction = 'install' | 'installed' | 'queued' | 'downloading' | 'enable';
-type StateBadge = 'nsfw' | 'installed' | 'outdated';
+type SampleAction = 'install' | 'installed' | 'queued' | 'downloading' | 'enable' | 'disable' | 'update' | 'selected';
+type ChipTone = 'neutral' | 'accent' | 'danger' | 'info';
+
+type SampleChip = {
+  label: string;
+  tone?: ChipTone;
+};
 
 type SampleCard = {
   id: string;
@@ -24,46 +31,36 @@ type SampleCard = {
   author: string;
   kind: SampleKind;
   hero: string;
-  category: string;
+  chips: SampleChip[];
   likes: string;
   views: string;
   downloads: string;
-  date: string;
+  updatedAt: string;
   action: SampleAction;
-  stateBadges?: StateBadge[];
   queuePosition?: number;
   duration?: string;
   media?: 'image' | 'audio-placeholder';
 };
 
-const SAMPLE_CARDS: SampleCard[] = [
+const MAX_VISIBLE_CHIPS = 3;
+const DEFAULT_BODY_HEIGHT = 158;
+const CHIP_ROW_APPROX_WIDTH = 256;
+const CHIP_GAP_WIDTH = 6;
+const CHIP_OVERFLOW_WIDTH = 30;
+
+const MOD_GRID_CARDS: SampleCard[] = [
   {
     id: 'normal',
     title: "dacooderr's FPS Essentials",
     author: 'dacooderr',
     kind: 'mod',
     hero: 'Warden',
-    category: 'Utility',
+    chips: [{ label: 'Utility' }, { label: 'Warden', tone: 'info' }],
     likes: '3',
     views: '3.4k',
     downloads: '824',
-    date: '05/27/2026',
+    updatedAt: '2026-05-27T00:00:00.000Z',
     action: 'install',
-  },
-  {
-    id: 'sound',
-    title: 'The First Hunter - Venator Mod',
-    author: 'r3djok3r1',
-    kind: 'sound',
-    hero: 'Venator',
-    category: 'Sound',
-    likes: '1',
-    views: '16',
-    downloads: '42',
-    date: '05/27/2026',
-    action: 'queued',
-    queuePosition: 2,
-    duration: '0:30',
   },
   {
     id: 'installed-skin',
@@ -71,13 +68,75 @@ const SAMPLE_CARDS: SampleCard[] = [
     author: 'Squinnky',
     kind: 'mod',
     hero: 'Paige',
-    category: 'Skin',
+    chips: [{ label: 'Skin' }, { label: 'Paige', tone: 'info' }, { label: 'Model' }],
     likes: '14',
     views: '1.8k',
     downloads: '611',
-    date: '03/13/2026',
+    updatedAt: '2026-03-13T00:00:00.000Z',
     action: 'installed',
-    stateBadges: ['installed'],
+  },
+  {
+    id: 'outdated',
+    title: 'Legacy Wraith Celestial HUD and Portrait Pack',
+    author: 'modforge',
+    kind: 'mod',
+    hero: 'Wraith',
+    chips: [{ label: 'HUD' }, { label: 'Wraith', tone: 'info' }, { label: '18+', tone: 'danger' }],
+    likes: '29',
+    views: '8.9k',
+    downloads: '2.4k',
+    updatedAt: '2025-12-18T00:00:00.000Z',
+    action: 'update',
+  },
+  {
+    id: 'translation-stress',
+    title: 'Yamato Complete Translation Patch With Very Long Localized Labels',
+    author: 'atelierNix',
+    kind: 'mod',
+    hero: 'Yamato',
+    chips: [
+      { label: 'Translation', tone: 'accent' },
+      { label: 'Localization' },
+      { label: 'Yamato', tone: 'info' },
+      { label: 'Community Patch' },
+      { label: 'Long Category Label' },
+    ],
+    likes: '42',
+    views: '12.7k',
+    downloads: '5.2k',
+    updatedAt: '2026-05-03T00:00:00.000Z',
+    action: 'enable',
+  },
+  {
+    id: 'selected-model',
+    title: 'Bebop Steelworks Model Override',
+    author: 'chassisLab',
+    kind: 'mod',
+    hero: 'Bebop',
+    chips: [{ label: 'Model' }, { label: 'Bebop', tone: 'info' }, { label: 'Experimental' }],
+    likes: '8',
+    views: '1.1k',
+    downloads: '320',
+    updatedAt: '2026-02-02T00:00:00.000Z',
+    action: 'selected',
+  },
+];
+
+const SOUND_GRID_CARDS: SampleCard[] = [
+  {
+    id: 'sound',
+    title: 'The First Hunter - Venator Mod',
+    author: 'r3djok3r1',
+    kind: 'sound',
+    hero: 'Venator',
+    chips: [{ label: 'Sound', tone: 'accent' }, { label: 'Venator', tone: 'info' }, { label: 'Audio' }],
+    likes: '1',
+    views: '16',
+    downloads: '42',
+    updatedAt: '2026-05-27T00:00:00.000Z',
+    action: 'queued',
+    queuePosition: 2,
+    duration: '0:30',
   },
   {
     id: 'ability-sfx',
@@ -85,11 +144,11 @@ const SAMPLE_CARDS: SampleCard[] = [
     author: 'VoltArchive',
     kind: 'sound',
     hero: 'Seven',
-    category: 'Ability SFX',
+    chips: [{ label: 'Ability SFX', tone: 'accent' }, { label: 'Seven', tone: 'info' }, { label: 'Audio' }],
     likes: '18',
     views: '2.1k',
     downloads: '560',
-    date: '05/12/2026',
+    updatedAt: '2026-05-12T00:00:00.000Z',
     action: 'downloading',
     duration: '0:18',
     media: 'audio-placeholder',
@@ -100,37 +159,54 @@ const SAMPLE_CARDS: SampleCard[] = [
     author: 'RedactedUser',
     kind: 'sound',
     hero: 'Lash',
-    category: 'Voice',
+    chips: [{ label: 'Voice', tone: 'accent' }, { label: 'Lash', tone: 'info' }, { label: '18+', tone: 'danger' }, { label: 'Audio' }],
     likes: '7',
     views: '980',
     downloads: '130',
-    date: '04/19/2026',
-    action: 'enable',
-    stateBadges: ['nsfw', 'installed'],
+    updatedAt: '2026-04-19T00:00:00.000Z',
+    action: 'installed',
     duration: '0:24',
   },
   {
-    id: 'outdated',
-    title: 'Legacy Wraith Celestial HUD and Portrait Pack',
-    author: 'modforge',
-    kind: 'mod',
-    hero: 'Wraith',
-    category: 'HUD',
-    likes: '29',
-    views: '8.9k',
-    downloads: '2.4k',
-    date: '12/18/2025',
-    action: 'queued',
-    queuePosition: 4,
-    stateBadges: ['nsfw', 'outdated'],
+    id: 'voice-stress',
+    title: 'Multilingual Announcer Voice Pack for Every Menu State',
+    author: 'voxFoundry',
+    kind: 'sound',
+    hero: 'Ivy',
+    chips: [
+      { label: 'Voice Pack', tone: 'accent' },
+      { label: 'Translation' },
+      { label: 'Multilingual' },
+      { label: 'Audio' },
+      { label: 'Very Long Descriptor' },
+    ],
+    likes: '16',
+    views: '4.6k',
+    downloads: '880',
+    updatedAt: '2026-01-14T00:00:00.000Z',
+    action: 'disable',
+    duration: '0:21',
+    media: 'audio-placeholder',
+  },
+  {
+    id: 'audio-install',
+    title: 'Pocket Radio UI Clicks',
+    author: 'wavequeue',
+    kind: 'sound',
+    hero: 'Infernus',
+    chips: [{ label: 'Audio' }, { label: 'UI SFX', tone: 'accent' }, { label: 'Infernus', tone: 'info' }],
+    likes: '5',
+    views: '710',
+    downloads: '89',
+    updatedAt: '2026-03-08T00:00:00.000Z',
+    action: 'install',
+    duration: '0:09',
+    media: 'audio-placeholder',
   },
 ];
 
-const MOD_GRID_CARDS = SAMPLE_CARDS.filter((card) => card.kind === 'mod');
-const SOUND_GRID_CARDS = SAMPLE_CARDS.filter((card) => card.kind === 'sound');
-
-function hasBadge(card: SampleCard, badge: StateBadge): boolean {
-  return card.stateBadges?.includes(badge) ?? false;
+function hasNsfwChip(card: SampleCard): boolean {
+  return card.chips.some((chip) => chip.label === '18+');
 }
 
 function actionLabel(card: SampleCard): string {
@@ -140,9 +216,15 @@ function actionLabel(card: SampleCard): string {
     case 'queued':
       return card.queuePosition ? `Queued ${card.queuePosition}` : 'Queued';
     case 'downloading':
-      return 'Downloading';
+      return 'Loading';
     case 'enable':
       return 'Enable';
+    case 'disable':
+      return 'Disable';
+    case 'update':
+      return 'Update';
+    case 'selected':
+      return 'Selected';
     default:
       return 'Install';
   }
@@ -151,37 +233,33 @@ function actionLabel(card: SampleCard): string {
 function actionTone(card: SampleCard): string {
   switch (card.action) {
     case 'installed':
-      return 'border-state-success/65 bg-bg-primary text-state-success';
+    case 'selected':
+      return 'border-state-success/45 bg-state-success/10 text-state-success';
     case 'queued':
-      return 'border-state-info/65 bg-bg-primary text-state-info';
+      return 'border-state-info/45 bg-state-info/10 text-state-info';
     case 'downloading':
-      return 'border-accent/65 bg-bg-primary text-accent';
+      return 'border-accent/45 bg-accent/10 text-accent';
     case 'enable':
-      return 'border-state-warning/70 bg-bg-primary text-state-warning hover:border-state-warning';
+      return 'border-state-success/45 bg-state-success/10 text-state-success hover:border-state-success/70';
+    case 'disable':
+      return 'border-white/12 bg-white/[0.04] text-text-secondary hover:border-white/20';
+    case 'update':
+      return 'border-state-warning/55 bg-state-warning/10 text-state-warning hover:border-state-warning/80';
     default:
-      return 'border-accent/60 bg-bg-primary text-accent hover:border-accent';
+      return 'border-accent/45 bg-accent/10 text-accent hover:border-accent/70';
   }
 }
 
-function badgeTone(badge: StateBadge): string {
-  switch (badge) {
-    case 'installed':
-      return 'border-state-success/55 bg-bg-primary text-state-success';
-    case 'outdated':
-      return 'border-state-warning/60 bg-bg-primary text-state-warning';
-    case 'nsfw':
-      return 'border-state-danger/60 bg-bg-primary text-state-danger';
-  }
-}
-
-function badgeLabel(badge: StateBadge): string {
-  switch (badge) {
-    case 'installed':
-      return 'Installed';
-    case 'outdated':
-      return 'Outdated';
-    case 'nsfw':
-      return '18+';
+function chipTone(tone: ChipTone = 'neutral'): string {
+  switch (tone) {
+    case 'accent':
+      return 'border-accent/15 bg-accent/[0.045] text-accent/75';
+    case 'danger':
+      return 'border-state-danger/25 bg-state-danger/[0.07] text-state-danger/85';
+    case 'info':
+      return 'border-state-info/15 bg-state-info/[0.045] text-state-info/75';
+    default:
+      return 'border-white/[0.08] bg-white/[0.028] text-text-tertiary';
   }
 }
 
@@ -189,55 +267,75 @@ function heroStyle(card: SampleCard): CSSProperties {
   return { objectPosition: `${getHeroFacePosition(card.hero)}% 20%` };
 }
 
-function CategoryChip({ card }: { card: SampleCard }) {
-  return (
-    <span className="inline-flex h-5 max-w-[112px] items-center gap-1 rounded-sm border border-white/[0.14] bg-bg-primary px-1.5 text-[10px] font-semibold leading-none text-text-secondary shadow-[0_1px_4px_rgba(0,0,0,0.45)]">
-      {card.kind === 'sound' && <Volume2 className="h-3 w-3 shrink-0 text-text-tertiary" />}
-      <span className="truncate">{card.category}</span>
-    </span>
-  );
-}
+function ChipRow({ chips }: { chips: SampleChip[] }) {
+  const visibleChips: SampleChip[] = [];
+  let usedWidth = 0;
 
-function StatusChips({ card }: { card: SampleCard }) {
+  for (const [index, chip] of chips.entries()) {
+    if (visibleChips.length >= MAX_VISIBLE_CHIPS) break;
+
+    const remainingAfter = chips.length - index - 1;
+    const chipWidth = Math.ceil(chip.label.length * 5.5 + 14);
+    const gapBefore = visibleChips.length > 0 ? CHIP_GAP_WIDTH : 0;
+    const overflowReserve = remainingAfter > 0 ? CHIP_GAP_WIDTH + CHIP_OVERFLOW_WIDTH : 0;
+
+    if (usedWidth + gapBefore + chipWidth + overflowReserve > CHIP_ROW_APPROX_WIDTH) break;
+
+    visibleChips.push(chip);
+    usedWidth += gapBefore + chipWidth;
+  }
+
+  const hiddenChips = chips.slice(visibleChips.length);
+
   return (
-    <>
-      {(card.stateBadges ?? []).slice(0, 2).map((badge) => (
+    <div className="flex min-h-6 min-w-0 items-start gap-1.5 overflow-hidden">
+      {visibleChips.map((chip, index) => (
         <span
-          key={badge}
-          className={`inline-flex h-5 items-center gap-1 rounded-sm border px-1.5 text-[10px] font-semibold leading-none shadow-[0_1px_4px_rgba(0,0,0,0.45)] ${badgeTone(
-            badge
+          key={`${chip.label}-${index}`}
+          title={chip.label}
+          className={`inline-flex h-5 shrink-0 items-center whitespace-nowrap rounded-sm border px-1.5 text-[10px] font-medium leading-none ${chipTone(
+            chip.tone
           )}`}
         >
-          {badge === 'installed' && <Check className="h-3 w-3" />}
-          {badge === 'outdated' && <AlertTriangle className="h-3 w-3" />}
-          {badgeLabel(badge)}
+          {chip.label}
         </span>
       ))}
-    </>
+      {hiddenChips.length > 0 && (
+        <span
+          title={hiddenChips.map((chip) => chip.label).join(', ')}
+          className="inline-flex h-5 shrink-0 items-center rounded-sm border border-white/[0.08] bg-white/[0.028] px-1.5 text-[10px] font-medium leading-none text-text-tertiary"
+        >
+          +{hiddenChips.length}
+        </span>
+      )}
+    </div>
   );
 }
 
-function ActionButton({ card }: { card: SampleCard }) {
+function FooterActionButton({ card }: { card: SampleCard }) {
   const label = actionLabel(card);
-  const passive = card.action === 'installed' || card.action === 'queued' || card.action === 'downloading';
+  const passive = card.action === 'installed' || card.action === 'queued' || card.action === 'downloading' || card.action === 'selected';
 
   return (
     <button
       type="button"
       aria-label={`${label} ${card.title}`}
-      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border text-xs shadow-[0_1px_4px_rgba(0,0,0,0.5)] transition-colors ${actionTone(
+      className={`inline-flex h-8 w-[108px] shrink-0 items-center justify-center gap-1.5 rounded-md border px-3 text-xs font-semibold leading-none transition-colors ${actionTone(
         card
       )} ${passive ? 'cursor-default' : ''}`}
     >
       {card.action === 'downloading' ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : card.action === 'installed' || card.action === 'enable' ? (
-        <Check className="h-4 w-4" />
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+      ) : card.action === 'installed' || card.action === 'enable' || card.action === 'selected' ? (
+        <Check className="h-3.5 w-3.5 shrink-0" />
       ) : card.action === 'queued' ? (
-        <Clock className="h-4 w-4" />
+        <Clock className="h-3.5 w-3.5 shrink-0" />
+      ) : card.action === 'update' ? (
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
       ) : (
-        <Download className="h-4 w-4" />
+        <Download className="h-3.5 w-3.5 shrink-0" />
       )}
+      <span className="truncate">{label}</span>
     </button>
   );
 }
@@ -249,7 +347,7 @@ function SoundPlaceholderArt({ card }: { card: SampleCard }) {
     <div
       className="absolute inset-0 overflow-hidden bg-[radial-gradient(circle_at_24%_22%,rgba(249,115,22,0.22),transparent_30%),radial-gradient(circle_at_78%_18%,rgba(96,165,250,0.16),transparent_28%),linear-gradient(135deg,#151312,#22242a_55%,#121416)]"
       role="img"
-      aria-label={`${card.category} audio preview`}
+      aria-label={`${card.title} audio preview`}
     >
       <Volume2 className="absolute left-1/2 top-[43%] h-12 w-12 -translate-x-1/2 -translate-y-1/2 text-text-primary/12" />
       <div className="absolute inset-x-8 top-[46%] flex h-12 -translate-y-1/2 items-center justify-center gap-1.5 opacity-35">
@@ -287,7 +385,7 @@ function ThumbnailAudioPreview({ card }: { card: SampleCard }) {
 }
 
 function Thumbnail({ card }: { card: SampleCard }) {
-  const nsfw = hasBadge(card, 'nsfw');
+  const nsfw = hasNsfwChip(card);
   const useSoundPlaceholder = card.kind === 'sound' && card.media === 'audio-placeholder';
 
   return (
@@ -312,14 +410,6 @@ function Thumbnail({ card }: { card: SampleCard }) {
         </div>
       )}
 
-      <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2.5">
-        <div className="flex min-w-0 flex-wrap items-start gap-1.5 pr-1">
-          <CategoryChip card={card} />
-          <StatusChips card={card} />
-        </div>
-        <ActionButton card={card} />
-      </div>
-
       <ThumbnailAudioPreview card={card} />
     </div>
   );
@@ -327,20 +417,36 @@ function Thumbnail({ card }: { card: SampleCard }) {
 
 function StatsRow({ card }: { card: SampleCard }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 overflow-hidden text-[11px] font-medium text-text-tertiary">
-      <span className="inline-flex items-center gap-1 tabular-nums">
-        <ThumbsUp className="h-3 w-3" />
+    <div className="flex h-8 min-w-0 items-center gap-2 overflow-hidden text-[11px] font-medium leading-none text-text-tertiary">
+      <span className="inline-flex h-4 items-center gap-1 tabular-nums">
+        <ThumbsUp className="h-3 w-3 shrink-0" />
         {card.likes}
       </span>
-      <span className="inline-flex items-center gap-1 tabular-nums">
-        <Eye className="h-3 w-3" />
+      <span className="inline-flex h-4 items-center gap-1 tabular-nums">
+        <Eye className="h-3 w-3 shrink-0" />
         {card.views}
       </span>
-      <span className="inline-flex items-center gap-1 tabular-nums">
-        <Download className="h-3 w-3" />
+      <span className="inline-flex h-4 items-center gap-1 tabular-nums">
+        <Download className="h-3 w-3 shrink-0" />
         {card.downloads}
       </span>
     </div>
+  );
+}
+
+function FreshnessLabel({ card }: { card: SampleCard }) {
+  const relative = formatRelativeDate(card.updatedAt);
+  const absolute = formatAbsoluteDate(card.updatedAt);
+  if (!relative || !absolute) return null;
+
+  return (
+    <span
+      className="mt-2 inline-flex h-4 shrink-0 items-center gap-1 text-[11px] font-medium tabular-nums text-text-tertiary"
+      title={`Last updated on GameBanana: ${absolute}`}
+    >
+      <Calendar className="h-3 w-3 shrink-0" />
+      {relative}
+    </span>
   );
 }
 
@@ -354,15 +460,20 @@ function ProductModCard({ card, bodyHeight }: { card: SampleCard; bodyHeight: nu
     >
       <Thumbnail card={card} />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2.5 p-3">
-        <div className="h-[42px] min-w-0 overflow-hidden">
-          <h3 className="truncate text-[15px] font-bold leading-[1.25] text-[#eee8df]" title={card.title}>{card.title}</h3>
-          <p className="mt-1 truncate text-xs font-medium text-text-secondary">by {card.author}</p>
+      <div className="flex min-h-0 flex-1 flex-col p-3">
+        <ChipRow chips={card.chips} />
+
+        <div className="mt-2 min-w-0">
+          <h3 className="truncate text-[15px] font-bold leading-[1.25] text-[#eee8df]" title={card.title}>
+            {card.title}
+          </h3>
+          <p className="mt-1 truncate text-xs font-medium leading-tight text-text-secondary">by {card.author}</p>
+          <FreshnessLabel card={card} />
         </div>
 
-        <div className="mt-auto flex h-5 items-center justify-between gap-3">
+        <div className="mt-auto flex h-8 items-end justify-between gap-3">
           <StatsRow card={card} />
-          <span className="shrink-0 text-[11px] font-medium tabular-nums text-text-tertiary">{card.date}</span>
+          <FooterActionButton card={card} />
         </div>
       </div>
     </article>
@@ -397,7 +508,7 @@ function GridExample({
 }
 
 export default function BrowseCardTestbed() {
-  const [bodyHeight, setBodyHeight] = useState(94);
+  const [bodyHeight, setBodyHeight] = useState(DEFAULT_BODY_HEIGHT);
 
   return (
     <div className="min-h-full bg-bg-primary text-text-primary">
@@ -409,9 +520,9 @@ export default function BrowseCardTestbed() {
                 <Layers className="h-3.5 w-3.5" />
                 Testbed example
               </p>
-              <h1 className="font-reaver text-2xl font-semibold text-text-primary">Product UI mod card</h1>
+              <h1 className="font-reaver text-2xl font-semibold text-text-primary">Clean media mod card</h1>
               <p className="mt-2 max-w-3xl text-sm text-text-secondary">
-                Production-like section grids. Mods and Sounds are shown separately because Browse does not mix them in one result grid.
+                Media stays clean. Intrinsic chips move below the thumbnail. Action state lives only in the footer button.
               </p>
             </div>
             <div className="rounded-sm border border-border bg-bg-secondary px-3 py-2 text-xs text-text-secondary">
@@ -425,7 +536,7 @@ export default function BrowseCardTestbed() {
             <div>
               <h2 className="text-sm font-semibold text-text-primary">Body spacing test</h2>
               <p className="mt-1 text-xs text-text-secondary">
-                Compresses the body slot between thumbnail and footer. Current card height: {160 + bodyHeight}px.
+                Fixed chip behavior: fit up to {MAX_VISIBLE_CHIPS} full chips, then +N. Current card height: {160 + bodyHeight}px.
               </p>
             </div>
             <span className="rounded-sm border border-white/10 bg-bg-primary px-2 py-1 text-[11px] font-medium tabular-nums text-text-tertiary">
@@ -434,8 +545,8 @@ export default function BrowseCardTestbed() {
           </div>
           <input
             type="range"
-            min="82"
-            max="114"
+            min="148"
+            max="178"
             step="2"
             value={bodyHeight}
             onChange={(event) => setBodyHeight(Number(event.target.value))}
@@ -446,14 +557,14 @@ export default function BrowseCardTestbed() {
 
         <GridExample
           title="Mods grid"
-          description="No audio treatment. Tests normal, installed, NSFW hidden, and outdated states with the same fixed card geometry."
+          description="Tests clean media, installed, update-needed, selected, NSFW hidden, long title, and long chip cases without overlaying metadata on the image."
           cards={MOD_GRID_CARDS}
           bodyHeight={bodyHeight}
         />
 
         <GridExample
           title="Sounds grid"
-          description="Every card has audio preview in the thumbnail. Body and footer stay identical to the Mods grid."
+          description="Every sound card uses the media slot for image or generated audio preview. Body, chips, footer, and actions match the Mods grid."
           cards={SOUND_GRID_CARDS}
           bodyHeight={bodyHeight}
         />
