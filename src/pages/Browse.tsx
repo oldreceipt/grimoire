@@ -1685,7 +1685,7 @@ export default function Browse() {
   return (
     <div className="h-full overflow-y-auto" ref={scrollContainerRef}>
       {/* Header with Search */}
-      <div className="sticky top-0 z-10 p-4 border-b border-border bg-bg-primary">
+      <div className="sticky top-0 z-40 p-4 border-b border-border bg-bg-primary">
         <form onSubmit={handleSearch}>
           <div className="flex flex-wrap items-center gap-2">
             {/* Search Input with integrated submit */}
@@ -1799,23 +1799,28 @@ export default function Browse() {
                 disabled (and dimmed) while List is active rather than hidden,
                 keeping the toolbar from reflowing as you switch. */}
             <div
-              className={`flex items-center gap-2 h-10 rounded-lg border border-border bg-bg-secondary px-3 transition-opacity ${
+              className={`flex items-center gap-2 h-12 rounded-lg border border-border bg-bg-secondary px-3 transition-opacity ${
                 layout === 'list' ? 'opacity-40' : ''
               }`}
               title="Card size"
             >
               <Grid3x3 className="w-4 h-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
-              <input
-                type="range"
-                min={BROWSE_CARD_SIZE_MIN}
-                max={BROWSE_CARD_SIZE_MAX}
-                step={5}
-                value={cardSize}
-                disabled={layout === 'list'}
-                onChange={(e) => setCardSize(Number(e.target.value))}
-                aria-label="Card size"
-                className="h-1.5 w-24 cursor-pointer accent-accent disabled:cursor-default"
-              />
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-[10px] font-semibold leading-none tabular-nums text-text-tertiary">
+                  {cardSize}px
+                </span>
+                <input
+                  type="range"
+                  min={BROWSE_CARD_SIZE_MIN}
+                  max={BROWSE_CARD_SIZE_MAX}
+                  step={5}
+                  value={cardSize}
+                  disabled={layout === 'list'}
+                  onChange={(e) => setCardSize(Number(e.target.value))}
+                  aria-label="Card size"
+                  className="h-1.5 w-24 cursor-pointer accent-accent disabled:cursor-default"
+                />
+              </div>
               <LayoutGrid className="w-5 h-5 flex-shrink-0 text-text-secondary" aria-hidden="true" />
             </div>
 
@@ -2102,7 +2107,7 @@ export default function Browse() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 p-4">
+      <div className="relative z-0 flex-1 p-4">
         {(() => {
           // Column min-width is the slider value, so the grid template can't be
           // a static Tailwind class (the JIT scanner never sees it). Drive it
@@ -2322,6 +2327,7 @@ function ReadableBrowseModCard({
   const showUpdated = readableDensity === 'full';
   const isMicro = readableDensity === 'micro';
   const isCompactReadable = readableDensity === 'compact';
+  const actionIconOnly = readableCardWidth < 220;
   const cardFrameClass = isMicro
     ? 'h-auto'
     : 'h-auto';
@@ -2437,7 +2443,7 @@ function ReadableBrowseModCard({
         />
       </div>
 
-      <div className={`relative z-10 -mt-[2px] flex flex-none flex-col bg-bg-secondary ${bodyPaddingClass}`}>
+      <div className={`relative -mt-[2px] flex flex-none flex-col bg-bg-secondary ${bodyPaddingClass}`}>
         {showChips && (
           <BrowseReadableChipRow
             chips={chips}
@@ -2521,7 +2527,7 @@ function ReadableBrowseModCard({
             downloading={downloading}
             queuePosition={queuePosition}
             density={readableDensity}
-            iconOnlyOverride={isMicro}
+            iconOnlyOverride={actionIconOnly}
             onQuickDownload={onQuickDownload}
             onEnable={onEnable}
           />
