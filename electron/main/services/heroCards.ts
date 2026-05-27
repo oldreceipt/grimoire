@@ -12,27 +12,32 @@
  * `.vtex_c` the game loads). Decoding to PNG (`vpkmerge portrait`) is only for
  * the preview grid in heroPortraits.ts.
  */
-import { promises as fs } from 'fs';
+import { promises as fs, existsSync } from 'fs';
 import { basename, join } from 'path';
 import { randomUUID } from 'crypto';
 import { app } from 'electron';
-import { getAddonsPath, getDisabledPath } from './deadlock';
+import { getAddonsPath, getDisabledPath, getGrimoirePath } from './deadlock';
 import { parseVpkDirectoryCached, invalidateVpkParseCache } from './vpk';
 import {
     runVpkmerge,
     vpkmergeBinaryPath,
     verifyVpkOutput,
-    reserveOutputSlot,
 } from './modMerger';
-import { findNextAvailablePriority } from './mods';
-import { pinLockerVpksToFront } from './lockerVpk';
+import {
+    LOCKER_CARDS_KEY,
+    lockerCardsVpkPath,
+    ensureGrimoireConfigured,
+    migrateManagedVpksToGrimoire,
+} from './lockerVpk';
 import { getModMetadata, setModMetadata, removeModMetadata } from './metadata';
 import { fingerprintFile } from './fileMatch';
 import { codenamesForHero } from './heroPortraits';
 import type {
     ApplyHeroCardResult,
     LockerCardSelection,
+    LockerCardThumbnail,
     LockerCosmeticsInfo,
+    LockerOverviewCard,
 } from '../../../src/types/mod';
 
 const PANORAMA_HERO_PREFIX = 'panorama/images/heroes/';
@@ -84,6 +89,16 @@ function findCosmeticsVpk(
         if (info) return { ref: v, info };
     }
     return null;
+}
+
+/** The current card selection set, read from the synthetic key (post-migration)
+ *  or, as a fallback during the pre-migration window, from an in-addons managed
+ *  VPK. */
+async function currentCardSelections(deadlockPath: string): Promise<LockerCardSelection[]> {
+    const synth = getModMetadata(LOCKER_CARDS_KEY)?.lockerCosmetics?.cards;
+    if (synth) return synth;
+    const vpks = await listAddonVpks(deadlockPath);
+    return findCosmeticsVpk(vpks)?.info.cards ?? [];
 }
 
 /** Locate a source VPK by filename, falling back to content hash if reconcile
@@ -157,9 +172,9 @@ async function rebuildLockerCosmetics(
     deadlockPath: string,
     desired: LockerCardSelection[]
 ): Promise<RebuildResult> {
-    const addonsPath = getAddonsPath(deadlockPath);
+    const grimoireDir = getGrimoirePath(deadlockPath);
+    const destPath = lockerCardsVpkPath(deadlockPath);
     const vpks = await listAddonVpks(deadlockPath);
-    const existing = findCosmeticsVpk(vpks);
 
     // Resolve each selection's source (relocating by hash if renamed) and
     // confirm it still ships this hero's cards. Anything unresolved is dropped.
@@ -176,27 +191,25 @@ async function rebuildLockerCosmetics(
 
     // Empty set: tear down the cosmetics VPK entirely.
     if (valid.length === 0) {
-        if (existing) {
-            await fs.unlink(existing.ref.path).catch(() => {});
-            removeModMetadata(existing.ref.fileName);
-            invalidateVpkParseCache(existing.ref.path);
-        }
+        await fs.unlink(destPath).catch(() => {});
+        removeModMetadata(LOCKER_CARDS_KEY);
+        invalidateVpkParseCache(destPath);
         return { fileName: null, missing };
     }
 
-    // Build artifacts live in the addons dir as dotfiles (not `_dir.vpk`, so
-    // scanMods ignores them) to keep every rename same-filesystem. Plans go to
-    // userData. Everything here is cleaned up in the finally block.
+    // Build artifacts live in the grimoire dir as dotfiles (not `_dir.vpk`) to
+    // keep every rename same-filesystem. Plans go to userData. Everything here is
+    // cleaned up in the finally block.
     const tag = `.locker-cards-build-${randomUUID()}`;
     const planDir = join(app.getPath('userData'), 'locker-cosmetics-build', randomUUID());
-    const buildOut = join(addonsPath, `${tag}.out.vpk`);
+    const buildOut = join(grimoireDir, `${tag}.out.vpk`);
     const chunkPaths: string[] = [];
     try {
         await fs.mkdir(planDir, { recursive: true });
         for (let i = 0; i < valid.length; i++) {
             const sel = valid[i];
             const src = vpks.find((v) => v.fileName === sel.source.fileName)!;
-            const chunkPath = join(addonsPath, `${tag}.chunk${i}.vpk`);
+            const chunkPath = join(grimoireDir, `${tag}.chunk${i}.vpk`);
             const planPath = join(planDir, `plan${i}.json`);
             await fs.writeFile(
                 planPath,
@@ -217,39 +230,17 @@ async function rebuildLockerCosmetics(
         }
         await verifyVpkOutput(buildOut);
 
-        // Swap the freshly built VPK into place. Reuse the existing slot ONLY when
-        // it's enabled (keeps the load-order position + metadata). A prior copy in
-        // .disabled/ must not be reused as the target: rebuilding into that path
-        // would leave the applied cards disabled and silent in game. Drop the stale
-        // disabled copy and reserve a fresh enabled slot instead.
-        let destFileName: string;
-        let destPath: string;
-        if (existing && existing.ref.enabled) {
-            destFileName = existing.ref.fileName;
-            destPath = existing.ref.path;
-            await fs.rename(buildOut, destPath);
-        } else {
-            if (existing) {
-                await fs.unlink(existing.ref.path).catch(() => {});
-                removeModMetadata(existing.ref.fileName);
-                invalidateVpkParseCache(existing.ref.path);
-            }
-            const slot = await findNextAvailablePriority(deadlockPath);
-            destFileName = `pak${String(slot).padStart(2, '0')}_dir.vpk`;
-            destPath = join(addonsPath, destFileName);
-            await reserveOutputSlot(destPath);
-            await fs.rename(buildOut, destPath);
-            removeModMetadata(destFileName); // scrub any orphan from a prior occupant
-        }
+        // Swap into the FIXED grimoire slot (overwrite). The grimoire folder wins
+        // by SearchPaths precedence, so no load-order pinning is needed and the
+        // selection set lives under the synthetic key, not the VPK filename.
+        await fs.unlink(destPath).catch(() => {});
+        await fs.rename(buildOut, destPath);
         invalidateVpkParseCache(destPath);
 
         const info: LockerCosmeticsInfo = { cards: valid, rebuiltAt: new Date().toISOString() };
-        // globalType: null keeps the multi-hero panorama payload out of the
-        // Locker's Global "Icon Packs" bucket (enrichMod skips classification).
-        setModMetadata(destFileName, { modName: 'Locker Cards', lockerCosmetics: info, globalType: null });
+        setModMetadata(LOCKER_CARDS_KEY, { modName: 'Locker Cards', lockerCosmetics: info });
 
-        await pinLockerVpksToFront(deadlockPath);
-        return { fileName: destFileName, missing };
+        return { fileName: destPath, missing };
     } finally {
         await Promise.all([
             ...chunkPaths.map((p) => fs.unlink(p).catch(() => {})),
@@ -268,9 +259,13 @@ export async function applyHeroCard(
     sourceFileName: string
 ): Promise<ApplyHeroCardResult> {
     vpkmergeBinaryPath(); // surface a clear error early if the binary is missing/old
+    ensureGrimoireConfigured(deadlockPath);
     const codenames = codenamesForHero(heroName);
     if (codenames.length === 0) throw new Error(`Unknown hero: ${heroName}`);
     const primaryCodename = codenames[0];
+    // Idempotent: relocates any not-yet-migrated managed VPK so `current` reads
+    // from the synthetic key even if config was fixed mid-session.
+    await migrateManagedVpksToGrimoire(deadlockPath);
 
     const vpks = await listAddonVpks(deadlockPath);
     const src = vpks.find((v) => v.fileName === sourceFileName);
@@ -296,7 +291,7 @@ export async function applyHeroCard(
         addedAt: new Date().toISOString(),
     };
 
-    const current = findCosmeticsVpk(vpks)?.info.cards ?? [];
+    const current = await currentCardSelections(deadlockPath);
     const next = [...current.filter((c) => c.heroCodename !== primaryCodename), selection];
     const { missing } = await rebuildLockerCosmetics(deadlockPath, next);
     return {
@@ -313,14 +308,101 @@ export async function revertHeroCard(
     const codenames = codenamesForHero(heroName);
     if (codenames.length === 0) throw new Error(`Unknown hero: ${heroName}`);
     const primaryCodename = codenames[0];
+    ensureGrimoireConfigured(deadlockPath);
+    await migrateManagedVpksToGrimoire(deadlockPath);
 
-    const vpks = await listAddonVpks(deadlockPath);
-    const existing = findCosmeticsVpk(vpks);
-    if (!existing) return { activeSourceFileName: null, missingSourceFileNames: [] };
+    const current = await currentCardSelections(deadlockPath);
+    if (current.length === 0) return { activeSourceFileName: null, missingSourceFileNames: [] };
 
-    const next = existing.info.cards.filter((c) => c.heroCodename !== primaryCodename);
+    const next = current.filter((c) => c.heroCodename !== primaryCodename);
     const { missing } = await rebuildLockerCosmetics(deadlockPath, next);
     return { activeSourceFileName: null, missingSourceFileNames: missing };
+}
+
+/** Applied hero cards, summarized for the Installed-tab Locker Overrides card. */
+export async function listAppliedCards(deadlockPath: string): Promise<LockerOverviewCard[]> {
+    const cards = await currentCardSelections(deadlockPath);
+    return cards.map((c) => ({
+        heroName: c.heroName,
+        sourceFileName: c.source.fileName,
+        modName: c.source.modName,
+    }));
+}
+
+/** Clear every applied card (rebuild to empty, which deletes the cards VPK). */
+export async function clearAllHeroCards(deadlockPath: string): Promise<void> {
+    await rebuildLockerCosmetics(deadlockPath, []);
+}
+
+interface PortraitManifest {
+    portraits: Array<{
+        variant: string;
+        width: number;
+        height: number;
+        format_name: string;
+        output_path: string | null;
+    }>;
+}
+
+/** Which applied variant best represents a hero in a small tile: the full card
+ *  cover first, then the rest by prominence; anything unlisted sorts last. */
+const THUMB_VARIANT_ORDER = ['card', 'vertical', 'card_critical', 'card_gloat', 'minimap', 'small'];
+
+function thumbVariantRank(variant: string): number {
+    const i = THUMB_VARIANT_ORDER.indexOf(variant);
+    return i === -1 ? THUMB_VARIANT_ORDER.length : i;
+}
+
+/**
+ * Decode the ACTUAL applied card art into one representative thumbnail per hero,
+ * for the Locker Overrides popup. Reads straight from the managed cosmetics VPK
+ * (which holds exactly the applied cards) rather than the source mod's
+ * GameBanana cover, and picks the most cover-like variant per hero.
+ *
+ * Separate from the (cheap) overview/count on purpose: this shells out to
+ * `vpkmerge portrait` per applied hero, so it's fetched lazily only when the
+ * popup opens. A hero whose art fails to decode is simply omitted (the popup
+ * falls back to a placeholder), so one bad entry never sinks the rest.
+ */
+export async function getAppliedCardThumbnails(
+    deadlockPath: string
+): Promise<LockerCardThumbnail[]> {
+    const selections = await currentCardSelections(deadlockPath);
+    if (selections.length === 0) return [];
+    const vpkPath = lockerCardsVpkPath(deadlockPath);
+    if (!existsSync(vpkPath)) return [];
+    vpkmergeBinaryPath(); // clear early error if the binary is missing/old
+
+    const cacheRoot = join(app.getPath('userData'), 'locker-card-thumbs');
+    const out: LockerCardThumbnail[] = [];
+    for (const sel of selections) {
+        // The split folds in the whole per-hero prefix, so the art may sit under
+        // a legacy alias codename, not the primary. Try each and keep the best.
+        let best: { rank: number; outputPath: string } | null = null;
+        for (const codename of codenamesForHero(sel.heroName)) {
+            const outDir = join(cacheRoot, codename);
+            const manifestPath = join(outDir, 'manifest.json');
+            try {
+                await runVpkmerge(
+                    ['portrait', vpkPath, '--hero', codename, '--out', outDir, '--manifest', manifestPath],
+                    60000
+                );
+                const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf-8')) as PortraitManifest;
+                for (const p of manifest.portraits) {
+                    if (!p.output_path) continue;
+                    const rank = thumbVariantRank(p.variant);
+                    if (!best || rank < best.rank) best = { rank, outputPath: p.output_path };
+                }
+            } catch (err) {
+                console.warn(`[heroCards] thumb decode failed for ${sel.heroName} (${codename}): ${String(err)}`);
+            }
+        }
+        if (best) {
+            const png = await fs.readFile(best.outputPath);
+            out.push({ heroName: sel.heroName, dataUrl: `data:image/png;base64,${png.toString('base64')}` });
+        }
+    }
+    return out;
 }
 
 /** The card currently applied for a hero (to reflect selection in the picker). */
@@ -331,7 +413,7 @@ export async function getActiveHeroCard(
     const codenames = codenamesForHero(heroName);
     if (codenames.length === 0) return null;
     const primaryCodename = codenames[0];
-    const vpks = await listAddonVpks(deadlockPath);
-    const card = findCosmeticsVpk(vpks)?.info.cards.find((c) => c.heroCodename === primaryCodename);
+    const cards = await currentCardSelections(deadlockPath);
+    const card = cards.find((c) => c.heroCodename === primaryCodename);
     return card ? { sourceFileName: card.source.fileName, variants: card.variants } : null;
 }

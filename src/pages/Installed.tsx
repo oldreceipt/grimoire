@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -27,6 +27,7 @@ import {
   AlertTriangle,
   FolderOpen,
   FilePlus,
+  Files,
   X,
   ImagePlus,
   Search,
@@ -48,11 +49,12 @@ import {
   Tag as TagIcon,
   Pencil,
   MoreHorizontal,
+  Wand2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../stores/appStore';
 import { getActiveDeadlockPath } from '../lib/appSettings';
-import { getConflicts, openModsFolder, readImageDataUrl, showOpenDialog, getModDetails, getModFileList, downloadMod, createSnapshot, detectUnknownModFilters, cancelUnknownModDetection, applyUnknownModMatch, applyUnknownCustomMod, mergeMods, unmergeMod, extractMergeSource, setModPriority as apiSetModPriority, reorderMods as apiReorderMods, setModIgnoreUpdates } from '../lib/api';
+import { getConflicts, openModsFolder, readImageDataUrl, showOpenDialog, getModDetails, getModFileList, downloadMod, createSnapshot, detectUnknownModFilters, cancelUnknownModDetection, applyUnknownModMatch, applyUnknownCustomMod, mergeMods, unmergeMod, extractMergeSource, setModPriority as apiSetModPriority, reorderMods as apiReorderMods, setModIgnoreUpdates, getLockerOverview } from '../lib/api';
 import type { UnmergeModResult } from '../lib/api';
 import type { ModConflict } from '../lib/api';
 import type { Mod, GlobalModType, UnknownModFilterGuess, MergedModSource } from '../types/mod';
@@ -68,6 +70,7 @@ import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition, getHeroChip
 import { setModGlobalType } from '../lib/api';
 import { formatRelativeDate, formatAbsoluteDate } from '../lib/dates';
 import { Button, Tag } from '../components/common/ui';
+import { LockerOverridesModal } from '../components/LockerOverridesModal';
 import { ViewModeToggle, EmptyState, ConfirmModal, SectionHeader, type ViewMode } from '../components/common/PageComponents';
 
 function formatBytes(bytes: number): string {
@@ -223,7 +226,11 @@ function SortableModEntry({
   return (
     <div
       ref={setNodeRef}
-      className={disabled ? undefined : 'cursor-grab active:cursor-grabbing'}
+      // Each card carries a transform (its own stacking context), so a card's
+      // open action menu can only paint within that card. When the menu opens
+      // downward it would land behind the next card; lift this wrapper above its
+      // siblings whenever it contains an open menu so the dropdown stays on top.
+      className={`has-[[data-card-menu-open]]:z-20 ${disabled ? '' : 'cursor-grab active:cursor-grabbing'}`}
       style={style}
       {...attributes}
       {...listeners}
@@ -345,6 +352,23 @@ export default function Installed() {
   }, [cardSize]);
   const viewMode: ViewMode =
     layout === 'list' ? 'list' : cardSize < COMPACT_CARD_THRESHOLD ? 'compact' : 'grid';
+  // Locker overrides (hero cards + ability sounds) live off the mod list in
+  // citadel/grimoire. The toolbar icon opens the manage popup; the badge shows
+  // how many are applied. Count is fetched on mount (covers changes made over
+  // in the Locker) and refreshed from the popup's onChanged.
+  const [lockerOverridesOpen, setLockerOverridesOpen] = useState(false);
+  const [lockerOverrideCount, setLockerOverrideCount] = useState(0);
+  const refreshLockerOverrideCount = useCallback(async () => {
+    try {
+      const ov = await getLockerOverview();
+      setLockerOverrideCount(ov.cards.length + ov.sounds.length);
+    } catch {
+      setLockerOverrideCount(0);
+    }
+  }, []);
+  useEffect(() => {
+    void refreshLockerOverrideCount();
+  }, [refreshLockerOverrideCount]);
   const [search, setSearch] = useState('');
   const [conflictMap, setConflictMap] = useState<Map<string, ModConflict[]>>(new Map());
   // Raw pair count from detectConflicts. conflictMap.size / 2 only works when
@@ -1040,6 +1064,20 @@ export default function Installed() {
     setSelectMode(false);
     setSelectedIds(new Set());
   };
+
+  // ESC leaves bulk-select mode (same as the toolbar toggle / X). Guarded so it
+  // doesn't fire mid bulk-operation or steal ESC from the delete-confirm modal.
+  useEffect(() => {
+    if (!selectMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !bulkProgress && !modToDelete) {
+        setSelectMode(false);
+        setSelectedIds(new Set());
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectMode, bulkProgress, modToDelete]);
 
   const handleDeleteConfirm = async () => {
     if (!modToDelete) return;
@@ -2141,6 +2179,25 @@ export default function Installed() {
               title={selectMode ? 'Exit selection mode' : 'Select multiple mods for bulk delete, enable, or disable'}
             />
 
+            {/* Locker overrides: hero cards + ability sounds applied off the
+                mod list. The badge shows how many are active; the popup reviews,
+                previews, and removes them. */}
+            <div className="relative">
+              <Button
+                variant="secondary"
+                onClick={() => setLockerOverridesOpen(true)}
+                icon={Wand2}
+                className="!px-2.5"
+                aria-label="Locker overrides"
+                title="Locker overrides: review and remove applied hero cards and ability sounds"
+              />
+              {lockerOverrideCount > 0 && (
+                <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-bg-primary">
+                  {lockerOverrideCount}
+                </span>
+              )}
+            </div>
+
             {/* Card-size slider: only meaningful in grid layout, so it's
                 disabled (and dimmed) while List is active rather than hidden,
                 keeping the toolbar from reflowing as you switch. */}
@@ -2176,6 +2233,16 @@ export default function Installed() {
           </div>
         </div>
       </div>
+
+      {lockerOverridesOpen && (
+        <LockerOverridesModal
+          onClose={() => setLockerOverridesOpen(false)}
+          onChanged={() => {
+            void refreshLockerOverrideCount();
+            loadMods({ silent: true });
+          }}
+        />
+      )}
 
       {searchNeedle && totalMatches === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
@@ -3598,7 +3665,6 @@ interface ModListRowContentProps {
   manualTagChipClasses: string;
   inferredTagChipClasses: string;
   dangerInlineChipClasses: string;
-  accentInlineChipClasses: string;
   tagIconClassName: string;
   technicalMetaClasses: string;
   actions: ReactNode;
@@ -3623,7 +3689,7 @@ function ChipText({ children }: { children: ReactNode }) {
   return <span className="relative top-[1.5px] min-w-0 truncate leading-[14px]">{children}</span>;
 }
 
-function HeroTagLabel({ heroName, iconClassName = 'h-4 w-4' }: { heroName: string; iconClassName?: string }) {
+function HeroTagLabel({ heroName, iconClassName = 'h-4 w-4', iconOnly = false }: { heroName: string; iconClassName?: string; iconOnly?: boolean }) {
   return (
     <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 align-middle leading-none">
       <img
@@ -3633,7 +3699,7 @@ function HeroTagLabel({ heroName, iconClassName = 'h-4 w-4' }: { heroName: strin
         className={`${iconClassName} block flex-shrink-0 rounded-full object-cover`}
         loading="lazy"
       />
-      <ChipText>{heroName}</ChipText>
+      {!iconOnly && <ChipText>{heroName}</ChipText>}
     </span>
   );
 }
@@ -3648,12 +3714,23 @@ function CategoryChip({
   label,
   className,
   iconClassName = 'h-4 w-4',
+  iconOnly = false,
 }: {
   label: string;
   className: string;
   iconClassName?: string;
+  /** When the category is a hero, collapse to the bare face icon (no frame, no
+   *  truncated name) to match the locker-hero chip in cards. */
+  iconOnly?: boolean;
 }) {
   const heroName = heroNameForLabel(label);
+  if (heroName && iconOnly) {
+    return (
+      <span className="inline-flex flex-shrink-0 items-center" title={label}>
+        <HeroTagLabel heroName={heroName} iconClassName={iconClassName} iconOnly />
+      </span>
+    );
+  }
   return (
     <span className={className} title={label}>
       {heroName ? (
@@ -3678,18 +3755,32 @@ function LockerHeroChip({
   manualTagChipClasses,
   inferredTagChipClasses,
   iconClassName = 'h-4 w-4',
+  iconOnly = false,
 }: {
   mod: { lockerHero?: string; lockerHeroSource?: Mod['lockerHeroSource'] };
   manualTagChipClasses: string;
   inferredTagChipClasses: string;
   iconClassName?: string;
+  /** Drop the hero name and show just the face icon. Used in the card grid,
+   *  where a narrow chip otherwise truncates the name to a useless "L." */
+  iconOnly?: boolean;
 }) {
   if (!mod.lockerHero) return null;
   const isManual = mod.lockerHeroSource === 'manual';
+  const title = `${lockerHeroSourceLabel(mod.lockerHeroSource)}: ${mod.lockerHero}`;
+  // Icon-only (card grid): just the bare face icon, no accent chip frame — the
+  // colored manual/inferred border reads as a highlight that fights the theme.
+  if (iconOnly) {
+    return (
+      <span className="inline-flex flex-shrink-0 items-center" title={title}>
+        <HeroTagLabel heroName={mod.lockerHero} iconClassName={iconClassName} iconOnly />
+      </span>
+    );
+  }
   return (
     <span
       className={isManual ? manualTagChipClasses : inferredTagChipClasses}
-      title={`${lockerHeroSourceLabel(mod.lockerHeroSource)}: ${mod.lockerHero}`}
+      title={title}
     >
       <HeroTagLabel heroName={mod.lockerHero} iconClassName={iconClassName} />
     </span>
@@ -3710,7 +3801,6 @@ function ModListRowContent({
   manualTagChipClasses,
   inferredTagChipClasses,
   dangerInlineChipClasses,
-  accentInlineChipClasses,
   tagIconClassName,
   technicalMetaClasses,
   actions,
@@ -3810,11 +3900,13 @@ function ModListRowContent({
             {formatRelativeDate(mod.installedAt)}
           </span>
           {group && (
-            <MetaTextChip
-              label={`${variantStatusLabel} files`}
-              className={accentInlineChipClasses}
+            <span
+              className="inline-flex flex-shrink-0 items-center gap-1 tabular-nums text-text-secondary"
               title={variantStatusTitle}
-            />
+            >
+              <Files className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+              {variantStatusLabel}
+            </span>
           )}
           {!group && (
             <span className={technicalMetaClasses} title={mod.fileName}>
@@ -3882,6 +3974,10 @@ function ModCard({
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
   const [menuBusy, setMenuBusy] = useState(false);
   const [menuError, setMenuError] = useState<string | null>(null);
+  // The menu (and its tall tag picker) opens upward by default, but for cards
+  // near the top of the scroll area that clips it. Flip downward when there's
+  // little room above. Measured from the trigger on open.
+  const [menuPlacement, setMenuPlacement] = useState<'up' | 'down'>('up');
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -3994,7 +4090,6 @@ function ModCard({
   const manualTagChipClasses = `${baseChipClasses} border border-accent/30 bg-accent/10 text-accent`;
   const inferredTagChipClasses = `${baseChipClasses} border border-sky-400/35 bg-sky-500/15 text-sky-100`;
   const dangerInlineChipClasses = `${baseChipClasses} flex-shrink-0 border border-state-danger/40 bg-state-danger/10 text-state-danger`;
-  const accentInlineChipClasses = `${baseChipClasses} flex-shrink-0 border border-accent/30 bg-accent/10 text-accent tabular-nums`;
   const technicalMetaClasses = 'min-w-0 truncate font-mono text-[11px] text-text-secondary/55 hover:text-text-secondary cursor-help';
   const utilityActionClasses = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 cursor-pointer disabled:opacity-60';
   const menuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-primary hover:bg-bg-tertiary focus:outline-none focus-visible:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50';
@@ -4027,7 +4122,9 @@ function ModCard({
   const titleClasses = isCompact
     ? 'text-[14px] font-semibold leading-[18px] truncate'
     : 'text-[15px] font-medium leading-[19px] truncate';
-  const gridTagsClasses = viewMode === 'compact' ? 'h-[26px] flex-nowrap' : 'h-7 flex-nowrap';
+  // Compact cards stay single-line (too small to wrap nicely); standard grid
+  // cards wrap so a hero + category + 18+ + files chip never clips mid-chip.
+  const gridTagsClasses = viewMode === 'compact' ? 'h-[26px] flex-nowrap' : 'min-h-7 flex-wrap';
   const showCategoryChip = viewMode !== 'compact' || !mod.lockerHero;
   const compactBaseChipCount =
     (mod.lockerHero ? 1 : 0) + (showCategoryChip && mod.categoryName ? 1 : 0);
@@ -4040,7 +4137,18 @@ function ModCard({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            setMenuOpen((open) => !open);
+            setMenuOpen((open) => {
+              const willOpen = !open;
+              if (willOpen && menuRef.current) {
+                const rect = menuRef.current.getBoundingClientRect();
+                // The menu can grow tall (tag picker). Prefer opening upward,
+                // but flip down when there's clearly more room below.
+                const spaceAbove = rect.top;
+                const spaceBelow = window.innerHeight - rect.bottom;
+                setMenuPlacement(spaceAbove < 340 && spaceBelow > spaceAbove ? 'down' : 'up');
+              }
+              return willOpen;
+            });
             setTagPickerOpen(false);
             setMenuError(null);
           }}
@@ -4055,7 +4163,10 @@ function ModCard({
         {menuOpen && (
           <div
             role="menu"
-            className="absolute bottom-full right-0 z-[70] mb-2 w-56 rounded-lg border border-border bg-bg-secondary p-1 shadow-xl animate-fade-in"
+            data-card-menu-open
+            className={`absolute right-0 z-[70] w-56 max-h-[70vh] overflow-y-auto rounded-lg border border-border bg-bg-secondary p-1 shadow-xl animate-fade-in ${
+              menuPlacement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'
+            }`}
           >
             {menuError && (
               <div className="mb-1 rounded-md border border-state-danger/30 bg-state-danger/10 px-2 py-1.5 text-xs text-state-danger">
@@ -4310,7 +4421,6 @@ function ModCard({
             manualTagChipClasses={manualTagChipClasses}
             inferredTagChipClasses={inferredTagChipClasses}
             dangerInlineChipClasses={dangerInlineChipClasses}
-            accentInlineChipClasses={accentInlineChipClasses}
             tagIconClassName={tagIconClassName}
             technicalMetaClasses={technicalMetaClasses}
             actions={actions}
@@ -4431,23 +4541,29 @@ function ModCard({
                 manualTagChipClasses={manualTagChipClasses}
                 inferredTagChipClasses={inferredTagChipClasses}
                 iconClassName={tagIconClassName}
+                iconOnly
               />
-              {showCategoryChip && mod.categoryName && (
+              {showCategoryChip && mod.categoryName && heroNameForLabel(mod.categoryName) !== mod.lockerHero && (
                 <CategoryChip
                   label={mod.categoryName}
                   className={metaChipClasses}
                   iconClassName={tagIconClassName}
+                  iconOnly
                 />
               )}
               {showNsfwChip && (
                 <MetaTextChip label="18+" className={dangerInlineChipClasses} />
               )}
               {showGroupChip && (
-                <MetaTextChip
-                  label={`${variantStatusLabel} files`}
-                  className={accentInlineChipClasses}
+                // Enabled/total variant count as a quiet icon + number (no accent,
+                // no border, no "files" label) so it reads as metadata, not a tag.
+                <span
+                  className="inline-flex flex-shrink-0 items-center gap-1 text-[11px] tabular-nums text-text-secondary"
                   title={variantStatusTitle}
-                />
+                >
+                  <Files className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                  {variantStatusLabel}
+                </span>
               )}
               {!isCompact && (
                 <span
