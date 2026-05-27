@@ -51,6 +51,7 @@ import {
 } from '../stores/appStore';
 import type { BrowseNsfwFilter, BrowseTimeRange, BrowseLayout } from '../stores/appStore';
 import ModThumbnail from '../components/ModThumbnail';
+import ImageContextMenu from '../components/ImageContextMenu';
 import AudioPreviewPlayer from '../components/AudioPreviewPlayer';
 import { DynamicSelect } from '../components/common/DynamicSelect';
 import { HeroSelect } from '../components/common/HeroSelect';
@@ -2956,16 +2957,27 @@ function ReadableBrowseModCard({
   const media = isSoundSection ? (
     <div className="relative h-full w-full overflow-hidden bg-bg-tertiary">
       {heroRenderUrl ? (
-        <img
-          src={heroRenderUrl}
-          alt={inferredHero ?? mod.name}
-          loading="lazy"
-          decoding="async"
-          className={`browse-card-media-zoom h-full w-full object-cover ${
-            shouldHideNsfw ? 'scale-105 blur-lg saturate-75' : ''
-          }`}
-          style={{ objectPosition: `${heroFacePos}% 20%` }}
-        />
+        shouldHideNsfw ? (
+          <img
+            src={heroRenderUrl}
+            alt={inferredHero ?? mod.name}
+            loading="lazy"
+            decoding="async"
+            className="browse-card-media-zoom h-full w-full object-cover scale-105 blur-lg saturate-75"
+            style={{ objectPosition: `${heroFacePos}% 20%` }}
+          />
+        ) : (
+          <ImageContextMenu src={heroRenderUrl} alt={inferredHero ?? mod.name}>
+            <img
+              src={heroRenderUrl}
+              alt={inferredHero ?? mod.name}
+              loading="lazy"
+              decoding="async"
+              className="browse-card-media-zoom h-full w-full object-cover"
+              style={{ objectPosition: `${heroFacePos}% 20%` }}
+            />
+          </ImageContextMenu>
+        )
       ) : thumbnail ? (
         <ModThumbnail
           src={thumbnail}
@@ -3267,14 +3279,16 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
         <div className="relative bg-bg-tertiary w-32 h-20 flex-shrink-0 rounded-md overflow-hidden">
           {isSoundSection ? (
             heroRenderUrl ? (
-              <img
-                src={heroRenderUrl}
-                alt={inferredHero ?? mod.name}
-                loading="lazy"
-                decoding="async"
-                className="browse-card-media-zoom w-full h-full object-cover"
-                style={{ objectPosition: `${heroFacePos}% 25%` }}
-              />
+              <ImageContextMenu src={heroRenderUrl} alt={inferredHero ?? mod.name}>
+                <img
+                  src={heroRenderUrl}
+                  alt={inferredHero ?? mod.name}
+                  loading="lazy"
+                  decoding="async"
+                  className="browse-card-media-zoom w-full h-full object-cover"
+                  style={{ objectPosition: `${heroFacePos}% 25%` }}
+                />
+              </ImageContextMenu>
             ) : thumbnail ? (
               <ModThumbnail src={thumbnail} alt={mod.name} nsfw={mod.nsfw} hideNsfw={hideNsfwPreviews} className="w-full h-full" imageFit="cover" imagePosition="center top" />
             ) : (
@@ -3442,14 +3456,16 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
         {isSoundSection ? (
           <div className="w-full h-full relative">
             {heroRenderUrl ? (
-              <img
-                src={heroRenderUrl}
-                alt={inferredHero ?? mod.name}
-                loading="lazy"
-                decoding="async"
-                className="browse-card-media-zoom w-full h-full object-cover"
-                style={{ objectPosition: `${heroFacePos}% 20%` }}
-              />
+              <ImageContextMenu src={heroRenderUrl} alt={inferredHero ?? mod.name}>
+                <img
+                  src={heroRenderUrl}
+                  alt={inferredHero ?? mod.name}
+                  loading="lazy"
+                  decoding="async"
+                  className="browse-card-media-zoom w-full h-full object-cover"
+                  style={{ objectPosition: `${heroFacePos}% 20%` }}
+                />
+              </ImageContextMenu>
             ) : thumbnail ? (
               <ModThumbnail src={thumbnail} alt={mod.name} nsfw={mod.nsfw} hideNsfw={hideNsfwPreviews} className="w-full h-full" imageFit="cover" imagePosition="center top" imageClassName="browse-card-media-zoom" />
             ) : (

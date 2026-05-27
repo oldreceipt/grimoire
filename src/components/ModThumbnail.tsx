@@ -1,6 +1,7 @@
 import { EyeOff } from 'lucide-react';
 import type { MergedModSource } from '../types/mod';
 import { getHeroRenderPath } from '../lib/lockerUtils';
+import ImageContextMenu from './ImageContextMenu';
 
 interface ModThumbnailProps {
   src?: string;
@@ -67,7 +68,7 @@ export default function ModThumbnail({
     );
   }
 
-  return (
+  const thumbnail = (
     <div className={`relative overflow-hidden ${className}`}>
       <div className={`w-full h-full ${imageClassName}`}>
         <img
@@ -88,6 +89,14 @@ export default function ModThumbnail({
         </div>
       )}
     </div>
+  );
+
+  if (resolvedBlur) return thumbnail;
+
+  return (
+    <ImageContextMenu src={resolvedSrc} alt={alt}>
+      {thumbnail}
+    </ImageContextMenu>
   );
 }
 
@@ -116,13 +125,25 @@ function MergedCollage({ sources, alt, className, shouldBlur }: MergedCollagePro
         {cells.map((cell, idx) => (
           <div key={idx} className="relative bg-bg-tertiary overflow-hidden">
             {cell.kind === 'image' ? (
-              <img
-                src={cell.url}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                className={`block w-full h-full object-cover ${shouldBlur ? 'blur-xl scale-110' : ''}`}
-              />
+              shouldBlur ? (
+                <img
+                  src={cell.url}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="block w-full h-full object-cover blur-xl scale-110"
+                />
+              ) : (
+                <ImageContextMenu src={cell.url} alt={alt}>
+                  <img
+                    src={cell.url}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="block w-full h-full object-cover"
+                  />
+                </ImageContextMenu>
+              )
             ) : (
               <div className="w-full h-full flex items-center justify-center text-xs font-semibold text-text-secondary">
                 +{cell.count}

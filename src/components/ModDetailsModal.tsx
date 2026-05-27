@@ -26,6 +26,7 @@ import { getModComments } from '../lib/api';
 import AudioPreviewPlayer from './AudioPreviewPlayer';
 import { Skeleton } from './common/Skeleton';
 import { ArchivedTag } from './common/ui';
+import ImageContextMenu from './ImageContextMenu';
 
 interface ModDetailsModalProps {
   mod: GameBananaModDetails;
@@ -468,13 +469,15 @@ export default function ModDetailsModal({
                 <div className="space-y-3" aria-label="Image previews">
                   {images.map((img, index) => {
                     const previewSrc = `${img.baseUrl}/${img.file530 || img.file}`;
+                    const fullSrc = `${img.baseUrl}/${img.file}`;
                     const ratio = imageRatios[index];
+                    const imageHidden = mod.nsfw && hideNsfwPreviews;
                     // Pre-load: hold a 16:9 placeholder so the column doesn't
                     // jump as images decode. Post-load: snap to the image's
                     // real aspect ratio so portraits, ultrawides, and UI
                     // screenshots all render at their natural shape - no
                     // letterboxing, no cropping, no blurred fill needed.
-                    return (
+                    const previewButton = (
                       <button
                         key={`${img.baseUrl}/${img.file}`}
                         type="button"
@@ -496,10 +499,10 @@ export default function ModDetailsModal({
                             }
                           }}
                           className={`absolute inset-0 w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.01] ${
-                            mod.nsfw && hideNsfwPreviews ? 'blur-xl scale-110' : ''
+                            imageHidden ? 'blur-xl scale-110' : ''
                           }`}
                         />
-                        {mod.nsfw && hideNsfwPreviews && (
+                        {imageHidden && (
                           <div className="absolute inset-0 flex items-center justify-center text-[11px] uppercase tracking-wide text-white/80 bg-black/40">
                             NSFW preview hidden
                           </div>
@@ -513,6 +516,17 @@ export default function ModDetailsModal({
                           <Maximize2 className="w-3.5 h-3.5" />
                         </span>
                       </button>
+                    );
+                    if (imageHidden) return previewButton;
+                    return (
+                      <ImageContextMenu
+                        key={`${img.baseUrl}/${img.file}`}
+                        src={previewSrc}
+                        copySrc={fullSrc}
+                        alt={`${mod.name} - Image ${index + 1}`}
+                      >
+                        {previewButton}
+                      </ImageContextMenu>
                     );
                   })}
                 </div>
@@ -717,12 +731,17 @@ export default function ModDetailsModal({
               </div>
             </>
           )}
-          <img
+          <ImageContextMenu
             src={currentImageFullUrl}
             alt={`${mod.name} - Image ${currentImageIndex + 1} (full size)`}
-            className="max-w-full max-h-full object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
+          >
+            <img
+              src={currentImageFullUrl}
+              alt={`${mod.name} - Image ${currentImageIndex + 1} (full size)`}
+              className="max-w-full max-h-full object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </ImageContextMenu>
         </div>
       )}
     </div>
