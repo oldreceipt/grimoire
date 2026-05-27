@@ -2025,6 +2025,10 @@ export default function Browse() {
     overscan: BROWSE_GRID_OVERSCAN_ROWS,
   });
 
+  useLayoutEffect(() => {
+    rowVirtualizer.measure();
+  }, [rowVirtualizer, virtualRowHeight, virtualColumnCount, gridGap, browseCardDesign]);
+
   if (!activeDeadlockPath) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-text-secondary">
