@@ -1996,13 +1996,17 @@ export default function Browse() {
           const gridClass =
             layout === 'list'
               ? 'flex flex-col gap-3'
-              : viewMode === 'compact'
+              : browseCardDesign === 'readable'
+                ? 'grid gap-3'
+                : viewMode === 'compact'
                 ? 'grid gap-2'
                 : 'grid gap-3';
           const gridStyle =
             layout === 'list'
               ? undefined
-              : { gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))` };
+              : browseCardDesign === 'readable'
+                ? { gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }
+                : { gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))` };
           const hasActiveFilters =
             search.trim().length > 0 || heroCategoryId !== 'all' || categoryId !== 'all' || sort !== 'default';
 
@@ -2238,7 +2242,7 @@ function ReadableBrowseModCard({
       role="button"
       tabIndex={0}
       aria-label={`Open details for ${mod.name}`}
-      className={`group flex h-full flex-col overflow-hidden rounded-md border bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 cursor-pointer focus-visible:border-accent focus-visible:outline-none ${
+      className={`group flex h-full max-w-[320px] flex-col overflow-hidden rounded-md border bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 cursor-pointer focus-visible:border-accent focus-visible:outline-none ${
         isPlaying
           ? 'border-state-danger/70 ring-2 ring-state-danger/35 shadow-lg shadow-state-danger/15'
           : downloading
