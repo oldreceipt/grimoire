@@ -12,7 +12,6 @@ interface ImageContextMenuProps {
 type CopyState = 'idle' | 'copying' | 'copied' | 'failed';
 
 export default function ImageContextMenu({ src, alt, copySrc, children }: ImageContextMenuProps) {
-  const [open, setOpen] = useState(false);
   const [imageCopyState, setImageCopyState] = useState<CopyState>('idle');
   const [urlCopyState, setUrlCopyState] = useState<CopyState>('idle');
   const source = useMemo(() => resolveImageSource(copySrc ?? src), [copySrc, src]);
@@ -32,7 +31,6 @@ export default function ImageContextMenu({ src, alt, copySrc, children }: ImageC
 
   const finishAndClose = () => {
     window.setTimeout(() => {
-      setOpen(false);
       resetTransientState();
     }, 650);
   };
@@ -81,8 +79,7 @@ export default function ImageContextMenu({ src, alt, copySrc, children }: ImageC
       : Link;
 
   return (
-    <ContextMenu.Root open={open} onOpenChange={(next) => {
-      setOpen(next);
+    <ContextMenu.Root onOpenChange={(next) => {
       if (!next) resetTransientState();
     }}>
       <ContextMenu.Trigger asChild>
@@ -109,7 +106,7 @@ export default function ImageContextMenu({ src, alt, copySrc, children }: ImageC
             spinning={imageCopyState === 'copying'}
             tone={imageCopyState === 'failed' ? 'danger' : imageCopyState === 'copied' ? 'success' : 'default'}
             onSelect={(event) => {
-              event.preventDefault();
+              event.stopPropagation();
               void copyImage();
             }}
           >
@@ -126,7 +123,7 @@ export default function ImageContextMenu({ src, alt, copySrc, children }: ImageC
             spinning={urlCopyState === 'copying'}
             tone={urlCopyState === 'failed' ? 'danger' : urlCopyState === 'copied' ? 'success' : 'default'}
             onSelect={(event) => {
-              event.preventDefault();
+              event.stopPropagation();
               void copyImageAddress();
             }}
           >
