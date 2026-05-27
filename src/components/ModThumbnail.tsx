@@ -73,6 +73,8 @@ export default function ModThumbnail({
         <img
           src={resolvedSrc}
           alt={alt}
+          loading="lazy"
+          decoding="async"
           className={`block h-full w-full ${imageFit === 'contain' ? 'object-contain' : imageFit === 'fill' ? 'object-fill' : 'object-cover'} transition-[filter] duration-200 ${
             resolvedBlur ? 'blur-xl scale-110' : ''
           }`}
@@ -117,6 +119,8 @@ function MergedCollage({ sources, alt, className, shouldBlur }: MergedCollagePro
               <img
                 src={cell.url}
                 alt=""
+                loading="lazy"
+                decoding="async"
                 className={`block w-full h-full object-cover ${shouldBlur ? 'blur-xl scale-110' : ''}`}
               />
             ) : (

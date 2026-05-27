@@ -22,6 +22,7 @@ import {
   Library,
   ChevronDown,
   Upload,
+  Play,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -137,6 +138,7 @@ const BROWSE_READABLE_CHIP_OVERFLOW_WIDTH = 30;
 const BROWSE_READABLE_CARD_MIN = 140;
 const BROWSE_READABLE_CARD_GOLDEN = 280;
 const BROWSE_READABLE_CARD_MAX = 340;
+const BROWSE_CARD_SIZE_STEP = 20;
 
 type BrowseReadableDensity = 'micro' | 'compact' | 'full';
 
@@ -208,6 +210,28 @@ function addReadableChip(chips: BrowseReadableChip[], label: string | undefined,
 
   const exists = chips.some((chip) => chip.label.toLowerCase() === normalized.toLowerCase());
   if (!exists) chips.push({ label: normalized, tone });
+}
+
+function dedupeModsById(mods: GameBananaMod[]): GameBananaMod[] {
+  const seen = new Set<number>();
+  return mods.filter((mod) => {
+    if (seen.has(mod.id)) return false;
+    seen.add(mod.id);
+    return true;
+  });
+}
+
+function appendUniqueModsById(previous: GameBananaMod[], next: GameBananaMod[]): GameBananaMod[] {
+  if (next.length === 0) return previous;
+
+  const seen = new Set(previous.map((mod) => mod.id));
+  const uniqueNext = next.filter((mod) => {
+    if (seen.has(mod.id)) return false;
+    seen.add(mod.id);
+    return true;
+  });
+
+  return uniqueNext.length === 0 ? previous : [...previous, ...uniqueNext];
 }
 
 function getReadableCardChips(mod: GameBananaMod, section: string, inferredHero: string | null): BrowseReadableChip[] {
@@ -572,10 +596,12 @@ export default function Browse() {
   // Filter inputs are mirrored from the store so they survive page nav.
   // `setBrowseUi({...})` is the write path; reads come straight from `browseUi`.
   const { search, layout, cardSize, sort, section, nsfw, addedWithin, addedFrom, addedTo, heroCategoryId, categoryId } = browseUi;
+  const [previewCardSize, setPreviewCardSize] = useState(cardSize);
+  const activeCardSize = layout === 'list' ? cardSize : previewCardSize;
   // Effective render mode: List is structural; otherwise small cards get the
   // compact chrome automatically. ModCard/skeleton keep reading one ViewMode.
   const viewMode: ViewMode =
-    layout === 'list' ? 'list' : cardSize < BROWSE_COMPACT_CARD_THRESHOLD ? 'compact' : 'grid';
+    layout === 'list' ? 'list' : activeCardSize < BROWSE_COMPACT_CARD_THRESHOLD ? 'compact' : 'grid';
   const setSearch = useCallback((v: string) => setBrowseUi({ search: v }), [setBrowseUi]);
   const setLayout = useCallback((v: BrowseLayout) => setBrowseUi({ layout: v }), [setBrowseUi]);
   const setCardSize = useCallback((v: number) => setBrowseUi({ cardSize: v }), [setBrowseUi]);
@@ -587,12 +613,20 @@ export default function Browse() {
   const setAddedTo = useCallback((v: string) => setBrowseUi({ addedTo: v }), [setBrowseUi]);
   const setHeroCategoryId = useCallback((v: number | 'all' | 'none') => setBrowseUi({ heroCategoryId: v }), [setBrowseUi]);
   const setCategoryId = useCallback((v: number | 'all') => setBrowseUi({ categoryId: v }), [setBrowseUi]);
+  const commitCardSize = useCallback((nextSize: number) => {
+    setPreviewCardSize(nextSize);
+    setCardSize(nextSize);
+  }, [setCardSize]);
+
+  useEffect(() => {
+    setPreviewCardSize(cardSize);
+  }, [cardSize]);
 
   // Hydrate from session cache on mount so navigating away + back doesn't
   // wipe loaded results or scroll position. The cache stamp encodes current
   // filters; if filters changed in between (impossible today since they only
   // change on Browse, but defensive) we ignore the stale cache.
-  const initialFilterStamp = `${browseUi.section}|${browseUi.search}|${browseUi.sort}|${browseUi.categoryId}|${browseUi.heroCategoryId}`;
+  const initialFilterStamp = `${browseUi.section}|${browseUi.search}|${browseUi.sort}|${browseUi.categoryId}|${browseUi.heroCategoryId}|${browseUi.nsfw}|${browseUi.addedWithin}|${browseUi.addedFrom}|${browseUi.addedTo}`;
   const initialCache = browseSession && browseSession.stamp === initialFilterStamp
     ? browseSession
     : null;
@@ -636,8 +670,13 @@ export default function Browse() {
   // double effect run in dev — the second setup compares stamps and short-
   // circuits, instead of consuming a one-shot skip flag.
   const lastFetchedStampRef = useRef<string | null>(
-    initialCache ? `${initialCache.page}|${browseUi.search}|${browseUi.sort}|${browseUi.section}|${browseUi.categoryId}|${browseUi.heroCategoryId}` : null
+    initialCache ? `${initialCache.page}|${browseUi.search}|${browseUi.sort}|${browseUi.section}|${browseUi.categoryId}|${browseUi.heroCategoryId}|${browseUi.nsfw}|${browseUi.addedWithin}|${browseUi.addedFrom}|${browseUi.addedTo}` : null
   );
+  // Monotonic guard for browse/search requests. Filter changes and newer
+  // requests invalidate older responses so they cannot append stale pages into
+  // the current grid after the user switches filters.
+  const requestGenerationRef = useRef(0);
+  const pendingPageResetStampRef = useRef<string | null>(null);
   // Cached scroll position waiting to be applied once the grid is mounted
   // and laid out. Cleared after restoration.
   const pendingScrollTopRef = useRef<number | null>(initialCache?.scrollTop ?? null);
@@ -783,6 +822,8 @@ export default function Browse() {
     return Number.isFinite(t) ? Math.floor(t / 1000) : undefined;
   }, [addedWithin, addedTo]);
 
+  const fetchFilterStamp = `${effectiveSearch}|${sort}|${section}|${effectiveCategoryId}|${heroCategoryId}|${nsfw}|${addedWithin}|${customAddedFrom ?? ''}|${customAddedTo ?? ''}|${perPage}`;
+
   // Keep a fresh `mods` reference outside the fetch closures so they can check
   // "did the user already have results visible?" without making `mods` a
   // useCallback dep (that would self-trigger). Also doubles as the source
@@ -836,7 +877,7 @@ export default function Browse() {
   useEffect(() => {
     return () => {
       const ui = useAppStore.getState().browseUi;
-      const stamp = `${ui.section}|${ui.search}|${ui.sort}|${ui.categoryId}|${ui.heroCategoryId}`;
+      const stamp = `${ui.section}|${ui.search}|${ui.sort}|${ui.categoryId}|${ui.heroCategoryId}|${ui.nsfw}|${ui.addedWithin}|${ui.addedFrom}|${ui.addedTo}`;
       const cachedMods = modsRef.current;
       // Don't cache an empty state — would just bypass the next fetch
       // unhelpfully. Clear instead so the next mount starts fresh.
@@ -881,13 +922,18 @@ export default function Browse() {
   const fetchMods = useCallback(async () => {
     // Don't fetch from API if we're using local search
     if (useLocalSearch) return;
+    if (pendingPageResetStampRef.current === fetchFilterStamp && page !== 1) return;
+    if (page === 1 && pendingPageResetStampRef.current === fetchFilterStamp) {
+      pendingPageResetStampRef.current = null;
+    }
     // Value-compare gate: skip when we'd be re-fetching the exact same state
     // we already loaded. Covers cache hydration on mount AND React
     // StrictMode's double-effect setup. Set BEFORE the network call so
     // a second setup hitting this line sees the stamp and returns.
-    const stamp = `${page}|${effectiveSearch}|${sort}|${section}|${effectiveCategoryId}|${heroCategoryId}|${nsfw}|${addedWithin}|${customAddedFrom ?? ''}|${customAddedTo ?? ''}`;
+    const stamp = `${page}|${fetchFilterStamp}`;
     if (lastFetchedStampRef.current === stamp) return;
     lastFetchedStampRef.current = stamp;
+    const requestGeneration = ++requestGenerationRef.current;
 
     // On a fresh load (no results yet) show the skeleton; on a refetch keep
     // the stale list visible and just surface a soft progress indicator so
@@ -932,15 +978,22 @@ export default function Browse() {
         }
       }
 
+      if (requestGeneration !== requestGenerationRef.current || lastFetchedStampRef.current !== stamp) {
+        return;
+      }
+
       // Append results for infinite scroll
       if (page === 1) {
-        setMods(enrichedRecords);
+        setMods(dedupeModsById(enrichedRecords));
       } else {
-        setMods(prev => [...prev, ...enrichedRecords]);
+        setMods(prev => appendUniqueModsById(prev, enrichedRecords));
       }
       setTotalCount(response.totalCount);
       setHasMore(response.records.length === perPage && page * perPage < response.totalCount);
     } catch (err) {
+      if (requestGeneration !== requestGenerationRef.current || lastFetchedStampRef.current !== stamp) {
+        return;
+      }
       const message = String(err);
       // Keep any already-loaded results on screen: route the failure to the
       // inline load-more row rather than `error`, which would blank the whole
@@ -953,8 +1006,10 @@ export default function Browse() {
       // Stop the observer from auto-retrying against an API that just refused.
       setAutoLoadPaused(true);
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (requestGeneration === requestGenerationRef.current && lastFetchedStampRef.current === stamp) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   }, [
     page,
@@ -963,21 +1018,22 @@ export default function Browse() {
     section,
     perPage,
     effectiveCategoryId,
-    heroCategoryId,
-    nsfw,
-    addedWithin,
-    customAddedFrom,
-    customAddedTo,
+    fetchFilterStamp,
     useLocalSearch,
   ]);
 
   // Local search function using SQLite cache
   const searchLocal = useCallback(async () => {
+    if (pendingPageResetStampRef.current === fetchFilterStamp && page !== 1) return;
+    if (page === 1 && pendingPageResetStampRef.current === fetchFilterStamp) {
+      pendingPageResetStampRef.current = null;
+    }
     // Same value-compare gate as fetchMods so the shared stamp prevents
     // re-fetching cached state and survives StrictMode double-mount.
-    const stamp = `${page}|${effectiveSearch}|${sort}|${section}|${effectiveCategoryId}|${heroCategoryId}|${nsfw}|${addedWithin}|${customAddedFrom ?? ''}|${customAddedTo ?? ''}`;
+    const stamp = `${page}|${fetchFilterStamp}`;
     if (lastFetchedStampRef.current === stamp) return;
     lastFetchedStampRef.current = stamp;
+    const requestGeneration = ++requestGenerationRef.current;
     // Same anti-flash logic as fetchMods: skeleton only on truly empty first
     // load. Subsequent refetches keep the previous result set visible until
     // the new one arrives.
@@ -1059,21 +1115,30 @@ export default function Browse() {
         })(),
       }));
 
+      if (requestGeneration !== requestGenerationRef.current || lastFetchedStampRef.current !== stamp) {
+        return;
+      }
+
       if (page === 1) {
-        setMods(convertedMods);
+        setMods(dedupeModsById(convertedMods));
       } else {
-        setMods(prev => [...prev, ...convertedMods]);
+        setMods(prev => appendUniqueModsById(prev, convertedMods));
       }
       setTotalCount(result.totalCount);
       setHasMore(convertedMods.length === perPage && page * perPage < result.totalCount);
     } catch (err) {
+      if (requestGeneration !== requestGenerationRef.current || lastFetchedStampRef.current !== stamp) {
+        return;
+      }
       console.error('Local search failed, falling back to API:', err);
       setLocalSearchFailed(true);
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (requestGeneration === requestGenerationRef.current && lastFetchedStampRef.current === stamp) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
-  }, [page, effectiveSearch, section, sort, perPage, effectiveCategoryId, heroCategoryId, nsfw, addedWithin, customAddedFrom, customAddedTo, modCategories]);
+  }, [page, effectiveSearch, section, sort, perPage, effectiveCategoryId, heroCategoryId, nsfw, addedWithin, customAddedFrom, customAddedTo, modCategories, fetchFilterStamp]);
 
   // Value-compare gate for the filter-reset: remember what filters last
   // triggered a reset; only reset when the new combination is actually
@@ -1081,12 +1146,17 @@ export default function Browse() {
   // StrictMode's double-effect run (the second setup sees the same stamp
   // and short-circuits, instead of consuming a one-shot skip flag).
   const lastResetFiltersRef = useRef<string | null>(
-    `${debouncedSearch}|${sort}|${section}|${effectiveCategoryId}|${nsfw}|${addedWithin}|${customAddedFrom ?? ''}|${customAddedTo ?? ''}|${perPage}`
+    fetchFilterStamp
   );
   useEffect(() => {
-    const current = `${debouncedSearch}|${sort}|${section}|${effectiveCategoryId}|${nsfw}|${addedWithin}|${customAddedFrom ?? ''}|${customAddedTo ?? ''}|${perPage}`;
+    const current = fetchFilterStamp;
     if (lastResetFiltersRef.current === current) return;
     lastResetFiltersRef.current = current;
+    requestGenerationRef.current += 1;
+    lastFetchedStampRef.current = null;
+    if (page !== 1) {
+      pendingPageResetStampRef.current = current;
+    }
     // Reset pagination when filters change but keep previous results visible
     // until the new query lands. Blanking mods here is what produced the
     // skeleton flash on every keystroke pre-debounce.
@@ -1096,7 +1166,7 @@ export default function Browse() {
     // auto-pagination for the fresh result set.
     setLoadMoreError(null);
     setAutoLoadPaused(false);
-  }, [debouncedSearch, sort, section, effectiveCategoryId, nsfw, addedWithin, customAddedFrom, customAddedTo, perPage]);
+  }, [fetchFilterStamp, page]);
 
   useEffect(() => {
     let active = true;
@@ -1358,6 +1428,9 @@ export default function Browse() {
       setError(null);
       setLoadMoreError(null);
       setAutoLoadPaused(false);
+      requestGenerationRef.current += 1;
+      lastFetchedStampRef.current = null;
+      pendingPageResetStampRef.current = null;
       setRefreshKey(k => k + 1);
     } catch (err) {
       setError(String(err));
@@ -1806,13 +1879,17 @@ export default function Browse() {
             >
               <Grid3x3 className="w-4 h-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
               <input
+                key={cardSize}
                 type="range"
                 min={BROWSE_CARD_SIZE_MIN}
                 max={BROWSE_CARD_SIZE_MAX}
-                step={5}
-                value={cardSize}
+                step={BROWSE_CARD_SIZE_STEP}
+                defaultValue={cardSize}
                 disabled={layout === 'list'}
-                onChange={(e) => setCardSize(Number(e.target.value))}
+                onChange={(e) => setPreviewCardSize(Number(e.currentTarget.value))}
+                onPointerUp={(e) => commitCardSize(Number(e.currentTarget.value))}
+                onKeyUp={(e) => commitCardSize(Number(e.currentTarget.value))}
+                onBlur={(e) => commitCardSize(Number(e.currentTarget.value))}
                 aria-label="Card size"
                 className="h-1.5 w-24 cursor-pointer accent-accent disabled:cursor-default"
               />
@@ -2107,7 +2184,7 @@ export default function Browse() {
           // Column min-width is the slider value, so the grid template can't be
           // a static Tailwind class (the JIT scanner never sees it). Drive it
           // with an inline style; gap still tracks the compact threshold.
-          const readableCardTargetWidth = getReadableCardTargetWidth(cardSize);
+          const readableCardTargetWidth = getReadableCardTargetWidth(activeCardSize);
           const readableGridGap = getReadableCardGridGap(readableCardTargetWidth);
           const gridClass =
             layout === 'list'
@@ -2125,7 +2202,7 @@ export default function Browse() {
                     gridTemplateColumns: `repeat(auto-fit, minmax(${readableCardTargetWidth}px, 1fr))`,
                     gap: `${readableGridGap}px`,
                   }
-                : { gridTemplateColumns: `repeat(auto-fill, minmax(${cardSize}px, 1fr))` };
+                : { gridTemplateColumns: `repeat(auto-fill, minmax(${activeCardSize}px, 1fr))` };
           const hasActiveFilters =
             search.trim().length > 0 || heroCategoryId !== 'all' || categoryId !== 'all' || sort !== 'default';
 
@@ -2194,7 +2271,7 @@ export default function Browse() {
                     queuePosition={isQueued ? queueIndex + 1 : undefined}
                     viewMode={viewMode}
                     cardDesign={browseCardDesign}
-                    cardSize={cardSize}
+                    cardSize={activeCardSize}
                     section={section}
                     volume={soundVolume}
                     onVolumeChange={setSoundVolume}
@@ -2300,8 +2377,6 @@ function ReadableBrowseModCard({
   onQuickDownload,
   onEnable,
 }: ModCardProps) {
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  const [measuredCardWidth, setMeasuredCardWidth] = useState(0);
   const thumbnail = getModThumbnail(mod);
   const audioPreview = section === 'Sound' ? getSoundPreviewUrl(mod) : undefined;
   const isSoundSection = section === 'Sound';
@@ -2311,9 +2386,10 @@ function ReadableBrowseModCard({
   const heroFacePos = inferredHero ? getHeroFacePosition(inferredHero) : 55;
   const shouldHideNsfw = Boolean(mod.nsfw && hideNsfwPreviews);
   const readableCardTargetWidth = getReadableCardTargetWidth(cardSize);
-  const readableCardWidth = measuredCardWidth || readableCardTargetWidth;
+  const readableCardWidth = readableCardTargetWidth;
   const readableDensity = getReadableDensity(readableCardWidth);
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+  const [audioControlsActive, setAudioControlsActive] = useState(false);
   const readableScale = readableCardWidth / BROWSE_READABLE_CARD_GOLDEN;
   const chipRowWidth = Math.round(readableCardWidth - 24 * readableScale);
   const chips = getReadableCardChips(mod, section, inferredHero);
@@ -2323,6 +2399,7 @@ function ReadableBrowseModCard({
   const isMicro = readableDensity === 'micro';
   const isCompactReadable = readableDensity === 'compact';
   const actionIconOnly = readableCardWidth < 220;
+  const showInlineAudioPreview = isSoundSection && hasAudioPreview && !isMicro;
   const cardFrameClass = isMicro
     ? 'h-auto'
     : 'h-auto';
@@ -2348,33 +2425,14 @@ function ReadableBrowseModCard({
     ? 'h-6'
     : 'h-[clamp(24px,10cqw,32px)]';
 
-  useLayoutEffect(() => {
-    const node = cardRef.current;
-    if (!node) return;
-
-    const measure = () => {
-      const nextWidth = Math.round(node.getBoundingClientRect().width);
-      setMeasuredCardWidth((previousWidth) => (previousWidth === nextWidth ? previousWidth : nextWidth));
-    };
-
-    measure();
-
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', measure);
-      return () => window.removeEventListener('resize', measure);
-    }
-
-    const observer = new ResizeObserver(measure);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
-
   const media = isSoundSection ? (
     <div className="relative h-full w-full overflow-hidden bg-bg-tertiary">
       {heroRenderUrl ? (
         <img
           src={heroRenderUrl}
           alt={inferredHero ?? mod.name}
+          loading="lazy"
+          decoding="async"
           className={`h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02] ${
             shouldHideNsfw ? 'scale-105 blur-lg saturate-75' : ''
           }`}
@@ -2416,13 +2474,14 @@ function ReadableBrowseModCard({
 
   return (
     <div
-      ref={cardRef}
       onClick={onClick}
       onKeyDown={(e) => handleCardKeyDown(e, onClick)}
+      onMouseEnter={() => setAudioControlsActive(true)}
+      onFocus={() => setAudioControlsActive(true)}
       role="button"
       tabIndex={0}
       aria-label={`Open details for ${mod.name}`}
-      className={`group flex ${cardFrameClass} w-full flex-col overflow-hidden rounded-md border bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 cursor-pointer focus-visible:border-accent focus-visible:outline-none [container-type:inline-size] ${
+      className={`group flex ${cardFrameClass} w-full flex-col overflow-hidden rounded-md border bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 cursor-pointer focus-visible:border-accent focus-visible:outline-none [container-type:inline-size] [content-visibility:auto] [contain-intrinsic-size:360px] ${
         isPlaying
           ? 'border-state-danger/70 ring-2 ring-state-danger/35 shadow-lg shadow-state-danger/15'
           : downloading
@@ -2466,50 +2525,59 @@ function ReadableBrowseModCard({
           {showUpdated && <BrowseReadableUpdatedLine timestamp={mod.dateModified} />}
         </div>
 
-        {isSoundSection && hasAudioPreview && !isMicro && (
+        {showInlineAudioPreview && (
           <div
             className="mt-[clamp(8px,3.5714cqw,10px)] flex h-[clamp(33px,12.8571cqw,41px)] items-center rounded-[clamp(9px,3.5714cqw,12px)] border border-white/10 bg-bg-primary/55 px-[clamp(7px,2.8571cqw,9px)] text-text-secondary shadow-[0_1px_0_rgba(255,255,255,0.03)]"
             onClick={(event) => event.stopPropagation()}
           >
-            <AudioPreviewPlayer
-              src={audioPreview!}
-              compact
-              variant="inline"
-              volume={volume}
-              onPlayingChange={onPlayingChange}
-              className="min-w-0 flex-1"
-            />
-            <div className="relative ml-[clamp(6px,2.1429cqw,8px)] flex-shrink-0">
-              <button
-                type="button"
-                onClick={() => setShowVolumeSlider((value) => !value)}
-                className="flex h-[clamp(24px,8.5714cqw,28px)] w-[clamp(24px,8.5714cqw,28px)] items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
-                title={showVolumeSlider ? 'Hide volume slider' : 'Show volume slider'}
-                aria-label={showVolumeSlider ? 'Hide volume slider' : 'Show volume slider'}
-                aria-expanded={showVolumeSlider}
-              >
-                {volume > 0 ? (
-                  <Volume2 className="h-[clamp(13px,4.2857cqw,15px)] w-[clamp(13px,4.2857cqw,15px)]" />
-                ) : (
-                  <VolumeX className="h-[clamp(13px,4.2857cqw,15px)] w-[clamp(13px,4.2857cqw,15px)]" />
-                )}
-              </button>
-              {showVolumeSlider && (
-                <div className="absolute bottom-[calc(100%+8px)] right-0 flex items-center rounded-full border border-white/10 bg-[#0a0c10]/92 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md">
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={Math.round(volume * 100)}
-                    onChange={(e) => onVolumeChange(parseInt(e.target.value, 10) / 100)}
-                    className="w-24 h-1 accent-accent cursor-pointer"
-                    title={`Volume: ${Math.round(volume * 100)}%`}
-                    aria-label="Volume"
-                  />
+            {audioControlsActive ? (
+              <>
+                <AudioPreviewPlayer
+                  src={audioPreview!}
+                  compact
+                  variant="inline"
+                  volume={volume}
+                  onPlayingChange={onPlayingChange}
+                  className="min-w-0 flex-1"
+                />
+                <div className="relative ml-[clamp(6px,2.1429cqw,8px)] flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowVolumeSlider((value) => !value)}
+                    className="flex h-[clamp(24px,8.5714cqw,28px)] w-[clamp(24px,8.5714cqw,28px)] items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/80 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+                    title={showVolumeSlider ? 'Hide volume slider' : 'Show volume slider'}
+                    aria-label={showVolumeSlider ? 'Hide volume slider' : 'Show volume slider'}
+                    aria-expanded={showVolumeSlider}
+                  >
+                    {volume > 0 ? (
+                      <Volume2 className="h-[clamp(13px,4.2857cqw,15px)] w-[clamp(13px,4.2857cqw,15px)]" />
+                    ) : (
+                      <VolumeX className="h-[clamp(13px,4.2857cqw,15px)] w-[clamp(13px,4.2857cqw,15px)]" />
+                    )}
+                  </button>
+                  {showVolumeSlider && (
+                    <div className="absolute bottom-[calc(100%+8px)] right-0 flex items-center rounded-full border border-white/10 bg-[#0a0c10]/92 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md">
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={Math.round(volume * 100)}
+                        onChange={(e) => onVolumeChange(parseInt(e.target.value, 10) / 100)}
+                        className="w-24 h-1 accent-accent cursor-pointer"
+                        title={`Volume: ${Math.round(volume * 100)}%`}
+                        aria-label="Volume"
+                      />
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            ) : (
+              <div className="flex min-w-0 flex-1 items-center gap-2 text-[11px] font-medium text-text-tertiary">
+                <Play className="h-3.5 w-3.5 shrink-0 text-accent/80" />
+                <span className="truncate">Audio preview</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -2616,6 +2684,8 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
               <img
                 src={heroRenderUrl}
                 alt={inferredHero ?? mod.name}
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover"
                 style={{ objectPosition: `${heroFacePos}% 25%` }}
               />
@@ -2743,7 +2813,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
       role="button"
       tabIndex={0}
       aria-label={`Open details for ${mod.name}`}
-      className={`relative isolate bg-bg-tertiary border rounded-lg overflow-hidden focus-visible:border-accent focus-visible:outline-none transition-colors text-left cursor-pointer group ${isCompact ? 'aspect-[4/3]' : 'aspect-[3/2]'} ${
+      className={`relative isolate bg-bg-tertiary border rounded-lg overflow-hidden focus-visible:border-accent focus-visible:outline-none transition-colors text-left cursor-pointer group [content-visibility:auto] [contain-intrinsic-size:280px] ${isCompact ? 'aspect-[4/3]' : 'aspect-[3/2]'} ${
         isPlaying
           ? 'border-state-danger ring-2 ring-state-danger/60 shadow-lg shadow-state-danger/20'
           : downloading
@@ -2761,6 +2831,8 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
               <img
                 src={heroRenderUrl}
                 alt={inferredHero ?? mod.name}
+                loading="lazy"
+                decoding="async"
                 className="w-full h-full object-cover"
                 style={{ objectPosition: `${heroFacePos}% 20%` }}
               />
