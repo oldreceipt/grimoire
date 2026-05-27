@@ -263,6 +263,7 @@ export default function Sidebar() {
       label: string;
       tooltip: string;
       experimental?: 'crosshair' | 'stats' | 'social';
+      tone?: 'test';
       badge?: number;
       badgeTone?: BadgeTone;
     };
@@ -276,6 +277,7 @@ export default function Sidebar() {
       { to: '/stats', icon: Activity, label: 'Stats', tooltip: 'Match history and personal stats.', experimental: 'stats' },
       { to: '/conflicts', icon: Swords, label: 'Conflicts', tooltip: 'Mods that overwrite the same game files.', badge: conflictCount, badgeTone: 'warning' },
       { to: '/profiles', icon: BookMarked, label: 'Profiles', tooltip: 'Save and swap sets of enabled mods.' },
+      { to: '/browse-card-testbed', icon: AlertTriangle, label: 'TEST', tooltip: 'Temporary Browse card design testbed. Remove before release.', tone: 'test' },
     ];
 
     return items.filter((item) => {
@@ -412,7 +414,7 @@ export default function Sidebar() {
 
       <nav className="flex-1 min-h-0 overflow-y-auto p-2">
         <ul className="space-y-0.5">
-          {navItems.map(({ to, icon: Icon, label, tooltip, badge, badgeTone }) => (
+          {navItems.map(({ to, icon: Icon, label, tooltip, tone, badge, badgeTone }) => (
             <li key={to}>
               <NavLink
                 to={to}
@@ -421,7 +423,11 @@ export default function Sidebar() {
                   `group relative flex items-center h-10 overflow-hidden leading-5 rounded-sm text-sm transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 border ${
                     collapsed ? '' : 'pr-3'
                   } ${
-                    isActive
+                    tone === 'test'
+                      ? isActive
+                        ? 'border-red-400/80 bg-red-500/25 text-red-100 font-bold hover:bg-red-500/30'
+                        : 'border-red-500/45 bg-red-500/10 text-red-200 font-bold hover:border-red-400/75 hover:bg-red-500/20 hover:text-red-100'
+                      : isActive
                       ? 'border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary font-medium'
                       : 'border-transparent text-text-primary/80 font-medium hover:bg-accent/5 hover:border-accent/25 hover:text-text-primary'
                   }`
@@ -431,7 +437,9 @@ export default function Sidebar() {
                   <>
                     <span className="flex h-full w-[46px] flex-shrink-0 items-center justify-center">
                       <Icon
-                        className="w-5 h-5 flex-shrink-0 text-text-primary/70 group-hover:text-text-primary"
+                        className={`w-5 h-5 flex-shrink-0 ${
+                          tone === 'test' ? 'text-red-200 group-hover:text-red-100' : 'text-text-primary/70 group-hover:text-text-primary'
+                        }`}
                         strokeWidth={isActive ? 2 : 1.75}
                       />
                     </span>

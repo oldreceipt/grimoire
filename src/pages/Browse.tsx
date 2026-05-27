@@ -60,7 +60,9 @@ type SortOption = 'default' | 'popular' | 'recent' | 'updated' | 'views' | 'name
 // Effective render mode derived from layout + card size. 'compact' is no
 // longer a user choice: it's what small cards become below the size threshold.
 type ViewMode = 'grid' | 'compact' | 'list';
+type BrowseCardDesign = 'classic' | 'readable';
 const SECTION_WHITELIST = new Set(['Mod', 'Sound']);
+const BROWSE_CARD_DESIGN_STORAGE_KEY = 'browseCardDesign';
 // Persist filter UI inputs across page navigation. The store keeps these in
 // memory so visiting Installed and coming back doesn't blow away the user's
 // current search/filter context. Kept out of localStorage so a fresh launch
@@ -262,6 +264,14 @@ export default function Browse() {
   const [importProfileOpen, setImportProfileOpen] = useState(false);
   const [importMenuOpen, setImportMenuOpen] = useState(false);
   const importMenuRef = useRef<HTMLDivElement>(null);
+  const [browseCardDesign, setBrowseCardDesignState] = useState<BrowseCardDesign>(() => {
+    if (typeof window === 'undefined') return 'classic';
+    return window.localStorage.getItem(BROWSE_CARD_DESIGN_STORAGE_KEY) === 'readable' ? 'readable' : 'classic';
+  });
+  const setBrowseCardDesign = useCallback((design: BrowseCardDesign) => {
+    setBrowseCardDesignState(design);
+    window.localStorage.setItem(BROWSE_CARD_DESIGN_STORAGE_KEY, design);
+  }, []);
 
   // Load settings on mount (needed for hideNsfwPreviews)
   useEffect(() => {
@@ -1438,6 +1448,30 @@ export default function Browse() {
             {/* Divider */}
             <div className="w-px h-6 bg-border" />
 
+            {layout !== 'list' && (
+              <div className="flex items-center h-10 rounded-lg border border-border bg-bg-secondary p-1" role="tablist" aria-label="Browse card design">
+                {(['classic', 'readable'] as const).map((design) => {
+                  const active = browseCardDesign === design;
+                  return (
+                    <button
+                      key={design}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setBrowseCardDesign(design)}
+                      className={`h-8 px-3 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-bg-tertiary text-text-primary'
+                          : 'text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      {design === 'classic' ? 'Classic' : 'Readable'}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {/* Section toggle — Mods vs Sounds as icon buttons */}
             {sections.length > 1 && (
               <div className="flex items-center h-10 rounded-lg border border-border bg-bg-secondary p-1" role="tablist" aria-label="Section">
@@ -1750,6 +1784,7 @@ export default function Browse() {
                     downloading={downloading?.modId === mod.id}
                     queuePosition={isQueued ? queueIndex + 1 : undefined}
                     viewMode={viewMode}
+                    cardDesign={browseCardDesign}
                     section={section}
                     volume={soundVolume}
                     onVolumeChange={setSoundVolume}
@@ -1838,6 +1873,185 @@ export default function Browse() {
   );
 }
 
+function ReadableBrowseModCard({
+  mod,
+  installed,
+  installedDisabled,
+  downloading,
+  queuePosition,
+  viewMode,
+  section,
+  volume,
+  onVolumeChange,
+  hideNsfwPreviews,
+  isPlaying,
+  onPlayingChange,
+  onClick,
+  onQuickDownload,
+  onEnable,
+}: ModCardProps) {
+  const thumbnail = getModThumbnail(mod);
+  const audioPreview = section === 'Sound' ? getSoundPreviewUrl(mod) : undefined;
+  const isCompact = viewMode === 'compact';
+  const isSoundSection = section === 'Sound';
+  const hasAudioPreview = Boolean(audioPreview);
+  const inferredHero = isSoundSection ? inferHeroFromTitle(mod.name) : null;
+  const heroRenderUrl = inferredHero ? getHeroRenderPath(inferredHero) : undefined;
+  const heroFacePos = inferredHero ? getHeroFacePosition(inferredHero) : 55;
+  const isOutdated = mod.dateModified > 0 && isModOutdated(mod.dateModified);
+  const mediaAspect = isCompact ? 'aspect-[5/3]' : 'aspect-[16/9]';
+  const actionSize = isCompact ? 'h-8 min-w-8' : 'h-9 min-w-9';
+
+  const media = isSoundSection ? (
+    <div className="relative w-full h-full bg-bg-tertiary">
+      {heroRenderUrl ? (
+        <img
+          src={heroRenderUrl}
+          alt={inferredHero ?? mod.name}
+          className="w-full h-full object-cover"
+          style={{ objectPosition: `${heroFacePos}% 20%` }}
+        />
+      ) : thumbnail ? (
+        <ModThumbnail src={thumbnail} alt={mod.name} nsfw={mod.nsfw} hideNsfw={hideNsfwPreviews} className="w-full h-full" />
+      ) : hasAudioPreview ? (
+        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-bg-tertiary via-bg-secondary to-bg-tertiary">
+          <div className="flex items-end gap-0.5 h-10" aria-hidden="true">
+            {[3, 5, 8, 12, 16, 12, 8, 14, 10, 6, 9, 14, 11, 7, 4, 6, 10, 8, 5, 3].map((h, i) => (
+              <div key={i} className="w-1 bg-accent/60 rounded-full" style={{ height: `${h * 2}px` }} />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="w-full h-full bg-gradient-to-br from-bg-tertiary via-bg-secondary to-bg-tertiary flex items-center justify-center">
+          <Tag tone="accent" variant="overlay" icon={Volume2}>Sound</Tag>
+        </div>
+      )}
+    </div>
+  ) : (
+    <ModThumbnail src={thumbnail} alt={mod.name} nsfw={mod.nsfw} hideNsfw={hideNsfwPreviews} className="w-full h-full bg-bg-tertiary" />
+  );
+
+  return (
+    <div
+      onClick={onClick}
+      onKeyDown={(e) => handleCardKeyDown(e, onClick)}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open details for ${mod.name}`}
+      className={`group flex h-full flex-col overflow-hidden rounded-lg border bg-bg-secondary text-left transition-colors cursor-pointer focus-visible:border-accent focus-visible:outline-none ${
+        isPlaying
+          ? 'border-state-danger ring-2 ring-state-danger/60 shadow-lg shadow-state-danger/20'
+          : downloading
+            ? 'border-accent ring-2 ring-accent/35'
+            : installed
+              ? 'border-state-success/40 hover:border-state-success/70'
+              : 'border-border hover:border-accent/50'
+      }`}
+    >
+      <div className={`relative overflow-hidden bg-bg-tertiary ${mediaAspect}`}>
+        {media}
+        <div className="absolute left-2 top-2 flex flex-wrap items-start gap-1.5">
+          {mod.nsfw && <Tag tone="danger" variant="overlay">18+</Tag>}
+          {installed && (
+            <Tag tone="success" variant="overlay">
+              <span aria-hidden>✓</span>
+              Installed
+            </Tag>
+          )}
+          {!installed && isOutdated && (
+            <Tag tone="warning" variant="overlay" icon={AlertTriangle} title={`Last updated ${formatDate(mod.dateModified)}`}>
+              Outdated
+            </Tag>
+          )}
+        </div>
+        <div className="absolute right-2 top-2">
+          {installed && installedDisabled && onEnable ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEnable(); }}
+              className={`${actionSize} flex items-center gap-1.5 rounded-sm border border-state-warning/50 bg-bg-primary/85 px-2 text-xs font-semibold text-state-warning shadow-md backdrop-blur-sm transition-colors hover:bg-bg-secondary/90 cursor-pointer`}
+              title="Enable this mod (currently in your disabled folder)"
+            >
+              <Power className="w-3.5 h-3.5" />
+              Enable
+            </button>
+          ) : installed ? (
+            <span className={`${actionSize} flex items-center justify-center rounded-sm border border-state-success/50 bg-bg-primary/85 text-state-success shadow-md backdrop-blur-sm text-xs font-semibold`} title="Installed and enabled">
+              Installed
+            </span>
+          ) : downloading ? (
+            <div className={`${actionSize} flex items-center gap-1.5 rounded-sm border border-accent/50 bg-bg-primary/85 px-2 text-xs font-semibold text-accent shadow-md backdrop-blur-sm`} title="Downloading...">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Downloading
+            </div>
+          ) : queuePosition ? (
+            <div className={`${actionSize} flex items-center justify-center rounded-sm border border-accent/60 bg-bg-primary/85 px-2 text-xs font-semibold text-accent shadow-md backdrop-blur-sm`} title={`Queued #${queuePosition}`}>
+              Queued {queuePosition}
+            </div>
+          ) : (
+            <button
+              onClick={(e) => { e.stopPropagation(); onQuickDownload(); }}
+              className={`${actionSize} flex items-center justify-center rounded-sm border border-accent/45 bg-bg-primary/85 px-2 text-accent shadow-md backdrop-blur-sm transition-colors hover:bg-bg-secondary/90 hover:text-text-primary cursor-pointer`}
+              title="Install"
+              aria-label={`Install ${mod.name}`}
+            >
+              <Download className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className={`flex min-h-0 flex-1 flex-col gap-2 border-t border-white/5 bg-bg-secondary ${isCompact ? 'p-2.5' : 'p-3'}`}>
+        <div className="min-w-0">
+          <h3 className={`font-semibold leading-snug text-text-primary ${isCompact ? 'truncate text-sm' : 'line-clamp-2 text-base'}`}>{mod.name}</h3>
+          {mod.submitter && <p className="mt-1 truncate text-xs text-text-secondary">by {mod.submitter.name}</p>}
+        </div>
+        <div className={`flex items-center gap-2 text-text-secondary ${isCompact ? 'text-[11px]' : 'text-xs'}`}>
+          <span className="flex items-center gap-1" title={`${mod.likeCount ?? 0} likes`}><ThumbsUp className="w-3 h-3" />{formatCount(mod.likeCount)}</span>
+          <span className="flex items-center gap-1" title={`${mod.viewCount ?? 0} views`}><Eye className="w-3 h-3" />{formatCount(mod.viewCount)}</span>
+          {!isCompact && typeof mod.downloadCount === 'number' && mod.downloadCount > 0 && (
+            <span className="flex items-center gap-1" title={`${mod.downloadCount} downloads`}><Download className="w-3 h-3" />{formatCount(mod.downloadCount)}</span>
+          )}
+        </div>
+        {mod.dateModified > 0 && !isCompact && (
+          <div className={`flex items-center gap-1 text-xs ${isOutdated ? 'text-state-warning' : 'text-text-secondary'}`}>
+            {isOutdated ? <AlertTriangle className="w-3 h-3 flex-shrink-0" /> : <Clock className="w-3 h-3 flex-shrink-0" />}
+            <span className="truncate">{isOutdated ? 'Outdated · ' : 'Updated '}{formatDate(mod.dateModified)}</span>
+          </div>
+        )}
+        {isSoundSection && hasAudioPreview && (
+          <div
+            className="mt-auto flex min-w-0 items-center gap-2 rounded-sm border border-border bg-bg-tertiary/70 px-2 py-1.5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="min-w-0 flex-1">
+              <AudioPreviewPlayer src={audioPreview!} compact variant="inline" volume={volume} onPlayingChange={onPlayingChange} />
+            </div>
+            {!isCompact && (
+              <>
+                <div className="h-5 w-px flex-shrink-0 bg-border" />
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <Volume2 className="w-3.5 h-3.5 text-text-secondary" />
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={Math.round(volume * 100)}
+                    onChange={(e) => onVolumeChange(parseInt(e.target.value, 10) / 100)}
+                    className="w-14 h-1 accent-accent cursor-pointer"
+                    title={`Volume: ${Math.round(volume * 100)}%`}
+                    aria-label="Volume"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface ModCardProps {
   mod: GameBananaMod;
   installed: boolean;
@@ -1847,6 +2061,7 @@ interface ModCardProps {
   downloading: boolean;
   queuePosition?: number;
   viewMode: ViewMode;
+  cardDesign: BrowseCardDesign;
   section: string;
   volume: number;
   onVolumeChange: (v: number) => void;
@@ -1884,7 +2099,7 @@ function ModCardSkeleton({ viewMode }: { viewMode: ViewMode }) {
   );
 }
 
-function ModCard({ mod, installed, installedDisabled, downloading, queuePosition, viewMode, section, volume, onVolumeChange, hideNsfwPreviews, isPlaying, onPlayingChange, onClick, onQuickDownload, onEnable }: ModCardProps) {
+function ModCard({ mod, installed, installedDisabled, downloading, queuePosition, viewMode, cardDesign, section, volume, onVolumeChange, hideNsfwPreviews, isPlaying, onPlayingChange, onClick, onQuickDownload, onEnable }: ModCardProps) {
   const thumbnail = getModThumbnail(mod);
   const audioPreview = section === 'Sound' ? getSoundPreviewUrl(mod) : undefined;
   // Compact chrome (4:3 aspect, smaller text/padding) kicks in for small cards;
@@ -2015,6 +2230,29 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
   }
 
   // Grid/Compact: overlay card — image fills card, info overlaid at bottom
+  if (cardDesign === 'readable') {
+    return (
+      <ReadableBrowseModCard
+        mod={mod}
+        installed={installed}
+        installedDisabled={installedDisabled}
+        downloading={downloading}
+        queuePosition={queuePosition}
+        viewMode={viewMode}
+        cardDesign={cardDesign}
+        section={section}
+        volume={volume}
+        onVolumeChange={onVolumeChange}
+        hideNsfwPreviews={hideNsfwPreviews}
+        isPlaying={isPlaying}
+        onPlayingChange={onPlayingChange}
+        onClick={onClick}
+        onQuickDownload={onQuickDownload}
+        onEnable={onEnable}
+      />
+    );
+  }
+
   const isOutdated = mod.dateModified > 0 && isModOutdated(mod.dateModified);
   return (
     <div
@@ -2183,7 +2421,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
           className={`absolute bottom-0 left-0 right-0 z-20 ${isCompact ? 'p-2' : 'p-2.5'}`}
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center gap-3 backdrop-blur-md bg-black/60 rounded-full border border-white/10 px-3 py-2 shadow-lg">
+          <div className="flex items-center gap-3 backdrop-blur-md bg-bg-primary/85 rounded-full border border-white/10 px-3 py-2 shadow-lg">
             <div className="flex-1 min-w-0">
               <AudioPreviewPlayer
                 src={audioPreview!}
@@ -2220,7 +2458,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
           // than forcing them to the Installed tab.
           <button
             onClick={(e) => { e.stopPropagation(); onEnable(); }}
-            className={`flex items-center gap-1.5 rounded-full bg-state-warning/90 hover:bg-state-warning text-black backdrop-blur-sm ring-1 ring-black/40 shadow-md font-semibold transition-colors cursor-pointer ${isCompact ? 'h-7 px-2 text-[11px]' : 'h-8 px-2.5 text-xs'}`}
+            className={`flex items-center gap-1.5 rounded-full bg-state-warning/90 hover:bg-state-warning text-bg-primary backdrop-blur-sm ring-1 ring-border shadow-md font-semibold transition-colors cursor-pointer ${isCompact ? 'h-7 px-2 text-[11px]' : 'h-8 px-2.5 text-xs'}`}
             title="Enable this mod (currently in your disabled folder)"
           >
             <Power className={isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
@@ -2228,18 +2466,18 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
           </button>
         ) : installed ? (
           <span
-            className={`flex items-center justify-center rounded-full bg-black/70 backdrop-blur-sm ring-1 ring-black/60 shadow-md text-state-success ${isCompact ? 'w-7 h-7 text-sm' : 'w-8 h-8 text-base'}`}
+            className={`flex items-center justify-center rounded-full bg-bg-primary/85 backdrop-blur-sm ring-1 ring-border shadow-md text-state-success ${isCompact ? 'w-7 h-7 text-sm' : 'w-8 h-8 text-base'}`}
             title="Installed and enabled"
           >
             ✓
           </span>
         ) : downloading ? (
-          <div className={`flex items-center justify-center rounded-full bg-black/70 backdrop-blur-sm ring-1 ring-black/60 shadow-md ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`} title="Downloading...">
+          <div className={`flex items-center justify-center rounded-full bg-bg-primary/85 backdrop-blur-sm ring-1 ring-border shadow-md ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`} title="Downloading...">
             <Loader2 className={`animate-spin text-accent ${isCompact ? 'w-4 h-4' : 'w-5 h-5'}`} />
           </div>
         ) : queuePosition ? (
           <div
-            className={`flex items-center justify-center bg-accent text-black rounded-full font-bold ring-1 ring-black/50 shadow-md ${isCompact ? 'w-7 h-7 text-[11px]' : 'w-8 h-8 text-xs'}`}
+            className={`flex items-center justify-center bg-accent text-bg-primary rounded-full font-bold ring-1 ring-border shadow-md ${isCompact ? 'w-7 h-7 text-[11px]' : 'w-8 h-8 text-xs'}`}
             title={`Queued #${queuePosition}`}
           >
             {queuePosition}
@@ -2247,7 +2485,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
         ) : (
           <button
             onClick={(e) => { e.stopPropagation(); onQuickDownload(); }}
-            className={`flex items-center justify-center rounded-full bg-black/70 backdrop-blur-sm ring-1 ring-black/60 shadow-md text-accent hover:bg-accent/20 hover:text-text-primary hover:ring-accent/60 transition-all cursor-pointer ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`}
+            className={`flex items-center justify-center rounded-full bg-bg-primary/85 backdrop-blur-sm ring-1 ring-border shadow-md text-accent hover:bg-accent/20 hover:text-text-primary hover:ring-accent/60 transition-all cursor-pointer ${isCompact ? 'w-7 h-7' : 'w-8 h-8'}`}
             title="Install"
           >
             <Download className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />

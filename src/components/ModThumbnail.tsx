@@ -75,7 +75,7 @@ export default function ModThumbnail({
         />
       </div>
       {resolvedBlur && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-primary/40">
           <EyeOff className="w-4 h-4 text-white/70" />
           <span className="text-[9px] text-white/70 mt-0.5">NSFW</span>
         </div>
@@ -123,7 +123,7 @@ function MergedCollage({ sources, alt, className, shouldBlur }: MergedCollagePro
         ))}
       </div>
       {shouldBlur && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30 pointer-events-none">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-primary/40 pointer-events-none">
           <EyeOff className="w-4 h-4 text-white/70" />
           <span className="text-[9px] text-white/70 mt-0.5">NSFW</span>
         </div>
