@@ -132,6 +132,14 @@ type BrowseReadableChip = {
   tone?: BrowseReadableChipTone;
 };
 
+type BrowseResultCacheEntry = {
+  mods: GameBananaMod[];
+  page: number;
+  hasMore: boolean;
+  totalCount: number;
+  scrollTop: number;
+};
+
 const BROWSE_READABLE_MAX_VISIBLE_CHIPS = 3;
 const BROWSE_READABLE_CHIP_GAP_WIDTH = 6;
 const BROWSE_READABLE_CHIP_OVERFLOW_WIDTH = 30;
@@ -677,6 +685,7 @@ export default function Browse() {
   // the current grid after the user switches filters.
   const requestGenerationRef = useRef(0);
   const pendingPageResetStampRef = useRef<string | null>(null);
+  const restoredCacheSkipStampRef = useRef<string | null>(null);
   // Cached scroll position waiting to be applied once the grid is mounted
   // and laid out. Cleared after restoration.
   const pendingScrollTopRef = useRef<number | null>(initialCache?.scrollTop ?? null);
@@ -703,6 +712,8 @@ export default function Browse() {
   const [importProfileOpen, setImportProfileOpen] = useState(false);
   const [importMenuOpen, setImportMenuOpen] = useState(false);
   const importMenuRef = useRef<HTMLDivElement>(null);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const viewMenuRef = useRef<HTMLDivElement>(null);
   const [browseCardDesign, setBrowseCardDesignState] = useState<BrowseCardDesign>(() => {
     if (typeof window === 'undefined') return 'readable';
     return window.localStorage.getItem(BROWSE_CARD_DESIGN_STORAGE_KEY) === 'classic' ? 'classic' : 'readable';
@@ -754,6 +765,25 @@ export default function Browse() {
       window.removeEventListener('keydown', onKey);
     };
   }, [importMenuOpen]);
+
+  // Close the view menu on outside click or Escape.
+  useEffect(() => {
+    if (!viewMenuOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(e.target as Node)) {
+        setViewMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setViewMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [viewMenuOpen]);
 
   // Check if local cache is available for search
   const [hasLocalCache, setHasLocalCache] = useState(false);
@@ -823,6 +853,9 @@ export default function Browse() {
   }, [addedWithin, addedTo]);
 
   const fetchFilterStamp = `${effectiveSearch}|${sort}|${section}|${effectiveCategoryId}|${heroCategoryId}|${nsfw}|${addedWithin}|${customAddedFrom ?? ''}|${customAddedTo ?? ''}|${perPage}`;
+  const browseResultsCacheRef = useRef<Map<string, BrowseResultCacheEntry>>(new Map());
+  const browseScrollCacheRef = useRef<Map<string, number>>(new Map());
+  const activeFetchFilterStampRef = useRef(fetchFilterStamp);
 
   // Keep a fresh `mods` reference outside the fetch closures so they can check
   // "did the user already have results visible?" without making `mods` a
@@ -845,6 +878,41 @@ export default function Browse() {
     totalCountRef.current = _totalCount;
   }, [_totalCount]);
 
+  const cacheCurrentBrowseResults = useCallback((stamp: string) => {
+    const cachedMods = modsRef.current;
+    if (cachedMods.length === 0) return;
+    const scrollTop =
+      activeFetchFilterStampRef.current === stamp
+        ? latestScrollTopRef.current
+        : (browseScrollCacheRef.current.get(stamp) ?? 0);
+
+    browseResultsCacheRef.current.set(stamp, {
+      mods: cachedMods,
+      page: pageRef.current,
+      hasMore: hasMoreRef.current,
+      totalCount: totalCountRef.current,
+      scrollTop,
+    });
+    browseScrollCacheRef.current.set(stamp, scrollTop);
+  }, []);
+
+  useEffect(() => {
+    if (!initialCache || mods.length === 0) return;
+    browseResultsCacheRef.current.set(fetchFilterStamp, {
+      mods,
+      page,
+      hasMore,
+      totalCount: _totalCount,
+      scrollTop: initialCache.scrollTop,
+    });
+    browseScrollCacheRef.current.set(fetchFilterStamp, initialCache.scrollTop);
+    activeFetchFilterStampRef.current = fetchFilterStamp;
+    lastFetchedStampRef.current = `${page}|${fetchFilterStamp}`;
+    // Seed once from the route-level session cache; subsequent filter caches
+    // are maintained explicitly when the active filter stamp changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Restore cached scroll position once the first paint with hydrated mods
   // is on screen. useLayoutEffect (not useEffect) so we scroll before the
   // browser paints, avoiding a visible jump from 0 to the saved offset.
@@ -865,7 +933,13 @@ export default function Browse() {
     const container = scrollContainerRef.current;
     if (!container) return;
     const onScroll = () => {
-      latestScrollTopRef.current = container.scrollTop;
+      const nextScrollTop = container.scrollTop;
+      latestScrollTopRef.current = nextScrollTop;
+      browseScrollCacheRef.current.set(activeFetchFilterStampRef.current, nextScrollTop);
+      const cached = browseResultsCacheRef.current.get(activeFetchFilterStampRef.current);
+      if (cached) {
+        cached.scrollTop = nextScrollTop;
+      }
     };
     container.addEventListener('scroll', onScroll, { passive: true });
     return () => container.removeEventListener('scroll', onScroll);
@@ -922,6 +996,10 @@ export default function Browse() {
   const fetchMods = useCallback(async () => {
     // Don't fetch from API if we're using local search
     if (useLocalSearch) return;
+    if (restoredCacheSkipStampRef.current === fetchFilterStamp) {
+      restoredCacheSkipStampRef.current = null;
+      return;
+    }
     if (pendingPageResetStampRef.current === fetchFilterStamp && page !== 1) return;
     if (page === 1 && pendingPageResetStampRef.current === fetchFilterStamp) {
       pendingPageResetStampRef.current = null;
@@ -982,14 +1060,28 @@ export default function Browse() {
         return;
       }
 
-      // Append results for infinite scroll
-      if (page === 1) {
-        setMods(dedupeModsById(enrichedRecords));
-      } else {
-        setMods(prev => appendUniqueModsById(prev, enrichedRecords));
-      }
+      const nextMods =
+        page === 1
+          ? dedupeModsById(enrichedRecords)
+          : appendUniqueModsById(modsRef.current, enrichedRecords);
+      const nextHasMore = response.records.length === perPage && page * perPage < response.totalCount;
+
+      setMods(nextMods);
       setTotalCount(response.totalCount);
-      setHasMore(response.records.length === perPage && page * perPage < response.totalCount);
+      setHasMore(nextHasMore);
+      modsRef.current = nextMods;
+      pageRef.current = page;
+      totalCountRef.current = response.totalCount;
+      hasMoreRef.current = nextHasMore;
+      const cachedScrollTop = browseScrollCacheRef.current.get(fetchFilterStamp) ?? latestScrollTopRef.current;
+      browseResultsCacheRef.current.set(fetchFilterStamp, {
+        mods: nextMods,
+        page,
+        hasMore: nextHasMore,
+        totalCount: response.totalCount,
+        scrollTop: cachedScrollTop,
+      });
+      browseScrollCacheRef.current.set(fetchFilterStamp, cachedScrollTop);
     } catch (err) {
       if (requestGeneration !== requestGenerationRef.current || lastFetchedStampRef.current !== stamp) {
         return;
@@ -1024,6 +1116,10 @@ export default function Browse() {
 
   // Local search function using SQLite cache
   const searchLocal = useCallback(async () => {
+    if (restoredCacheSkipStampRef.current === fetchFilterStamp) {
+      restoredCacheSkipStampRef.current = null;
+      return;
+    }
     if (pendingPageResetStampRef.current === fetchFilterStamp && page !== 1) return;
     if (page === 1 && pendingPageResetStampRef.current === fetchFilterStamp) {
       pendingPageResetStampRef.current = null;
@@ -1119,13 +1215,28 @@ export default function Browse() {
         return;
       }
 
-      if (page === 1) {
-        setMods(dedupeModsById(convertedMods));
-      } else {
-        setMods(prev => appendUniqueModsById(prev, convertedMods));
-      }
+      const nextMods =
+        page === 1
+          ? dedupeModsById(convertedMods)
+          : appendUniqueModsById(modsRef.current, convertedMods);
+      const nextHasMore = convertedMods.length === perPage && page * perPage < result.totalCount;
+
+      setMods(nextMods);
       setTotalCount(result.totalCount);
-      setHasMore(convertedMods.length === perPage && page * perPage < result.totalCount);
+      setHasMore(nextHasMore);
+      modsRef.current = nextMods;
+      pageRef.current = page;
+      totalCountRef.current = result.totalCount;
+      hasMoreRef.current = nextHasMore;
+      const cachedScrollTop = browseScrollCacheRef.current.get(fetchFilterStamp) ?? latestScrollTopRef.current;
+      browseResultsCacheRef.current.set(fetchFilterStamp, {
+        mods: nextMods,
+        page,
+        hasMore: nextHasMore,
+        totalCount: result.totalCount,
+        scrollTop: cachedScrollTop,
+      });
+      browseScrollCacheRef.current.set(fetchFilterStamp, cachedScrollTop);
     } catch (err) {
       if (requestGeneration !== requestGenerationRef.current || lastFetchedStampRef.current !== stamp) {
         return;
@@ -1151,9 +1262,36 @@ export default function Browse() {
   useEffect(() => {
     const current = fetchFilterStamp;
     if (lastResetFiltersRef.current === current) return;
+    cacheCurrentBrowseResults(activeFetchFilterStampRef.current);
     lastResetFiltersRef.current = current;
+    activeFetchFilterStampRef.current = current;
     requestGenerationRef.current += 1;
     lastFetchedStampRef.current = null;
+
+    const cached = browseResultsCacheRef.current.get(current);
+    if (cached) {
+      pendingPageResetStampRef.current = null;
+      setMods(cached.mods);
+      setPage(cached.page);
+      setTotalCount(cached.totalCount);
+      setHasMore(cached.hasMore);
+      setLoading(false);
+      setLoadingMore(false);
+      setError(null);
+      setLoadMoreError(null);
+      setAutoLoadPaused(false);
+      lastFetchedStampRef.current = `${cached.page}|${current}`;
+      restoredCacheSkipStampRef.current = current;
+      latestScrollTopRef.current = cached.scrollTop;
+      browseScrollCacheRef.current.set(current, cached.scrollTop);
+      requestAnimationFrame(() => {
+        if (activeFetchFilterStampRef.current !== current) return;
+        const container = scrollContainerRef.current;
+        if (container) container.scrollTop = cached.scrollTop;
+      });
+      return;
+    }
+
     if (page !== 1) {
       pendingPageResetStampRef.current = current;
     }
@@ -1166,7 +1304,7 @@ export default function Browse() {
     // auto-pagination for the fresh result set.
     setLoadMoreError(null);
     setAutoLoadPaused(false);
-  }, [fetchFilterStamp, page]);
+  }, [cacheCurrentBrowseResults, fetchFilterStamp, page]);
 
   useEffect(() => {
     let active = true;
@@ -1428,6 +1566,8 @@ export default function Browse() {
       setError(null);
       setLoadMoreError(null);
       setAutoLoadPaused(false);
+      browseResultsCacheRef.current.delete(fetchFilterStamp);
+      browseScrollCacheRef.current.delete(fetchFilterStamp);
       requestGenerationRef.current += 1;
       lastFetchedStampRef.current = null;
       pendingPageResetStampRef.current = null;
@@ -1868,86 +2008,115 @@ export default function Browse() {
               )}
             </button>
 
-            {/* Card-size slider: only meaningful in grid layout, so it's
-                disabled (and dimmed) while List is active rather than hidden,
-                keeping the toolbar from reflowing as you switch. */}
-            <div
-              className={`flex items-center gap-2 h-10 rounded-lg border border-border bg-bg-secondary px-3 transition-opacity ${
-                layout === 'list' ? 'opacity-40' : ''
-              }`}
-              title="Card size"
-            >
-              <Grid3x3 className="w-4 h-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
-              <input
-                key={cardSize}
-                type="range"
-                min={BROWSE_CARD_SIZE_MIN}
-                max={BROWSE_CARD_SIZE_MAX}
-                step={BROWSE_CARD_SIZE_STEP}
-                defaultValue={cardSize}
-                disabled={layout === 'list'}
-                onChange={(e) => setPreviewCardSize(Number(e.currentTarget.value))}
-                onPointerUp={(e) => commitCardSize(Number(e.currentTarget.value))}
-                onKeyUp={(e) => commitCardSize(Number(e.currentTarget.value))}
-                onBlur={(e) => commitCardSize(Number(e.currentTarget.value))}
-                aria-label="Card size"
-                className="h-1.5 w-24 cursor-pointer accent-accent disabled:cursor-default"
-              />
-              <LayoutGrid className="w-5 h-5 flex-shrink-0 text-text-secondary" aria-hidden="true" />
-            </div>
-
-            {/* Layout Toggle - Grid vs List */}
-            <div className="flex items-center h-10 rounded-lg border border-border bg-bg-secondary p-1">
+            <div className="relative" ref={viewMenuRef}>
               <button
                 type="button"
-                onClick={() => setLayout('grid')}
-                className={`p-1.5 rounded-md transition-colors cursor-pointer ${layout === 'grid'
-                  ? 'bg-bg-tertiary text-text-primary'
-                  : 'text-text-secondary hover:text-text-primary'
-                  }`}
-                title="Grid view"
+                onClick={() => setViewMenuOpen((v) => !v)}
+                aria-haspopup="dialog"
+                aria-expanded={viewMenuOpen}
+                className="flex h-10 items-center gap-2 rounded-lg border border-border bg-bg-secondary px-3 text-sm text-text-primary transition-colors hover:bg-bg-tertiary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                title="View options"
               >
-                <LayoutGrid className="w-5 h-5" />
+                <LayoutGrid className="h-4 w-4 text-text-secondary" />
+                <span>View</span>
+                <ChevronDown className="h-3.5 w-3.5 text-text-secondary" />
               </button>
-              <button
-                type="button"
-                onClick={() => setLayout('list')}
-                className={`p-2 rounded-md transition-colors cursor-pointer ${layout === 'list'
-                  ? 'bg-bg-tertiary text-text-primary'
-                  : 'text-text-secondary hover:text-text-primary'
-                  }`}
-                title="List view"
-              >
-                <List className="w-5 h-5" />
-              </button>
+
+              {viewMenuOpen && (
+                <div
+                  className="absolute right-0 top-full z-50 mt-2 w-72 rounded-lg border border-border bg-bg-secondary p-3 shadow-xl animate-fade-in"
+                  role="dialog"
+                  aria-label="View options"
+                >
+                  <div className="space-y-4">
+                    <div>
+                      <div className="mb-2 text-xs font-medium text-text-secondary">Layout</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setLayout('grid')}
+                          className={`flex h-9 items-center justify-center gap-2 rounded-md border text-sm transition-colors ${
+                            layout === 'grid'
+                              ? 'border-accent/50 bg-accent/10 text-accent'
+                              : 'border-border bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                          }`}
+                        >
+                          <LayoutGrid className="h-4 w-4" />
+                          Grid
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLayout('list')}
+                          className={`flex h-9 items-center justify-center gap-2 rounded-md border text-sm transition-colors ${
+                            layout === 'list'
+                              ? 'border-accent/50 bg-accent/10 text-accent'
+                              : 'border-border bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                          }`}
+                        >
+                          <List className="h-4 w-4" />
+                          List
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className={layout === 'list' ? 'opacity-45' : ''}>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <span className="text-xs font-medium text-text-secondary">Card size</span>
+                        <span className="inline-flex items-center gap-1 text-[11px] text-text-tertiary">
+                          <Grid3x3 className="h-3.5 w-3.5" />
+                          Grid only
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Grid3x3 className="h-4 w-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
+                        <input
+                          key={cardSize}
+                          type="range"
+                          min={BROWSE_CARD_SIZE_MIN}
+                          max={BROWSE_CARD_SIZE_MAX}
+                          step={BROWSE_CARD_SIZE_STEP}
+                          defaultValue={cardSize}
+                          disabled={layout === 'list'}
+                          onChange={(e) => setPreviewCardSize(Number(e.currentTarget.value))}
+                          onPointerUp={(e) => commitCardSize(Number(e.currentTarget.value))}
+                          onKeyUp={(e) => commitCardSize(Number(e.currentTarget.value))}
+                          onBlur={(e) => commitCardSize(Number(e.currentTarget.value))}
+                          aria-label="Card size"
+                          className="h-1.5 min-w-0 flex-1 cursor-pointer accent-accent disabled:cursor-default"
+                        />
+                        <LayoutGrid className="h-5 w-5 flex-shrink-0 text-text-secondary" aria-hidden="true" />
+                      </div>
+                    </div>
+
+                    <div className={layout === 'list' ? 'opacity-45' : ''}>
+                      <div className="mb-2 text-xs font-medium text-text-secondary">Card style</div>
+                      <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="Browse card design">
+                        {(['classic', 'readable'] as const).map((design) => {
+                          const active = browseCardDesign === design;
+                          return (
+                            <button
+                              key={design}
+                              type="button"
+                              role="tab"
+                              aria-selected={active}
+                              disabled={layout === 'list'}
+                              onClick={() => setBrowseCardDesign(design)}
+                              className={`h-9 rounded-md border text-xs font-semibold transition-colors disabled:cursor-default ${
+                                active
+                                  ? 'border-accent/50 bg-accent/10 text-accent'
+                                  : 'border-border bg-bg-tertiary text-text-secondary hover:text-text-primary'
+                              }`}
+                            >
+                              {design === 'classic' ? 'Classic' : 'Readable'}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-
-            {/* Divider */}
-            <div className="w-px h-6 bg-border" />
-
-            {layout !== 'list' && (
-              <div className="flex items-center h-10 rounded-lg border border-border bg-bg-secondary p-1" role="tablist" aria-label="Browse card design">
-                {(['classic', 'readable'] as const).map((design) => {
-                  const active = browseCardDesign === design;
-                  return (
-                    <button
-                      key={design}
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      onClick={() => setBrowseCardDesign(design)}
-                      className={`h-8 px-3 rounded-md text-xs font-semibold transition-colors cursor-pointer ${
-                        active
-                          ? 'bg-bg-tertiary text-text-primary'
-                          : 'text-text-secondary hover:text-text-primary'
-                      }`}
-                    >
-                      {design === 'classic' ? 'Classic' : 'Readable'}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
 
             {/* Section toggle — Mods vs Sounds as icon buttons */}
             {sections.length > 1 && (
@@ -1974,23 +2143,6 @@ export default function Browse() {
                     </button>
                   );
                 })}
-              </div>
-            )}
-
-            {/* Global Volume Slider - visible when Sound section is selected */}
-            {section === 'Sound' && (
-              <div className="flex items-center h-10 gap-2 px-3 bg-bg-secondary border border-border rounded-lg">
-                <Volume2 className="w-4 h-4 text-text-secondary flex-shrink-0" />
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round(soundVolume * 100)}
-                  onChange={(e) => setSoundVolume(parseInt(e.target.value) / 100)}
-                  className="w-24 h-1.5 bg-bg-primary rounded-full appearance-none cursor-pointer accent-accent [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-accent [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-110"
-                  title={`Volume: ${Math.round(soundVolume * 100)}%`}
-                />
-                <span className="text-xs text-text-secondary tabular-nums w-8">{Math.round(soundVolume * 100)}%</span>
               </div>
             )}
 
@@ -2175,6 +2327,28 @@ export default function Browse() {
               );
             })()}
           </div>
+
+          {section === 'Sound' && (
+            <div className="mt-3 inline-flex max-w-full items-center gap-3 rounded-lg border border-border bg-bg-secondary/70 px-3 py-2">
+              <div className="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-text-primary">
+                <Volume2 className="h-4 w-4 flex-shrink-0 text-text-secondary" />
+                <span>Preview volume</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={Math.round(soundVolume * 100)}
+                onChange={(e) => setSoundVolume(parseInt(e.target.value, 10) / 100)}
+                className="h-1.5 w-40 cursor-pointer accent-accent sm:w-48"
+                title={`Volume: ${Math.round(soundVolume * 100)}%`}
+                aria-label="Preview volume"
+              />
+              <span className="w-9 text-right text-xs tabular-nums text-text-secondary">
+                {Math.round(soundVolume * 100)}%
+              </span>
+            </div>
+          )}
         </form>
       </div>
 
@@ -2399,7 +2573,7 @@ function ReadableBrowseModCard({
   const isMicro = readableDensity === 'micro';
   const isCompactReadable = readableDensity === 'compact';
   const actionIconOnly = readableCardWidth < 220;
-  const showInlineAudioPreview = isSoundSection && hasAudioPreview && !isMicro;
+  const showInlineAudioPreview = isSoundSection && hasAudioPreview;
   const cardFrameClass = isMicro
     ? 'h-auto'
     : 'h-auto';
@@ -2527,7 +2701,9 @@ function ReadableBrowseModCard({
 
         {showInlineAudioPreview && (
           <div
-            className="mt-[clamp(8px,3.5714cqw,10px)] flex h-[clamp(33px,12.8571cqw,41px)] items-center rounded-[clamp(9px,3.5714cqw,12px)] border border-white/10 bg-bg-primary/55 px-[clamp(7px,2.8571cqw,9px)] text-text-secondary shadow-[0_1px_0_rgba(255,255,255,0.03)]"
+            className={`mt-[clamp(8px,3.5714cqw,10px)] flex items-center rounded-[clamp(9px,3.5714cqw,12px)] border border-white/10 bg-bg-primary/55 px-[clamp(7px,2.8571cqw,9px)] text-text-secondary shadow-[0_1px_0_rgba(255,255,255,0.03)] ${
+              isMicro ? 'h-7' : 'h-[clamp(33px,12.8571cqw,41px)]'
+            }`}
             onClick={(event) => event.stopPropagation()}
           >
             {audioControlsActive ? (
@@ -2573,9 +2749,23 @@ function ReadableBrowseModCard({
                 </div>
               </>
             ) : (
-              <div className="flex min-w-0 flex-1 items-center gap-2 text-[11px] font-medium text-text-tertiary">
-                <Play className="h-3.5 w-3.5 shrink-0 text-accent/80" />
-                <span className="truncate">Audio preview</span>
+              <div className={`flex min-w-0 flex-1 items-center ${isMicro ? 'gap-2' : 'gap-4'}`}>
+                <span
+                  className={`flex flex-shrink-0 items-center justify-center rounded-full border border-accent/50 bg-accent/25 text-text-primary shadow-sm ${
+                    isMicro ? 'h-5 w-5' : 'h-8 w-8'
+                  }`}
+                >
+                  <Play className={`${isMicro ? 'h-3 w-3' : 'h-4 w-4'} ml-0.5 fill-current`} />
+                </span>
+                <span className="h-1.5 min-w-0 flex-1 rounded-full bg-bg-primary" />
+                {!isMicro && (
+                  <>
+                    <span className="flex-shrink-0 text-[10px] tabular-nums text-text-secondary">0:00</span>
+                    <span className="flex h-[clamp(24px,8.5714cqw,28px)] w-[clamp(24px,8.5714cqw,28px)] flex-shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/80">
+                      <Volume2 className="h-[clamp(13px,4.2857cqw,15px)] w-[clamp(13px,4.2857cqw,15px)]" />
+                    </span>
+                  </>
+                )}
               </div>
             )}
           </div>
