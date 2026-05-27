@@ -453,6 +453,55 @@ body {
   animation: browseResultSettle 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+.browse-card-hover-surface {
+  transition:
+    border-color 190ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 190ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.browse-card-media-zoom {
+  transition: transform 190ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.browse-is-scrolling .browse-card-hover-surface:hover {
+  transform: none !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) !important;
+}
+
+.browse-readable-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.browse-is-scrolling .browse-readable-card:hover {
+  border-color: rgba(255, 255, 255, 0.07) !important;
+}
+
+.browse-is-scrolling .browse-card-hover-surface:not(.browse-readable-card):hover {
+  border-color: var(--color-border) !important;
+}
+
+.browse-is-scrolling .browse-card-hover-surface:hover .browse-card-media-zoom {
+  transform: none !important;
+}
+
+.browse-card-hover-surface:hover .browse-card-media-zoom {
+  transform: scale(1.02) !important;
+}
+
+.browse-is-scrolling .group:hover .browse-sound-placeholder::before {
+  opacity: 0;
+  transform: scale(0.78);
+}
+
+.browse-is-scrolling .group:hover .browse-sound-wave-bar {
+  animation: none;
+  background-color: var(--color-text-secondary);
+  transform: none;
+}
+
 @keyframes browseDownloadSheen {
   0% {
     opacity: 0;

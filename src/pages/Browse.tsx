@@ -800,6 +800,8 @@ export default function Browse() {
   // there always returned 0 and the saved position was useless.
   const latestScrollTopRef = useRef<number>(initialCache?.scrollTop ?? 0);
   const scrollCacheFrameRef = useRef<number | null>(null);
+  const scrollHoverTimeoutRef = useRef<number | null>(null);
+  const isBrowseScrollingRef = useRef(false);
   // When local search fails (e.g. SQLite error), this flips so the main fetch
   // effect falls back to the API path. Resets whenever filter inputs change.
   const [localSearchFailed, setLocalSearchFailed] = useState(false);
@@ -807,6 +809,7 @@ export default function Browse() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [downloadQueue, setDownloadQueue] = useState<Array<{ modId: number; fileId: number; fileName: string }>>([]);
   const [playingModId, setPlayingModId] = useState<number | null>(null);
+  const [isBrowseScrolling, setIsBrowseScrolling] = useState(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -1055,6 +1058,18 @@ export default function Browse() {
     const onScroll = () => {
       const nextScrollTop = container.scrollTop;
       latestScrollTopRef.current = nextScrollTop;
+      if (!isBrowseScrollingRef.current) {
+        isBrowseScrollingRef.current = true;
+        setIsBrowseScrolling(true);
+      }
+      if (scrollHoverTimeoutRef.current !== null) {
+        window.clearTimeout(scrollHoverTimeoutRef.current);
+      }
+      scrollHoverTimeoutRef.current = window.setTimeout(() => {
+        scrollHoverTimeoutRef.current = null;
+        isBrowseScrollingRef.current = false;
+        setIsBrowseScrolling(false);
+      }, 140);
       if (scrollCacheFrameRef.current !== null) return;
       scrollCacheFrameRef.current = window.requestAnimationFrame(() => {
         scrollCacheFrameRef.current = null;
@@ -1073,6 +1088,11 @@ export default function Browse() {
         window.cancelAnimationFrame(scrollCacheFrameRef.current);
         scrollCacheFrameRef.current = null;
       }
+      if (scrollHoverTimeoutRef.current !== null) {
+        window.clearTimeout(scrollHoverTimeoutRef.current);
+        scrollHoverTimeoutRef.current = null;
+      }
+      isBrowseScrollingRef.current = false;
     };
   }, []);
 
@@ -2095,7 +2115,7 @@ export default function Browse() {
   }
 
   return (
-    <div className="h-full overflow-y-auto" ref={scrollContainerRef}>
+    <div className={`h-full overflow-y-auto ${isBrowseScrolling ? 'browse-is-scrolling' : ''}`} ref={scrollContainerRef}>
       {/* Header with Search */}
       <div className="sticky top-0 z-40 p-4 border-b border-border bg-bg-primary">
         <form onSubmit={handleSearch}>
@@ -2656,7 +2676,7 @@ export default function Browse() {
                       return (
                         <div
                           key={mod.id}
-                          className="browse-result-card min-w-0 [contain:layout_paint_style]"
+                          className="browse-result-card min-w-0 [contain:layout_style]"
                           style={{ animationDelay: `${Math.min(index * 18, 72)}ms` }}
                         >
                           <MemoizedModCard
@@ -2675,6 +2695,7 @@ export default function Browse() {
                             onVolumeChange={setSoundVolume}
                             hideNsfwPreviews={settings?.hideNsfwPreviews ?? true}
                             isPlaying={playingModId === mod.id}
+                            suppressHoverIntent={isBrowseScrolling}
                             enableModId={installedLocal && !installedLocal.enabled ? installedLocal.id : undefined}
                             actionContextKey={`${activeDeadlockPath ?? ''}|${section}|${effectiveCategoryId ?? ''}`}
                             onPlayingChange={(playing) => {
@@ -2777,6 +2798,7 @@ function ReadableBrowseModCard({
   onVolumeChange,
   hideNsfwPreviews,
   isPlaying,
+  suppressHoverIntent,
   onPlayingChange,
   onClick,
   onQuickDownload,
@@ -2836,7 +2858,7 @@ function ReadableBrowseModCard({
           alt={inferredHero ?? mod.name}
           loading="lazy"
           decoding="async"
-          className={`h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02] ${
+          className={`browse-card-media-zoom h-full w-full object-cover ${
             shouldHideNsfw ? 'scale-105 blur-lg saturate-75' : ''
           }`}
           style={{ objectPosition: `${heroFacePos}% 20%` }}
@@ -2850,7 +2872,7 @@ function ReadableBrowseModCard({
           className="h-full w-full"
           imageFit="cover"
           imagePosition="center top"
-          imageClassName="transition-transform duration-200 group-hover:scale-[1.02]"
+          imageClassName="browse-card-media-zoom"
         />
       ) : (
         <BrowseSoundPlaceholder title={mod.name} />
@@ -2871,15 +2893,22 @@ function ReadableBrowseModCard({
       className="h-full w-full bg-bg-tertiary"
       imageFit="cover"
       imagePosition="center top"
-      imageClassName="transition-transform duration-200 group-hover:scale-[1.02]"
+      imageClassName="browse-card-media-zoom"
     />
   );
+
+  useEffect(() => {
+    if (!suppressHoverIntent) return;
+    if (!isPlaying) setAudioControlsActive(false);
+  }, [isPlaying, suppressHoverIntent]);
 
   return (
     <div
       onClick={onClick}
       onKeyDown={(e) => handleCardKeyDown(e, onClick)}
-      onMouseEnter={() => setAudioControlsActive(true)}
+      onMouseEnter={() => {
+        if (!suppressHoverIntent) setAudioControlsActive(true);
+      }}
       onMouseLeave={() => {
         if (!isPlaying) setAudioControlsActive(false);
       }}
@@ -2893,12 +2922,12 @@ function ReadableBrowseModCard({
       tabIndex={0}
       aria-label={`Open details for ${mod.name}`}
       style={cardFrameStyle}
-      className={`browse-readable-card group flex w-full flex-col overflow-hidden rounded-md border bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 cursor-pointer focus-visible:border-accent focus-visible:outline-none [container-type:inline-size] ${
+      className={`browse-card-hover-surface browse-readable-card group flex w-full flex-col overflow-hidden rounded-md border bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 cursor-pointer focus-visible:border-accent focus-visible:outline-none [container-type:inline-size] ${
         isPlaying
           ? 'border-state-danger/70 ring-2 ring-state-danger/35 shadow-lg shadow-state-danger/15'
           : downloading
             ? 'border-accent/40'
-            : 'border-white/[0.07] hover:-translate-y-0.5 hover:border-accent/30 hover:shadow-[0_10px_24px_rgba(0,0,0,0.22)]'
+            : 'border-white/[0.07]'
       }`}
     >
       <div className={`browse-readable-card-media relative ${mediaHeightClass} overflow-hidden rounded-t-md bg-bg-tertiary`}>
@@ -3045,6 +3074,7 @@ interface ModCardProps {
   onVolumeChange: (v: number) => void;
   hideNsfwPreviews: boolean;
   isPlaying: boolean;
+  suppressHoverIntent?: boolean;
   enableModId?: string;
   actionContextKey?: string;
   onPlayingChange: (playing: boolean) => void;
@@ -3079,7 +3109,7 @@ function ModCardSkeleton({ viewMode }: { viewMode: ViewMode }) {
   );
 }
 
-function ModCard({ mod, installed, installedDisabled, downloading, queuePosition, viewMode, cardDesign, cardSize, cardHeight, section, volume, onVolumeChange, hideNsfwPreviews, isPlaying, onPlayingChange, onClick, onQuickDownload, onEnable }: ModCardProps) {
+function ModCard({ mod, installed, installedDisabled, downloading, queuePosition, viewMode, cardDesign, cardSize, cardHeight, section, volume, onVolumeChange, hideNsfwPreviews, isPlaying, suppressHoverIntent, onPlayingChange, onClick, onQuickDownload, onEnable }: ModCardProps) {
   const thumbnail = getModThumbnail(mod);
   const audioPreview = section === 'Sound' ? getSoundPreviewUrl(mod) : undefined;
   // Compact chrome (4:3 aspect, smaller text/padding) kicks in for small cards;
@@ -3095,13 +3125,20 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
   const heroFacePos = inferredHero ? getHeroFacePosition(inferredHero) : 55;
   const [audioControlsActive, setAudioControlsActive] = useState(false);
 
+  useEffect(() => {
+    if (!suppressHoverIntent) return;
+    if (!isPlaying) setAudioControlsActive(false);
+  }, [isPlaying, suppressHoverIntent]);
+
   // List view keeps original layout
   if (isList) {
     return (
       <div
         onClick={onClick}
         onKeyDown={(e) => handleCardKeyDown(e, onClick)}
-        onMouseEnter={() => setAudioControlsActive(true)}
+        onMouseEnter={() => {
+          if (!suppressHoverIntent) setAudioControlsActive(true);
+        }}
         onMouseLeave={() => {
           if (!isPlaying) setAudioControlsActive(false);
         }}
@@ -3114,7 +3151,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
         role="button"
         tabIndex={0}
         aria-label={`Open details for ${mod.name}`}
-        className={`relative bg-bg-secondary border rounded-lg overflow-hidden focus-visible:border-accent focus-visible:outline-none transition-colors text-left cursor-pointer flex items-center gap-4 p-3 ${
+        className={`browse-card-hover-surface relative bg-bg-secondary border rounded-lg overflow-hidden focus-visible:border-accent focus-visible:outline-none transition-colors text-left cursor-pointer flex items-center gap-4 p-3 ${
           isPlaying
             ? 'border-state-danger ring-2 ring-state-danger/60 shadow-lg shadow-state-danger/20'
             : 'border-border hover:border-accent/50'
@@ -3247,6 +3284,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
         onVolumeChange={onVolumeChange}
         hideNsfwPreviews={hideNsfwPreviews}
         isPlaying={isPlaying}
+        suppressHoverIntent={suppressHoverIntent}
         onPlayingChange={onPlayingChange}
         onClick={onClick}
         onQuickDownload={onQuickDownload}
@@ -3260,7 +3298,9 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
     <div
       onClick={onClick}
       onKeyDown={(e) => handleCardKeyDown(e, onClick)}
-      onMouseEnter={() => setAudioControlsActive(true)}
+      onMouseEnter={() => {
+        if (!suppressHoverIntent) setAudioControlsActive(true);
+      }}
       onMouseLeave={() => {
         if (!isPlaying) setAudioControlsActive(false);
       }}
@@ -3273,7 +3313,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
       role="button"
       tabIndex={0}
       aria-label={`Open details for ${mod.name}`}
-      className={`relative isolate bg-bg-tertiary border rounded-lg overflow-hidden focus-visible:border-accent focus-visible:outline-none transition-colors text-left cursor-pointer group ${isCompact ? 'aspect-[4/3]' : 'aspect-[3/2]'} ${
+      className={`browse-card-hover-surface relative isolate bg-bg-tertiary border rounded-lg overflow-hidden focus-visible:border-accent focus-visible:outline-none transition-colors text-left cursor-pointer group ${isCompact ? 'aspect-[4/3]' : 'aspect-[3/2]'} ${
         isPlaying
           ? 'border-state-danger ring-2 ring-state-danger/60 shadow-lg shadow-state-danger/20'
           : downloading
@@ -3537,6 +3577,7 @@ const MemoizedModCard = React.memo(ModCard, (prev, next) => (
   prev.volume === next.volume &&
   prev.hideNsfwPreviews === next.hideNsfwPreviews &&
   prev.isPlaying === next.isPlaying &&
+  prev.suppressHoverIntent === next.suppressHoverIntent &&
   prev.enableModId === next.enableModId &&
   prev.actionContextKey === next.actionContextKey
 ));
