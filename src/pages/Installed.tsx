@@ -62,6 +62,7 @@ import type { ModConflict } from '../lib/api';
 import type { Mod, GlobalModType, UnknownModFilterGuess, MergedModSource } from '../types/mod';
 import type { GameBananaModDetails } from '../types/gamebanana';
 import ModThumbnail from '../components/ModThumbnail';
+import ImageContextMenu from '../components/ImageContextMenu';
 import AudioPreviewPlayer from '../components/AudioPreviewPlayer';
 import ModDetailsModal from '../components/ModDetailsModal';
 import VariantPickerModal from '../components/VariantPickerModal';
@@ -3927,13 +3928,15 @@ function ModMediaPreview({
     />
   );
   const soundMedia = mod.thumbnailUrl ? image : soundHeroRenderUrl ? (
-    <img
-      src={soundHeroRenderUrl}
-      alt={soundHeroName ?? mod.name}
-      draggable={false}
-      className="block h-full w-full object-cover origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
-      style={{ objectPosition: `${soundHeroFacePos}% 25%` }}
-    />
+    <ImageContextMenu src={soundHeroRenderUrl} alt={soundHeroName ?? mod.name}>
+      <img
+        src={soundHeroRenderUrl}
+        alt={soundHeroName ?? mod.name}
+        draggable={false}
+        className="block h-full w-full object-cover origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
+        style={{ objectPosition: `${soundHeroFacePos}% 25%` }}
+      />
+    </ImageContextMenu>
   ) : (
     <SoundPlaceholder />
   );
@@ -4207,13 +4210,15 @@ function ModListRowContent({
         onDragStart={stopMediaDrag}
       >
         {listHeroRenderUrl ? (
-          <img
-            src={listHeroRenderUrl}
-            alt={listHeroName ?? mod.name}
-            draggable={false}
-            className="block h-full w-full object-cover origin-center transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
-            style={{ objectPosition: `${listHeroFacePos}% 25%` }}
-          />
+          <ImageContextMenu src={listHeroRenderUrl} alt={listHeroName ?? mod.name}>
+            <img
+              src={listHeroRenderUrl}
+              alt={listHeroName ?? mod.name}
+              draggable={false}
+              className="block h-full w-full object-cover origin-center transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
+              style={{ objectPosition: `${listHeroFacePos}% 25%` }}
+            />
+          </ImageContextMenu>
         ) : isSound && !mod.thumbnailUrl ? (
           <SoundPlaceholder />
         ) : (

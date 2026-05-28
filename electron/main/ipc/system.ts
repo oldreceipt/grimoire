@@ -1,4 +1,4 @@
-import { ipcMain, dialog, shell } from 'electron';
+import { ipcMain, dialog, shell, clipboard, nativeImage } from 'electron';
 import { getMainWindow } from '../index';
 import { loadSettings } from '../services/settings';
 import {
@@ -12,6 +12,7 @@ import { listArchiveContents } from '../services/extract';
 import { healLockerVpks } from '../services/lockerVpk';
 import {
     existsSync,
+    readFileSync,
     readdirSync,
     renameSync,
     copyFileSync,
@@ -23,6 +24,7 @@ import {
 import { join, basename } from 'path';
 import { spawn } from 'child_process';
 import { tmpdir } from 'os';
+import { fileURLToPath } from 'url';
 import https from 'https';
 import http from 'http';
 import { getAddonsPath, getDisabledPath, getCitadelPath } from '../services/deadlock';
@@ -55,6 +57,31 @@ interface ApplyMinaVariantArgs {
     heroCategoryId?: number;
 }
 
+async function loadClipboardImage(source: string): Promise<Electron.NativeImage> {
+    if (!source) {
+        throw new Error('Image source is required');
+    }
+
+    if (source.startsWith('data:image/')) {
+        return nativeImage.createFromDataURL(source);
+    }
+
+    const url = new URL(source);
+    if (url.protocol === 'file:') {
+        return nativeImage.createFromBuffer(readFileSync(fileURLToPath(url)));
+    }
+
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Image request failed with status ${response.status}`);
+        }
+        return nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer()));
+    }
+
+    throw new Error(`Unsupported image source: ${url.protocol}`);
+}
+
 /**
  * Get the active deadlock path from settings
  */
@@ -79,6 +106,16 @@ ipcMain.handle(
         return result.canceled ? null : result.filePaths[0] || null;
     }
 );
+
+// copy-image-to-clipboard
+// Writes actual image pixels to the system clipboard, not just the image URL.
+ipcMain.handle('copy-image-to-clipboard', async (_, source: string): Promise<void> => {
+    const image = await loadClipboardImage(source);
+    if (image.isEmpty()) {
+        throw new Error('Image could not be decoded');
+    }
+    clipboard.writeImage(image);
+});
 
 // open-mods-folder
 ipcMain.handle('open-mods-folder', async (): Promise<void> => {

@@ -100,6 +100,7 @@ export interface ElectronAPI {
     downloadMinaVariations: () => Promise<string>;
 
     // Maintenance
+    copyImageToClipboard: (source: string) => Promise<void>;
     cleanupAddons: () => Promise<CleanupResult>;
     getGameinfoStatus: () => Promise<GameinfoStatus>;
     fixGameinfo: () => Promise<GameinfoStatus>;
@@ -863,6 +864,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     downloadMinaVariations: () => ipcRenderer.invoke('download-mina-variations'),
 
     // Maintenance
+    copyImageToClipboard: (source: string) =>
+        ipcRenderer.invoke('copy-image-to-clipboard', source),
     cleanupAddons: () => ipcRenderer.invoke('cleanup-addons'),
     getGameinfoStatus: () => ipcRenderer.invoke('get-gameinfo-status'),
     fixGameinfo: () => ipcRenderer.invoke('fix-gameinfo'),

@@ -1,6 +1,7 @@
 import { EyeOff } from 'lucide-react';
 import type { MergedModSource } from '../types/mod';
 import { getHeroRenderPath } from '../lib/lockerUtils';
+import ImageContextMenu from './ImageContextMenu';
 
 interface ModThumbnailProps {
   src?: string;
@@ -9,6 +10,8 @@ interface ModThumbnailProps {
   hideNsfw?: boolean;
   className?: string;
   imageClassName?: string;
+  imageFit?: 'cover' | 'contain' | 'fill';
+  imagePosition?: string;
   fallback?: React.ReactNode;
   /** Canonical Deadlock hero name (e.g. "Lady Geist"). When set, the hero's
    *  render image is used instead of `src`. Sound mods use this so the locker
@@ -29,6 +32,8 @@ export default function ModThumbnail({
   hideNsfw,
   className = '',
   imageClassName = '',
+  imageFit = 'cover',
+  imagePosition,
   fallback,
   heroPortrait,
   mergedSources,
@@ -63,24 +68,35 @@ export default function ModThumbnail({
     );
   }
 
-  return (
+  const thumbnail = (
     <div className={`relative overflow-hidden ${className}`}>
       <div className={`w-full h-full ${imageClassName}`}>
         <img
           src={resolvedSrc}
           alt={alt}
-          className={`block w-full h-full object-cover transition-[filter] duration-200 ${
+          loading="lazy"
+          decoding="async"
+          className={`block h-full w-full ${imageFit === 'contain' ? 'object-contain' : imageFit === 'fill' ? 'object-fill' : 'object-cover'} transition-[filter] duration-200 ${
             resolvedBlur ? 'blur-xl scale-110' : ''
           }`}
+          style={imagePosition ? { objectPosition: imagePosition } : undefined}
         />
       </div>
       {resolvedBlur && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-primary/40">
           <EyeOff className="w-4 h-4 text-white/70" />
           <span className="text-[9px] text-white/70 mt-0.5">NSFW</span>
         </div>
       )}
     </div>
+  );
+
+  if (resolvedBlur) return thumbnail;
+
+  return (
+    <ImageContextMenu src={resolvedSrc} alt={alt}>
+      {thumbnail}
+    </ImageContextMenu>
   );
 }
 
@@ -109,11 +125,25 @@ function MergedCollage({ sources, alt, className, shouldBlur }: MergedCollagePro
         {cells.map((cell, idx) => (
           <div key={idx} className="relative bg-bg-tertiary overflow-hidden">
             {cell.kind === 'image' ? (
-              <img
-                src={cell.url}
-                alt=""
-                className={`block w-full h-full object-cover ${shouldBlur ? 'blur-xl scale-110' : ''}`}
-              />
+              shouldBlur ? (
+                <img
+                  src={cell.url}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="block w-full h-full object-cover blur-xl scale-110"
+                />
+              ) : (
+                <ImageContextMenu src={cell.url} alt={alt}>
+                  <img
+                    src={cell.url}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="block w-full h-full object-cover"
+                  />
+                </ImageContextMenu>
+              )
             ) : (
               <div className="w-full h-full flex items-center justify-center text-xs font-semibold text-text-secondary">
                 +{cell.count}
@@ -123,7 +153,7 @@ function MergedCollage({ sources, alt, className, shouldBlur }: MergedCollagePro
         ))}
       </div>
       {shouldBlur && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30 pointer-events-none">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg-primary/40 pointer-events-none">
           <EyeOff className="w-4 h-4 text-white/70" />
           <span className="text-[9px] text-white/70 mt-0.5">NSFW</span>
         </div>

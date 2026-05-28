@@ -368,6 +368,7 @@ export interface ElectronAPI {
     downloadMinaVariations: () => Promise<string>;
 
     // Maintenance
+    copyImageToClipboard: (source: string) => Promise<void>;
     cleanupAddons: () => Promise<CleanupResult>;
     getGameinfoStatus: () => Promise<GameinfoStatus>;
     fixGameinfo: () => Promise<GameinfoStatus>;
