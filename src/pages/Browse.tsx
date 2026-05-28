@@ -295,7 +295,6 @@ function getReadableCardChips(mod: GameBananaMod, section: string, inferredHero:
 
   addReadableChip(chips, categoryLabel, isSoundSection ? 'accent' : 'neutral');
   if (inferredHero) addReadableChip(chips, inferredHero, 'info');
-  if (isSoundSection) addReadableChip(chips, 'Audio', 'neutral');
   if (mod.nsfw) addReadableChip(chips, '18+', 'danger');
 
   chips.sort((a, b) => {
@@ -397,15 +396,16 @@ function BrowseReadableUpdatedLine({ timestamp }: { timestamp?: number }) {
 
   if (!relative) return null;
 
+  // Rendered inline in the card's stats row, to the right of likes/views.
   return (
-    <p
-      className={`mt-1 truncate text-[clamp(9px,3.5714cqw,11px)] font-normal leading-[1.05] ${
-        isOutdated ? 'text-state-warning/70' : 'text-text-tertiary/42'
+    <span
+      className={`inline-flex min-w-0 shrink items-center gap-0.5 truncate font-normal leading-none ${
+        isOutdated ? 'text-state-warning/80' : 'text-text-tertiary/55'
       }`}
       title={absolute ? `${isOutdated ? 'Outdated. ' : ''}Last updated on GameBanana: ${absolute}` : undefined}
     >
       ↻ {relative}
-    </p>
+    </span>
   );
 }
 
@@ -542,6 +542,7 @@ function BrowseReadableStatsRow({ mod, density }: { mod: GameBananaMod; density:
         align="start"
         emphasis={itemEmphasis}
       />
+      {density === 'full' && <BrowseReadableUpdatedLine timestamp={mod.dateModified} />}
     </div>
   );
 }
@@ -2927,7 +2928,6 @@ function ReadableBrowseModCard({
   const chips = getReadableCardChips(mod, section, inferredHero);
   const showChips = readableDensity !== 'micro';
   const showAuthor = readableDensity !== 'micro';
-  const showUpdated = readableDensity === 'full';
   const isMicro = readableDensity === 'micro';
   const isCompactReadable = readableDensity === 'compact';
   const actionIconOnly = readableCardWidth < 220;
@@ -3039,7 +3039,7 @@ function ReadableBrowseModCard({
       tabIndex={0}
       aria-label={`Open details for ${mod.name}`}
       style={cardFrameStyle}
-      className={`browse-card-hover-surface browse-readable-card group flex w-full flex-col overflow-hidden rounded-md border bg-bg-secondary text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 cursor-pointer focus-visible:border-accent focus-visible:outline-none [container-type:inline-size] ${
+      className={`browse-card-hover-surface browse-readable-card group flex w-full flex-col overflow-hidden rounded-md border bg-[#141414]/90 text-left shadow-[0_1px_0_rgba(255,255,255,0.03)] transition-[border-color,transform,box-shadow] duration-150 cursor-pointer focus-visible:border-accent focus-visible:outline-none [container-type:inline-size] ${
         isPlaying
           ? 'border-state-danger/70 ring-2 ring-state-danger/35 shadow-lg shadow-state-danger/15'
           : downloading
@@ -3049,7 +3049,6 @@ function ReadableBrowseModCard({
     >
       <div className={`browse-readable-card-media relative ${mediaHeightClass} overflow-hidden rounded-t-md bg-bg-tertiary`}>
         {media}
-        <div className="browse-readable-card-media-fade" aria-hidden="true" />
       </div>
 
       <div
@@ -3079,7 +3078,6 @@ function ReadableBrowseModCard({
               by {mod.submitter?.name ?? 'Unknown author'}
             </p>
           )}
-          {showUpdated && <BrowseReadableUpdatedLine timestamp={mod.dateModified} />}
         </div>
 
         {showInlineAudioPreview && (

@@ -320,7 +320,7 @@ body {
 .browse-action-button--install {
   border-color: rgba(120, 140, 170, 0.28);
   background: rgba(255, 255, 255, 0.025);
-  color: color-mix(in srgb, var(--color-text-secondary) 88%, transparent);
+  color: var(--color-text-primary);
 }
 
 .browse-action-button--installed {
@@ -436,7 +436,10 @@ body {
 }
 
 .browse-readable-card-body {
-  background: var(--color-bg-secondary);
+  /* Transparent so the body reads as the card's own slightly-opaque dark
+     surface (set on the card frame), which sits just above the page
+     background. */
+  background: transparent;
   isolation: isolate;
 }
 
@@ -445,22 +448,6 @@ body {
   z-index: 1;
 }
 
-.browse-readable-card-media-fade {
-  position: absolute;
-  inset-inline: 0;
-  bottom: -1px;
-  z-index: 1;
-  height: clamp(26px, 12cqw, 42px);
-  pointer-events: none;
-  background:
-    linear-gradient(
-      to bottom,
-      transparent 0%,
-      color-mix(in srgb, var(--color-bg-secondary) 18%, transparent) 42%,
-      color-mix(in srgb, var(--color-bg-secondary) 70%, transparent) 78%,
-      var(--color-bg-secondary) 100%
-    );
-}
 
 .browse-readable-card-media::after {
   content: '';
