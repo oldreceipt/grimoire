@@ -61,7 +61,7 @@ import { EmptyState } from '../components/common/PageComponents';
 import ModDetailsModal from '../components/ModDetailsModal';
 import ImportCollectionModal from '../components/ImportCollectionModal';
 import ImportProfileDialog from '../components/profiles/ImportProfileDialog';
-import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition } from '../lib/lockerUtils';
+import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition, getHeroChipIconPath } from '../lib/lockerUtils';
 import { formatAbsoluteDate, formatRelativeDate } from '../lib/dates';
 
 const DEFAULT_PER_PAGE = 36;
@@ -133,6 +133,8 @@ type BrowseReadableChipTone = 'neutral' | 'accent' | 'danger' | 'info';
 type BrowseReadableChip = {
   label: string;
   tone?: BrowseReadableChipTone;
+  /** When set, the chip renders as the hero's round icon instead of a text pill. */
+  hero?: string;
 };
 
 type BrowseResultCacheEntry = {
@@ -150,6 +152,10 @@ type QueuedDownloadState = {
 const BROWSE_READABLE_MAX_VISIBLE_CHIPS = 3;
 const BROWSE_READABLE_CHIP_GAP_WIDTH = 6;
 const BROWSE_READABLE_CHIP_OVERFLOW_WIDTH = 30;
+const BROWSE_READABLE_HERO_CHIP_WIDTH = 24;
+// Below this card width the "last updated" line moves to its own row under the
+// author instead of sharing the stats row, so it never squashes likes/views.
+const BROWSE_READABLE_UPDATED_INLINE_MIN = 300;
 const BROWSE_READABLE_CARD_MIN = 140;
 const BROWSE_READABLE_CARD_GOLDEN = 280;
 const BROWSE_READABLE_CARD_MAX = 340;
@@ -294,20 +300,45 @@ function getReadableCardChips(mod: GameBananaMod, section: string, inferredHero:
   const categoryLabel = mod.rootCategory?.name ?? section;
 
   addReadableChip(chips, categoryLabel, isSoundSection ? 'accent' : 'neutral');
-  if (inferredHero) addReadableChip(chips, inferredHero, 'info');
+  if (inferredHero) chips.push({ label: inferredHero, tone: 'info', hero: inferredHero });
   if (mod.nsfw) addReadableChip(chips, '18+', 'danger');
 
-  chips.sort((a, b) => {
-    const aPriority = a.label === '18+' ? 0 : 1;
-    const bPriority = b.label === '18+' ? 0 : 1;
-    return aPriority - bPriority;
-  });
+  // Hero icon stays leftmost as a consistent anchor across cards, then the
+  // NSFW flag, then the rest (category, etc.). Sort is stable, so chips of
+  // equal rank keep their insertion order.
+  const rank = (chip: BrowseReadableChip) => (chip.hero ? 0 : chip.label === '18+' ? 1 : 2);
+  chips.sort((a, b) => rank(a) - rank(b));
 
   return chips;
 }
 
 function estimateReadableChipWidth(label: string): number {
   return Math.ceil(label.length * 5.5 + 14);
+}
+
+function BrowseReadableChipBadge({ chip }: { chip: BrowseReadableChip }) {
+  if (chip.hero) {
+    return (
+      <img
+        src={getHeroChipIconPath(chip.hero)}
+        alt={chip.label}
+        title={chip.label}
+        loading="lazy"
+        draggable={false}
+        className="h-6 w-6 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <span
+      title={chip.label}
+      className={`inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-sm border px-2 text-[10px] font-medium leading-none ${readableChipTone(
+        chip.tone
+      )}`}
+    >
+      {chip.label}
+    </span>
+  );
 }
 
 function BrowseReadableChipRow({
@@ -328,7 +359,7 @@ function BrowseReadableChipRow({
     if (visibleChips.length >= maxVisible) break;
 
     const remainingAfter = orderedChips.length - index - 1;
-    const chipWidth = estimateReadableChipWidth(chip.label);
+    const chipWidth = chip.hero ? BROWSE_READABLE_HERO_CHIP_WIDTH : estimateReadableChipWidth(chip.label);
     const gapBefore = visibleChips.length > 0 ? BROWSE_READABLE_CHIP_GAP_WIDTH : 0;
     const overflowReserve = remainingAfter > 0 ? BROWSE_READABLE_CHIP_GAP_WIDTH + BROWSE_READABLE_CHIP_OVERFLOW_WIDTH : 0;
 
@@ -345,15 +376,7 @@ function BrowseReadableChipRow({
   return (
     <div className="flex h-6 min-w-0 items-start gap-[clamp(5px,2.1429cqw,7px)] overflow-visible">
       {visibleChips.map((chip, index) => (
-        <span
-          key={`${chip.label}-${index}`}
-          title={chip.label}
-          className={`inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-sm border px-2 text-[10px] font-medium leading-none ${readableChipTone(
-            chip.tone
-          )}`}
-        >
-          {chip.label}
-        </span>
+        <BrowseReadableChipBadge key={`${chip.label}-${index}`} chip={chip} />
       ))}
       {hiddenChips.length > 0 && (
         <div className="group/hidden relative shrink-0">
@@ -365,14 +388,7 @@ function BrowseReadableChipRow({
           </span>
           <div className="pointer-events-none absolute left-0 top-[calc(100%+6px)] z-20 hidden min-w-max max-w-[180px] flex-wrap gap-1 rounded-md border border-white/[0.08] bg-bg-secondary/96 p-2 shadow-[0_8px_24px_rgba(0,0,0,0.35)] backdrop-blur-md group-hover/hidden:flex">
             {hiddenChips.map((chip, index) => (
-              <span
-                key={`${chip.label}-overflow-${index}`}
-                className={`inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-sm border px-2 text-[10px] font-medium leading-none ${readableChipTone(
-                  chip.tone
-                )}`}
-              >
-                {chip.label}
-              </span>
+              <BrowseReadableChipBadge key={`${chip.label}-overflow-${index}`} chip={chip} />
             ))}
           </div>
         </div>
@@ -388,7 +404,15 @@ function gameBananaTimestampToIso(timestamp: number | undefined): string | null 
   return date.toISOString();
 }
 
-function BrowseReadableUpdatedLine({ timestamp }: { timestamp?: number }) {
+function BrowseReadableUpdatedLine({
+  timestamp,
+  variant = 'inline',
+}: {
+  timestamp?: number;
+  /** `inline` sits in the stats row; `block` is its own line under the author
+   *  (used on narrow cards where the stats row has no room for it). */
+  variant?: 'inline' | 'block';
+}) {
   const iso = gameBananaTimestampToIso(timestamp);
   const relative = iso ? formatRelativeDate(iso).replace(/(\d+)\s+(mo|yr)\s+ago/g, '$1$2 ago') : null;
   const absolute = iso ? formatAbsoluteDate(iso) : null;
@@ -396,13 +420,27 @@ function BrowseReadableUpdatedLine({ timestamp }: { timestamp?: number }) {
 
   if (!relative) return null;
 
-  // Rendered inline in the card's stats row, to the right of likes/views.
+  const title = absolute ? `${isOutdated ? 'Outdated. ' : ''}Last updated on GameBanana: ${absolute}` : undefined;
+
+  if (variant === 'block') {
+    return (
+      <p
+        className={`mt-1 truncate text-[clamp(9px,3.5714cqw,11px)] font-normal leading-[1.05] ${
+          isOutdated ? 'text-state-warning/70' : 'text-text-tertiary/55'
+        }`}
+        title={title}
+      >
+        ↻ {relative}
+      </p>
+    );
+  }
+
   return (
     <span
       className={`inline-flex min-w-0 shrink items-center gap-0.5 truncate font-normal leading-none ${
         isOutdated ? 'text-state-warning/80' : 'text-text-tertiary/55'
       }`}
-      title={absolute ? `${isOutdated ? 'Outdated. ' : ''}Last updated on GameBanana: ${absolute}` : undefined}
+      title={title}
     >
       ↻ {relative}
     </span>
@@ -517,7 +555,7 @@ function BrowseStatItem({
   );
 }
 
-function BrowseReadableStatsRow({ mod, density }: { mod: GameBananaMod; density: BrowseReadableDensity }) {
+function BrowseReadableStatsRow({ mod, density, showUpdated }: { mod: GameBananaMod; density: BrowseReadableDensity; showUpdated: boolean }) {
   const isMicro = density === 'micro';
   const groupClass = isMicro
     ? 'grid w-full grid-cols-2 items-center text-[clamp(11px,4.3cqw,13px)] font-semibold text-text-tertiary/70'
@@ -542,7 +580,7 @@ function BrowseReadableStatsRow({ mod, density }: { mod: GameBananaMod; density:
         align="start"
         emphasis={itemEmphasis}
       />
-      {density === 'full' && <BrowseReadableUpdatedLine timestamp={mod.dateModified} />}
+      {showUpdated && <BrowseReadableUpdatedLine timestamp={mod.dateModified} variant="inline" />}
     </div>
   );
 }
@@ -2928,6 +2966,12 @@ function ReadableBrowseModCard({
   const chips = getReadableCardChips(mod, section, inferredHero);
   const showChips = readableDensity !== 'micro';
   const showAuthor = readableDensity !== 'micro';
+  // "Last updated" sits in the stats row when the card is wide enough; on
+  // narrower cards it drops to its own line under the author so it can't
+  // squash the likes/views counts.
+  const showUpdated = readableDensity === 'full';
+  const updatedInline = showUpdated && readableCardWidth >= BROWSE_READABLE_UPDATED_INLINE_MIN;
+  const updatedOwnLine = showUpdated && !updatedInline;
   const isMicro = readableDensity === 'micro';
   const isCompactReadable = readableDensity === 'compact';
   const actionIconOnly = readableCardWidth < 220;
@@ -3078,6 +3122,7 @@ function ReadableBrowseModCard({
               by {mod.submitter?.name ?? 'Unknown author'}
             </p>
           )}
+          {updatedOwnLine && <BrowseReadableUpdatedLine timestamp={mod.dateModified} variant="block" />}
         </div>
 
         {showInlineAudioPreview && (
@@ -3153,7 +3198,7 @@ function ReadableBrowseModCard({
         )}
 
         <div className={`${footerMarginClass} flex ${footerHeightClass} items-center justify-between gap-[clamp(6px,4.2857cqw,14px)]`}>
-          <BrowseReadableStatsRow mod={mod} density={readableDensity} />
+          <BrowseReadableStatsRow mod={mod} density={readableDensity} showUpdated={updatedInline} />
           <BrowseReadableAction
             modName={mod.name}
             installed={installed}
