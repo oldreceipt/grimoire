@@ -2950,7 +2950,7 @@ function ReadableBrowseModCard({
     : 'mt-0';
   const footerMarginClass = isMicro
     ? 'mt-[clamp(6px,3.5714cqw,8px)]'
-    : 'mt-[clamp(10px,4.2857cqw,14px)]';
+    : 'mt-[clamp(7px,3.5714cqw,11px)]';
   const footerHeightClass = isMicro
     ? 'h-6'
     : 'h-[clamp(24px,10cqw,32px)]';
