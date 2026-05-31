@@ -34,6 +34,8 @@ export interface AppSettings {
     /** UI accent color (hex, e.g. "#f97316"). Used to theme buttons, links, and
      *  focus rings throughout the app. */
     accentColor: string;
+    /** Hero render used as the active sidebar highlight background. */
+    sidebarHeroHighlight?: string | null;
     /** Order used to render absolute dates (mod/file upload + update dates). */
     dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY';
     /** UI zoom factor (webContents.setZoomFactor). Driven by Ctrl +/-/0 and
@@ -60,6 +62,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     ignoredConflicts: [],
     ignoreConflictsByDefault: false,
     accentColor: '#f97316',
+    sidebarHeroHighlight: 'Abrams',
     dateFormat: 'MM/DD/YYYY',
     zoomFactor: 1,
 };

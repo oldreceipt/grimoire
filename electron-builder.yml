@@ -42,6 +42,7 @@ extraResources:
     to: vpkmerge
     filter:
       - "**/*"
+      - "!*.bak"
 linux:
   target:
     - AppImage

@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { FolderOpen, Check, X, Loader2, RefreshCw, Database, Trash2, Shield, Wrench, HardDrive, Beaker, Download, Sparkles, ArrowDownCircle, Palette, Pipette, LifeBuoy, Github, Globe, FileText, Bug, Copy } from 'lucide-react';
+import { FolderOpen, Check, X, Loader2, RefreshCw, Database, Trash2, Shield, Wrench, HardDrive, Beaker, Download, Sparkles, ArrowDownCircle, Palette, Pipette, LifeBuoy, Github, Globe, FileText, Bug, Copy, ChevronDown } from 'lucide-react';
 import { HexColorPicker, HexColorInput } from 'react-colorful';
 import DOMPurify from 'dompurify';
 import { useAppStore } from '../stores/appStore';
@@ -19,6 +19,7 @@ import { formatDateParts } from '../lib/dateFormat';
 import { Card, Badge, Toggle, Button } from '../components/common/ui';
 import { PageHeader, ConfirmModal } from '../components/common/PageComponents';
 import { ACCENT_PRESETS, DEFAULT_ACCENT_COLOR, applyAccentColor } from '../lib/accentColor';
+import { DEFAULT_SIDEBAR_HERO, HERO_NAMES_SORTED, getHeroChipIconPath } from '../lib/lockerUtils';
 import SocialAccountSection from '../components/social/SocialAccountSection';
 
 // GitHub Releases is the source of truth for changelogs. When we have local
@@ -78,6 +79,7 @@ export default function Settings() {
   const [previewConfirmOpen, setPreviewConfirmOpen] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
   const [resetResult, setResetResult] = useState<string | null>(null);
+  const [heroPickerOpen, setHeroPickerOpen] = useState(false);
 
   // Updater state
   const [appVersion, setAppVersion] = useState<string>('');
@@ -108,6 +110,12 @@ export default function Settings() {
 
   const isDevMode = settings?.devMode ?? false;
   const activeDeadlockPath = getActiveDeadlockPath(settings);
+  const selectedSidebarHero = useMemo(() => {
+    const configuredHero = settings?.sidebarHeroHighlight;
+    if (configuredHero === null || configuredHero === '') return null;
+    if (configuredHero && HERO_NAMES_SORTED.includes(configuredHero)) return configuredHero;
+    return DEFAULT_SIDEBAR_HERO;
+  }, [settings?.sidebarHeroHighlight]);
 
   // The displayed path: local override or settings value
   const displayPath = isDevMode
@@ -226,6 +234,13 @@ export default function Settings() {
     }
   };
 
+  const handleSidebarHeroHighlightChange = async (heroName: string | null) => {
+    setHeroPickerOpen(false);
+    if (settings) {
+      await saveSettings({ ...settings, sidebarHeroHighlight: heroName });
+    }
+  };
+
   // Custom color picker state. While the modal is open, picker drags only
   // update CSS vars + draft locally; the settings file is written once on
   // commit (Done, backdrop click, Escape) so we don't hammer it 60x/sec
@@ -259,6 +274,15 @@ export default function Settings() {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [customPickerOpen, commitCustomDraft]);
+
+  useEffect(() => {
+    if (!heroPickerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHeroPickerOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [heroPickerOpen]);
 
   const handleHideNsfwChange = async (checked: boolean) => {
     if (settings) {
@@ -761,7 +785,7 @@ export default function Settings() {
           icon={Palette}
           className="lg:col-span-2"
           action={
-            <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex flex-wrap gap-2 items-center justify-end">
               {(() => {
                 const current = (settings?.accentColor ?? DEFAULT_ACCENT_COLOR).toLowerCase();
                 const isCustomActive = !ACCENT_PRESETS.some((p) => p.color.toLowerCase() === current);
@@ -810,6 +834,36 @@ export default function Settings() {
                       }
                     >
                       <Pipette className="w-3.5 h-3.5 text-black/70 drop-shadow-[0_1px_0_rgba(255,255,255,0.5)]" />
+                    </button>
+
+                    <span aria-hidden className="mx-1 h-9 w-px bg-white/10" />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomPickerOpen(false);
+                        setHeroPickerOpen(true);
+                      }}
+                      title={selectedSidebarHero ? `Sidebar highlight: ${selectedSidebarHero}` : 'Sidebar highlight: None'}
+                      aria-label={selectedSidebarHero ? `Sidebar highlight: ${selectedSidebarHero}` : 'Sidebar highlight: None'}
+                      aria-haspopup="dialog"
+                      className={`${swatchBase} bg-bg-tertiary ${
+                        selectedSidebarHero
+                          ? 'border-white/40'
+                          : 'border-accent/60 hover:border-accent/80'
+                      }`}
+                    >
+                      {selectedSidebarHero ? (
+                        <img
+                          src={getHeroChipIconPath(selectedSidebarHero)}
+                          alt=""
+                          aria-hidden
+                          className="h-7 w-7 object-contain"
+                        />
+                      ) : (
+                        <Palette className="h-4 w-4 text-accent" aria-hidden />
+                      )}
+                      <ChevronDown className="absolute bottom-0.5 right-0.5 h-2.5 w-2.5 text-text-primary/80 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]" aria-hidden />
                     </button>
 
                     {customPickerOpen && createPortal(
@@ -869,6 +923,96 @@ export default function Settings() {
                                 Apply
                               </Button>
                             </div>
+                          </div>
+                        </div>
+                      </div>,
+                      document.body
+                    )}
+
+                    {heroPickerOpen && createPortal(
+                      <div
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-fade-in"
+                        onClick={() => setHeroPickerOpen(false)}
+                        role="presentation"
+                      >
+                        <div
+                          className="relative w-full max-w-md overflow-hidden rounded-sm border border-white/10 bg-bg-secondary p-5 shadow-2xl"
+                          onClick={(e) => e.stopPropagation()}
+                          role="dialog"
+                          aria-modal="true"
+                          aria-labelledby="sidebar-hero-picker-title"
+                        >
+                          <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[2px] bg-accent/60" />
+                          <div className="mb-4 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <h3 id="sidebar-hero-picker-title" className="text-lg font-semibold text-text-primary tracking-wide font-reaver">
+                                Sidebar Highlight
+                              </h3>
+                              <p className="text-xs text-text-secondary">
+                                {selectedSidebarHero ?? 'None'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setHeroPickerOpen(false)}
+                              title="Close"
+                              aria-label="Close sidebar highlight picker"
+                              className="flex h-8 w-8 items-center justify-center rounded-sm border border-white/10 text-text-secondary transition-colors hover:border-white/25 hover:bg-white/5 hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                            >
+                              <X className="h-4 w-4" aria-hidden />
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-5 gap-2 sm:grid-cols-6">
+                            <button
+                              type="button"
+                              onClick={() => void handleSidebarHeroHighlightChange(null)}
+                              title="None"
+                              aria-label="Sidebar highlight: None"
+                              aria-pressed={selectedSidebarHero === null}
+                              className={`relative flex aspect-square items-center justify-center rounded-sm border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                                selectedSidebarHero === null
+                                  ? 'border-accent/70 bg-accent/15'
+                                  : 'border-white/10 bg-bg-tertiary hover:border-accent/50 hover:bg-accent/10'
+                              }`}
+                            >
+                              <Palette className="h-5 w-5 text-accent" aria-hidden />
+                              {selectedSidebarHero === null && (
+                                <span className="absolute right-0.5 top-0.5 rounded-sm bg-accent p-0.5 text-accent-foreground">
+                                  <Check className="h-2.5 w-2.5" aria-hidden />
+                                </span>
+                              )}
+                            </button>
+                            {HERO_NAMES_SORTED.map((heroName) => {
+                              const active = selectedSidebarHero === heroName;
+                              return (
+                                <button
+                                  key={heroName}
+                                  type="button"
+                                  onClick={() => void handleSidebarHeroHighlightChange(heroName)}
+                                  title={heroName}
+                                  aria-label={`Sidebar highlight: ${heroName}`}
+                                  aria-pressed={active}
+                                  className={`relative flex aspect-square items-center justify-center overflow-hidden rounded-sm border bg-bg-tertiary transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+                                    active
+                                      ? 'border-accent/70 bg-accent/15'
+                                      : 'border-white/10 hover:border-accent/50 hover:bg-accent/10'
+                                  }`}
+                                >
+                                  <img
+                                    src={getHeroChipIconPath(heroName)}
+                                    alt=""
+                                    aria-hidden
+                                    className="h-8 w-8 object-contain"
+                                    loading="lazy"
+                                  />
+                                  {active && (
+                                    <span className="absolute right-0.5 top-0.5 rounded-sm bg-accent p-0.5 text-accent-foreground">
+                                      <Check className="h-2.5 w-2.5" aria-hidden />
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       </div>,

@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Boxes,
   Compass,
@@ -29,30 +29,142 @@ import {
   launchVanilla,
   onVanillaRestoreComplete,
   restoreVanillaStash,
+  socialListProfiles,
   stopGame,
   type VanillaStashStatus,
   type VanillaRestoreResult,
 } from '../lib/api';
 
+import { getAssetPath } from '../lib/assetPath';
+import { DEFAULT_SIDEBAR_HERO, getHeroFacePosition, getHeroRenderPath } from '../lib/lockerUtils';
 import { useAppStore } from '../stores/appStore';
 import UpdateModal from './UpdateModal';
 
 const COLLAPSED_KEY = 'grimoire:sidebar-collapsed';
 const LABEL_TRANSITION_MS = 200;
+const DISCOVER_LAST_SEEN_KEY = 'grimoire:discover:last-seen-created-at';
+const DISCOVER_BADGE_POLL_MS = 2 * 60 * 1000;
+const GRIMOIRE_TITLE_ICON = getAssetPath('/grimoire-title-icon.svg');
+const LAUNCH_MODDED_BG = getAssetPath('/locker/launch-modded-bg.webp');
+const LAUNCH_VANILLA_BG = getAssetPath('/locker/launch-vanilla-bg.jpg');
 
 function readCollapsedPreference(): boolean {
   if (typeof window === 'undefined') return false;
   return localStorage.getItem(COLLAPSED_KEY) === '1';
 }
 
+function readDiscoverLastSeen(): number | null {
+  try {
+    const raw = localStorage.getItem(DISCOVER_LAST_SEEN_KEY);
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDiscoverLastSeen(createdAt: number): void {
+  try {
+    localStorage.setItem(DISCOVER_LAST_SEEN_KEY, String(createdAt));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function newestCreatedAt(profiles: Array<{ created_at: number }>): number {
+  return profiles.reduce((latest, profile) => Math.max(latest, profile.created_at), 0);
+}
+
+function formatBadgeCount(count: number): string {
+  return count > 99 ? '99+' : String(count);
+}
+
+function GrimoireTitleIcon() {
+  return (
+    <img
+      src={GRIMOIRE_TITLE_ICON}
+      alt=""
+      aria-hidden
+      draggable={false}
+      className="h-6 w-6 flex-shrink-0 opacity-90"
+    />
+  );
+}
+
+function SidebarActiveBackdrop({
+  heroSrc,
+  heroPositionX,
+}: {
+  heroSrc: string | null;
+  heroPositionX: number;
+}) {
+  if (heroSrc) {
+    return (
+      <span aria-hidden className="sidebar-active-backdrop pointer-events-none absolute inset-0">
+        <img
+          src={heroSrc}
+          alt=""
+          className="sidebar-active-backdrop__image h-full w-full object-cover opacity-75"
+          style={{ objectPosition: `${heroPositionX}% 18%` }}
+        />
+        <span className="absolute inset-0 bg-gradient-to-r from-bg-primary/90 via-bg-primary/55 to-bg-primary/20" />
+        <span className="absolute inset-0 bg-black/20" />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      aria-hidden
+      className="sidebar-active-backdrop pointer-events-none absolute inset-0 bg-accent/10"
+    >
+      <span className="absolute inset-0 bg-gradient-to-r from-accent/20 via-accent/8 to-transparent" />
+    </span>
+  );
+}
+
+function LaunchButtonBackdrop({
+  src,
+  position = 'center',
+  warm = false,
+}: {
+  src: string;
+  position?: string;
+  warm?: boolean;
+}) {
+  return (
+    <span aria-hidden className="pointer-events-none absolute inset-0">
+      <img
+        src={src}
+        alt=""
+        className={`h-full w-full object-cover opacity-65 transition-transform duration-300 group-hover:scale-[1.04] ${
+          warm ? 'saturate-[0.95]' : 'saturate-[1.05]'
+        }`}
+        style={{ objectPosition: position }}
+      />
+      <span
+        className={`absolute inset-0 ${
+          warm
+            ? 'bg-gradient-to-r from-bg-primary/85 via-bg-primary/55 to-amber-950/25'
+            : 'bg-gradient-to-r from-bg-primary/82 via-bg-primary/50 to-emerald-950/20'
+        }`}
+      />
+      <span className="absolute inset-0 bg-black/20" />
+    </span>
+  );
+}
+
 export default function Sidebar() {
   const [conflictCount, setConflictCount] = useState(0);
+  const [discoverNotificationCount, setDiscoverNotificationCount] = useState(0);
   const [appVersion, setAppVersion] = useState('');
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const settings = useAppStore((state) => state.settings);
   const mods = useAppStore((state) => state.mods);
   const loadMods = useAppStore((state) => state.loadMods);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const installedCount = mods.length;
 
@@ -124,6 +236,19 @@ export default function Sidebar() {
   const navLabelClass = `flex-1 ${labelTransitionClass}`;
   const actionLabelClass = `flex-1 text-left ${labelTransitionClass}`;
   const actionIconClass = 'flex h-full w-10 flex-shrink-0 items-center justify-center';
+  const configuredSidebarHero = settings?.sidebarHeroHighlight;
+  const sidebarHeroHighlight =
+    configuredSidebarHero === null || configuredSidebarHero === ''
+      ? null
+      : configuredSidebarHero ?? DEFAULT_SIDEBAR_HERO;
+  const sidebarHeroHighlightSrc = sidebarHeroHighlight
+    ? getHeroRenderPath(sidebarHeroHighlight)
+    : null;
+  const sidebarHeroHighlightX = sidebarHeroHighlight
+    ? getHeroFacePosition(sidebarHeroHighlight)
+    : 55;
+  const settingsActive = location.pathname.startsWith('/settings');
+  const discoverActive = location.pathname.startsWith('/discover');
 
   useEffect(() => {
     try {
@@ -181,6 +306,45 @@ export default function Sidebar() {
     }
   }, []);
 
+  const refreshDiscoverNotifications = useCallback(async () => {
+    if (!settings?.experimentalSocial) {
+      setDiscoverNotificationCount(0);
+      return;
+    }
+
+    try {
+      const res = await socialListProfiles({
+        sort: 'new',
+        hideNsfw: settings.hideNsfwPreviews ?? true,
+        page: 1,
+      });
+      const newest = newestCreatedAt(res.profiles);
+      if (!newest) {
+        setDiscoverNotificationCount(0);
+        return;
+      }
+
+      if (discoverActive) {
+        writeDiscoverLastSeen(newest);
+        setDiscoverNotificationCount(0);
+        return;
+      }
+
+      const lastSeen = readDiscoverLastSeen();
+      if (lastSeen === null) {
+        writeDiscoverLastSeen(newest);
+        setDiscoverNotificationCount(0);
+        return;
+      }
+
+      setDiscoverNotificationCount(
+        res.profiles.filter((profile) => profile.created_at > lastSeen).length
+      );
+    } catch {
+      // Keep the previous badge value during transient social API failures.
+    }
+  }, [discoverActive, settings?.experimentalSocial, settings?.hideNsfwPreviews]);
+
   useEffect(() => {
     void refreshConflictCount();
   }, [mods, refreshConflictCount]);
@@ -190,6 +354,21 @@ export default function Sidebar() {
     window.addEventListener('grimoire:conflicts-changed', handler);
     return () => window.removeEventListener('grimoire:conflicts-changed', handler);
   }, [refreshConflictCount]);
+
+  useEffect(() => {
+    if (discoverActive) setDiscoverNotificationCount(0);
+  }, [discoverActive]);
+
+  useEffect(() => {
+    if (!settings?.experimentalSocial) {
+      setDiscoverNotificationCount(0);
+      return;
+    }
+
+    void refreshDiscoverNotifications();
+    const interval = window.setInterval(refreshDiscoverNotifications, DISCOVER_BADGE_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [refreshDiscoverNotifications, settings?.experimentalSocial]);
 
   useEffect(() => {
     refreshStashStatus();
@@ -256,7 +435,7 @@ export default function Sidebar() {
   }, [loadMods, navigate]);
 
   const navItems = useMemo(() => {
-    type BadgeTone = 'muted' | 'warning';
+    type BadgeTone = 'muted' | 'warning' | 'info';
     type NavItem = {
       to: string;
       icon: typeof Boxes;
@@ -270,7 +449,17 @@ export default function Sidebar() {
     const items: NavItem[] = [
       { to: '/', icon: Boxes, label: 'Installed', tooltip: 'Mods currently in your Deadlock addons folder.', badge: installedCount, badgeTone: 'muted' },
       { to: '/browse', icon: Compass, label: 'Browse', tooltip: 'Discover and download mods from GameBanana.' },
-      { to: '/discover', icon: Globe2, label: 'Discover', tooltip: 'Browse and import profiles published by other Grimoire users.', experimental: 'social' },
+      {
+        to: '/discover',
+        icon: Globe2,
+        label: 'Discover',
+        tooltip: discoverNotificationCount > 0
+          ? `${discoverNotificationCount} new published ${discoverNotificationCount === 1 ? 'profile' : 'profiles'}.`
+          : 'Browse and import profiles published by other Grimoire users.',
+        experimental: 'social',
+        badge: discoverNotificationCount,
+        badgeTone: 'info',
+      },
       { to: '/locker', icon: Vault, label: 'Locker', tooltip: 'Active cosmetic skins, organized by hero.' },
       { to: '/crosshair', icon: Target, label: 'Crosshair', tooltip: 'Custom crosshair editor.', experimental: 'crosshair' },
       { to: '/autoexec', icon: ScrollText, label: 'Autoexec', tooltip: 'Console commands that run at game launch.' },
@@ -285,7 +474,7 @@ export default function Sidebar() {
       if (item.experimental === 'social') return settings?.experimentalSocial;
       return true;
     });
-  }, [settings?.experimentalStats, settings?.experimentalCrosshair, settings?.experimentalSocial, conflictCount, installedCount]);
+  }, [settings?.experimentalStats, settings?.experimentalCrosshair, settings?.experimentalSocial, conflictCount, discoverNotificationCount, installedCount]);
 
   const handleLaunchModded = async () => {
     if (launchPending || stopPending) return;
@@ -388,15 +577,22 @@ export default function Sidebar() {
     <aside
       className={`${collapsed ? 'w-16' : 'w-56'} bg-bg-secondary border-r border-border flex flex-col h-full min-h-0 transition-[width] duration-200 ease-out`}
     >
-      <div className="relative flex h-11 flex-shrink-0 items-center justify-center overflow-hidden border-b border-border px-3">
+      <div className="relative flex h-11 flex-shrink-0 items-center overflow-hidden border-b border-border px-3">
         {labelMounted && (
-          <span
-            className={`text-2xl text-accent block leading-none ${titleTransitionClass}`}
-            style={{ fontFamily: "'IM Fell English', serif" }}
-            aria-hidden={!labelsVisible}
+          <div
+            className={`pointer-events-none absolute inset-y-0 left-0 flex items-center justify-center ${
+              collapsed ? 'right-[46px]' : 'right-9'
+            }`}
           >
-            Grimoire
-          </span>
+            <span
+              className={`flex items-center gap-1.5 text-2xl text-text-primary/85 leading-none ${titleTransitionClass}`}
+              style={{ fontFamily: "'IM Fell English', serif" }}
+              aria-hidden={!labelsVisible}
+            >
+              <GrimoireTitleIcon />
+              Grimoire
+            </span>
+          </div>
         )}
         <button
           type="button"
@@ -407,7 +603,11 @@ export default function Sidebar() {
             collapsed ? 'right-[18px]' : 'right-2'
           }`}
         >
-          <Menu className="w-4 h-4" />
+          {collapsed ? (
+            <GrimoireTitleIcon />
+          ) : (
+            <Menu className="w-4 h-4" strokeWidth={1.9} />
+          )}
         </button>
       </div>
 
@@ -427,14 +627,23 @@ export default function Sidebar() {
                         ? 'border-red-400/80 bg-red-500/25 text-red-100 font-bold hover:bg-red-500/30'
                         : 'border-red-500/45 bg-red-500/10 text-red-200 font-bold hover:border-red-400/75 hover:bg-red-500/20 hover:text-red-100'
                       : isActive
-                      ? 'border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary font-medium'
+                      ? sidebarHeroHighlightSrc
+                        ? 'border-white/15 bg-bg-tertiary text-text-primary font-semibold shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)]'
+                        : 'border-accent/40 bg-bg-tertiary text-text-primary font-medium hover:border-accent/60'
                       : 'border-transparent text-text-primary/80 font-medium hover:bg-accent/5 hover:border-accent/25 hover:text-text-primary'
                   }`
                 }
               >
                 {({ isActive }) => (
                   <>
-                    <span className="flex h-full w-[46px] flex-shrink-0 items-center justify-center">
+                    {isActive && tone !== 'test' && (
+                      <SidebarActiveBackdrop
+                        key={location.pathname}
+                        heroSrc={sidebarHeroHighlightSrc}
+                        heroPositionX={sidebarHeroHighlightX}
+                      />
+                    )}
+                    <span className="relative z-10 flex h-full w-[46px] flex-shrink-0 items-center justify-center">
                       <Icon
                         className={`w-5 h-5 flex-shrink-0 ${
                           tone === 'test' ? 'text-red-200 group-hover:text-red-100' : 'text-text-primary/70 group-hover:text-text-primary'
@@ -443,32 +652,36 @@ export default function Sidebar() {
                       />
                     </span>
                     {labelMounted && (
-                      <span className={navLabelClass} aria-hidden={!labelsVisible}>
+                      <span className={`relative z-10 ${navLabelClass}`} aria-hidden={!labelsVisible}>
                         {label}
                       </span>
                     )}
                     {badge !== undefined && badge > 0 && (
                       collapsed ? (
-                        // In collapsed mode, only surface warning-tone badges
-                        // (e.g. conflicts). The Installed count is informational,
-                        // not a status alert, so it shouldn't crowd the rail.
-                        badgeTone === 'warning' ? (
+                        // In collapsed mode, only surface action/status badges.
+                        // The Installed count is informational, so it shouldn't
+                        // crowd the rail.
+                        badgeTone !== 'muted' ? (
                           <span
                             aria-hidden
-                            className="absolute top-1 right-1 w-2 h-2 rounded-sm ring-2 ring-bg-secondary bg-state-warning"
+                            className={`absolute top-1 right-1 w-2 h-2 rounded-sm ring-2 ring-bg-secondary ${
+                              badgeTone === 'warning' ? 'bg-state-warning' : 'bg-accent'
+                            }`}
                           />
                         ) : null
                       ) : (
                         <span
                           className={`inline-flex h-5 min-w-[1.25rem] shrink-0 items-center justify-center rounded-sm px-1 text-[11px] font-semibold tabular-nums leading-none transition-opacity duration-150 ${
                             labelsVisible ? 'opacity-100' : 'opacity-0'
-                          } ${
+                          } relative z-10 ${
                             badgeTone === 'warning'
                               ? 'bg-state-warning/90 text-black'
+                              : badgeTone === 'info'
+                                ? 'border border-accent/60 bg-accent/15 text-accent'
                               : 'border border-text-primary/50 text-text-primary/80'
                           }`}
                         >
-                          {badge}
+                          {formatBadgeCount(badge)}
                         </span>
                       )
                     )}
@@ -588,9 +801,10 @@ export default function Sidebar() {
                   ? 'Restores stashed mods first, then launches Deadlock via Steam'
                   : 'Launch Deadlock with mods active'
             }
-            className="flex w-full h-10 items-center overflow-hidden rounded-sm bg-accent/10 text-text-primary ring-1 ring-accent/40 hover:bg-accent/20 hover:ring-accent/60 text-sm font-semibold tracking-wide transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-accent/60 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="group relative flex w-full h-10 items-center overflow-hidden rounded-sm bg-bg-tertiary text-text-primary ring-1 ring-white/10 hover:ring-white/25 text-sm font-semibold tracking-wide transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-white/35 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span className={actionIconClass}>
+            <LaunchButtonBackdrop src={LAUNCH_MODDED_BG} position="center 45%" />
+            <span className={`relative z-10 ${actionIconClass}`}>
               {launchPending === 'modded' ? (
                 <Loader2 className="w-[18px] h-[18px] animate-spin" />
               ) : (
@@ -598,7 +812,7 @@ export default function Sidebar() {
               )}
             </span>
             {labelMounted && (
-              <span className={actionLabelClass} aria-hidden={!labelsVisible}>
+              <span className={`relative z-10 drop-shadow-[0_1px_4px_rgba(0,0,0,0.75)] ${actionLabelClass}`} aria-hidden={!labelsVisible}>
                 Launch Modded
               </span>
             )}
@@ -614,17 +828,18 @@ export default function Sidebar() {
                   ? 'A vanilla session is already active. Restore mods first.'
                   : 'Temporarily stash mods, launch Deadlock via Steam, then auto-restore after the game starts'
             }
-            className="flex w-full h-10 items-center overflow-hidden rounded-sm text-text-secondary ring-1 ring-transparent hover:bg-accent/5 hover:text-text-primary hover:ring-accent/25 text-sm font-medium tracking-wide transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-accent/40 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="group relative flex w-full h-8 items-center overflow-hidden rounded-sm text-text-primary/85 ring-1 ring-white/10 hover:text-text-primary hover:ring-amber-400/35 text-xs font-medium tracking-wide transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-accent/40 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <span className={actionIconClass}>
+            <LaunchButtonBackdrop src={LAUNCH_VANILLA_BG} position="center 48%" warm />
+            <span className={`relative z-10 ${actionIconClass}`}>
               {launchPending === 'vanilla' ? (
-                <Loader2 className="w-[18px] h-[18px] animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <Play className="w-[18px] h-[18px]" strokeWidth={2} />
+                <Play className="w-4 h-4" strokeWidth={2} />
               )}
             </span>
             {labelMounted && (
-              <span className={actionLabelClass} aria-hidden={!labelsVisible}>
+              <span className={`relative z-10 drop-shadow-[0_1px_4px_rgba(0,0,0,0.75)] ${actionLabelClass}`} aria-hidden={!labelsVisible}>
                 Launch Vanilla
               </span>
             )}
@@ -675,21 +890,35 @@ export default function Sidebar() {
           type="button"
           onClick={() => navigate('/settings')}
           title="Open Settings"
-          className="flex w-full h-10 items-center overflow-hidden rounded-sm border border-border bg-bg-tertiary/30 text-text-secondary hover:bg-accent/5 hover:border-accent/30 hover:text-text-primary text-sm transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+          aria-current={settingsActive ? 'page' : undefined}
+          className={`group relative flex w-full h-10 items-center overflow-hidden rounded-sm border text-sm transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 ${
+            settingsActive
+              ? sidebarHeroHighlightSrc
+                ? 'border-white/15 bg-bg-tertiary text-text-primary font-semibold shadow-[inset_0_0_0_1px_rgba(255,255,255,0.03)]'
+                : 'border-accent/40 bg-bg-tertiary text-text-primary font-semibold hover:border-accent/60'
+              : 'border-border bg-bg-tertiary/30 text-text-secondary hover:bg-accent/5 hover:border-accent/30 hover:text-text-primary'
+          }`}
         >
-          <span className={actionIconClass}>
-            <Settings2 className="w-[18px] h-[18px]" strokeWidth={1.75} />
+          {settingsActive && (
+            <SidebarActiveBackdrop
+              key={location.pathname}
+              heroSrc={sidebarHeroHighlightSrc}
+              heroPositionX={sidebarHeroHighlightX}
+            />
+          )}
+          <span className={`relative z-10 ${actionIconClass}`}>
+            <Settings2 className="w-[18px] h-[18px]" strokeWidth={settingsActive ? 2 : 1.75} />
           </span>
           {labelMounted && (
-            <span className={`font-medium ${actionLabelClass}`} aria-hidden={!labelsVisible}>
+            <span className={`relative z-10 font-medium ${actionLabelClass}`} aria-hidden={!labelsVisible}>
               Settings
             </span>
           )}
           {labelMounted && (
             <span
-              className={`flex h-full flex-shrink-0 items-center pr-3 text-[11px] tabular-nums text-text-secondary/70 transition-opacity duration-200 ${
+              className={`relative z-10 flex h-full flex-shrink-0 items-center pr-3 text-[11px] tabular-nums transition-opacity duration-200 ${
                 labelsVisible ? 'opacity-100' : 'opacity-0'
-              }`}
+              } ${settingsActive ? 'text-text-primary/70' : 'text-text-secondary/70'}`}
               aria-hidden={!labelsVisible}
             >
               {appVersion || 'v...'}
