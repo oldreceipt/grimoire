@@ -5,10 +5,26 @@ import { ConfirmModal } from '../common/PageComponents';
 import { useSocialStore } from '../../stores/socialStore';
 import { SteamIcon } from './SteamIcon';
 
+function KeyringNotice() {
+  return (
+    <div
+      className="inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-sm border border-yellow-500/25 bg-yellow-500/[0.07] px-2.5 py-1.5 text-[11px] leading-tight text-yellow-100"
+      title="Electron safeStorage is not reporting an encrypted OS keychain backend to Grimoire."
+    >
+      <ShieldAlert className="h-3.5 w-3.5 flex-shrink-0 text-yellow-300" />
+      <span className="min-w-0">
+        <span className="font-medium text-yellow-200">Session only.</span>{' '}
+        <span className="text-text-secondary">Keyring unavailable to Grimoire.</span>
+      </span>
+    </div>
+  );
+}
+
 export default function SocialAccountSection() {
-  const { status, loading, error, hydrate, login, cancelLogin, logout, deleteAccount, clearError } =
+  const { status, loading, error, hydrated, hydrate, login, cancelLogin, logout, deleteAccount, clearError } =
     useSocialStore();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const showKeyringNotice = hydrated && status.persistenceMode === 'session-only';
 
   useEffect(() => {
     void hydrate();
@@ -80,17 +96,8 @@ export default function SocialAccountSection() {
             </div>
           </div>
 
-          {status.persistenceMode === 'session-only' && (
-            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-md p-3 text-xs text-yellow-200 flex items-start gap-2">
-              <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <div>
-                <div className="font-medium">No system keyring detected.</div>
-                <p className="mt-1 text-text-secondary">
-                  Your session will end when you close Grimoire. Install a Secret Service provider
-                  (gnome-keyring, kwallet, or Flatpak Portal) to stay signed in across launches.
-                </p>
-              </div>
-            </div>
+          {showKeyringNotice && (
+            <KeyringNotice />
           )}
 
           <div className="flex flex-wrap gap-2 pt-2 border-t border-white/5">
@@ -109,27 +116,20 @@ export default function SocialAccountSection() {
         </div>
       ) : (
         <div className="space-y-3">
-          {status.persistenceMode === 'session-only' && (
-            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-md p-3 text-xs text-yellow-200 flex items-start gap-2">
-              <ShieldAlert className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <div>
-                <div className="font-medium">No system keyring detected.</div>
-                <p className="mt-1 text-text-secondary">
-                  Your session will end when you close Grimoire. Install a Secret Service provider
-                  (gnome-keyring, kwallet, or Flatpak Portal) to stay signed in across launches.
-                </p>
-              </div>
-            </div>
-          )}
           <div className="space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button icon={SteamIcon} onClick={handleLogin} isLoading={loading} disabled={loading}>
-                Sign in with Steam
-              </Button>
-              {loading && (
-                <Button variant="secondary" icon={X} onClick={cancelLogin}>
-                  Cancel
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button icon={SteamIcon} onClick={handleLogin} isLoading={loading} disabled={loading}>
+                  Sign in with Steam
                 </Button>
+                {loading && (
+                  <Button variant="secondary" icon={X} onClick={cancelLogin}>
+                    Cancel
+                  </Button>
+                )}
+              </div>
+              {showKeyringNotice && (
+                <KeyringNotice />
               )}
             </div>
             <div className="text-xs text-text-secondary flex items-center gap-1.5">

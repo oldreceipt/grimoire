@@ -120,6 +120,8 @@ export const HERO_NAMES_SORTED: readonly string[] = Array.from(
   new Set(SHARED_HERO_NAMES.map(canonicalHeroName))
 ).sort((a, b) => a.localeCompare(b));
 
+export const DEFAULT_SIDEBAR_HERO = HERO_NAMES_SORTED[0] ?? 'Abrams';
+
 /**
  * Infer the Deadlock hero associated with a mod title. Re-exported from the
  * shared package; see @grimoire/social-types/heroes for the matcher details.

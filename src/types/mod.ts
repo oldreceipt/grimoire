@@ -601,6 +601,8 @@ export interface AppSettings {
   ignoreConflictsByDefault: boolean;
   /** UI accent color (hex, e.g. "#f97316"). Falls back to default orange when unset. */
   accentColor: string;
+  /** Hero render used as the active sidebar highlight background. */
+  sidebarHeroHighlight?: string | null;
   /** Order used to render absolute dates (mod/file upload + update dates). */
   dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY';
   /** UI zoom factor (Ctrl +/-/0), persisted across launches. 1 = 100%. */
