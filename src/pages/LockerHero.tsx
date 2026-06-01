@@ -70,6 +70,19 @@ interface LockerHeroViewProps {
   onApplyMinaVariant?: () => void;
 }
 
+function poseSkinSelectionKey(mod: Mod): string {
+  if (typeof mod.gameBananaId === 'number') {
+    return [
+      'gb',
+      mod.gameBananaId,
+      mod.gameBananaFileId ?? mod.sourceFileName ?? mod.sha256 ?? mod.id,
+    ].join(':');
+  }
+  if (mod.sha256) return `sha:${mod.sha256}`;
+  if (mod.sourceFileName) return `source:${mod.sourceFileName.toLowerCase()}`;
+  return `id:${mod.id}`;
+}
+
 export default function LockerHero() {
   const navigate = useNavigate();
   const params = useParams<{ heroId: string }>();
@@ -373,12 +386,22 @@ export function LockerHeroView({
   const [nameFailed, setNameFailed] = useState(false);
   const [view3d, setView3d] = useState(false);
   const [section, setSection] = useState<'skins' | 'sounds' | 'cards' | 'colors'>('skins');
-  // The active skin to pose: the hero's first enabled skin mod, if any. Its
-  // metaKey is the source VPK; undefined poses the vanilla base model.
-  const activeSkinMetaKey = useMemo(
-    () => skinList.find((mod) => mod.enabled)?.metaKey,
-    [skinList]
-  );
+  const [poseSkinSelection, setPoseSkinSelection] = useState<{
+    heroId: number;
+    key: string;
+  } | null>(null);
+  const selectedPoseSkinKey =
+    poseSkinSelection?.heroId === hero.id ? poseSkinSelection.key : null;
+
+  // The skin to pose: prefer the last skin the user enabled in this view, then
+  // fall back to the first enabled skin. Multiple enabled skin VPKs can layer,
+  // so "first enabled" alone can keep showing an older skin after a new pick.
+  const activeSkinMetaKey = useMemo(() => {
+    const selected = selectedPoseSkinKey
+      ? skinList.find((mod) => poseSkinSelectionKey(mod) === selectedPoseSkinKey && mod.enabled)
+      : null;
+    return (selected ?? skinList.find((mod) => mod.enabled))?.metaKey;
+  }, [skinList, selectedPoseSkinKey]);
   const hasSounds = soundList.length > 0;
   // If the active section runs out of mods (e.g. user deleted their last
   // sound for this hero) drop back to skins so the panel isn't stuck empty.
@@ -407,6 +430,30 @@ export function LockerHeroView({
       return;
     }
     setRenderFallbackStep(3);
+  };
+
+  const rememberPoseSkinSelection = (modId: string) => {
+    const mod = skinList.find((entry) => entry.id === modId);
+    if (!mod) return;
+    const key = poseSkinSelectionKey(mod);
+
+    setPoseSkinSelection((current) => {
+      const currentKey = current?.heroId === hero.id ? current.key : null;
+      if (mod.enabled) {
+        return currentKey === key ? null : current;
+      }
+      return { heroId: hero.id, key };
+    });
+  };
+
+  const handleSelect = async (modId: string) => {
+    rememberPoseSkinSelection(modId);
+    await onSelect(modId);
+  };
+
+  const handleToggleVariant = async (modId: string) => {
+    rememberPoseSkinSelection(modId);
+    await onToggleVariant(modId);
   };
 
   return (
@@ -650,8 +697,8 @@ export function LockerHeroView({
             ) : (
             <HeroSkinsPanel
               mods={activeList}
-              onSelect={onSelect}
-              onToggleVariant={onToggleVariant}
+              onSelect={handleSelect}
+              onToggleVariant={handleToggleVariant}
               hideNsfwPreviews={hideNsfwPreviews}
               categoryId={hero.id}
               showDownloadable={activeSection === 'skins'}
