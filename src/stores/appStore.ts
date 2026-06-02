@@ -198,6 +198,11 @@ interface AppState {
   // tab can restore the page without persisting UI session state to disk.
   installedScrollTop: number;
 
+  // Display name of the hero currently open in the Locker (e.g. "Abrams"), or
+  // null. Published by the Locker page and read by DiscordPresence so Rich
+  // Presence can show the viewed hero. Renderer-only, never persisted.
+  lockerHeroName: string | null;
+
   // Actions
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
@@ -237,6 +242,7 @@ interface AppState {
   // Browse session cache (loaded mods + scroll position)
   setBrowseSession: (cache: BrowseSessionCache | null) => void;
   setInstalledScrollTop: (scrollTop: number) => void;
+  setLockerHeroName: (name: string | null) => void;
 }
 
 // The main process throws this exact phrase from every "out of enabled slots"
@@ -263,6 +269,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   browseUi: { ...DEFAULT_BROWSE_UI },
   browseSession: null,
   installedScrollTop: 0,
+  lockerHeroName: null,
 
   // Load settings from backend
   loadSettings: async () => {
@@ -533,5 +540,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setInstalledScrollTop: (scrollTop: number) => {
     set({ installedScrollTop: Math.max(0, scrollTop) });
+  },
+
+  setLockerHeroName: (name: string | null) => {
+    set({ lockerHeroName: name });
   },
 }));

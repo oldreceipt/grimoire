@@ -304,6 +304,12 @@ export interface ElectronAPI {
     getSettings: () => Promise<AppSettings>;
     setSettings: (settings: AppSettings) => Promise<void>;
 
+    // Discord Rich Presence (opt-in; talks only to the local Discord client)
+    discord: {
+        update: (ctx: { surface: string; count?: number; hero?: string }) => Promise<void>;
+        clear: () => Promise<void>;
+    };
+
     // Mods
     getMods: () => Promise<Mod[]>;
     enableMod: (modId: string) => Promise<Mod>;

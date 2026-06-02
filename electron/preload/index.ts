@@ -48,6 +48,12 @@ export interface ElectronAPI {
     getSettings: () => Promise<AppSettings>;
     setSettings: (settings: AppSettings) => Promise<void>;
 
+    // Discord Rich Presence (opt-in; talks only to the local Discord client)
+    discord: {
+        update: (ctx: { surface: string; count?: number; hero?: string }) => Promise<void>;
+        clear: () => Promise<void>;
+    };
+
     // Mods
     getMods: () => Promise<Mod[]>;
     enableMod: (modId: string) => Promise<Mod>;
@@ -784,6 +790,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createDevDeadlockPath: () => ipcRenderer.invoke('create-dev-deadlock-path'),
     getSettings: () => ipcRenderer.invoke('get-settings'),
     setSettings: (settings: AppSettings) => ipcRenderer.invoke('set-settings', settings),
+
+    // Discord Rich Presence (opt-in; talks only to the local Discord client)
+    discord: {
+        update: (ctx: { surface: string; count?: number; hero?: string }) =>
+            ipcRenderer.invoke('discord:update', ctx),
+        clear: () => ipcRenderer.invoke('discord:clear'),
+    },
 
     // Mods
     getMods: () => ipcRenderer.invoke('get-mods'),
