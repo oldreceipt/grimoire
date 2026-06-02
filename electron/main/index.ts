@@ -75,11 +75,13 @@ import './ipc/abilitySounds';
 import './ipc/abilityColors';
 import './ipc/locker';
 import './ipc/previewCache';
+import './ipc/discord';
 
 import { initUpdater, checkForUpdates, getInstallSource } from './services/updater';
 import { runStartupRecovery } from './ipc/launch';
 import { loadSettings, saveSettings } from './services/settings';
 import { backfillMissingMetadataHashes } from './services/metadata';
+import { destroyDiscordRpc } from './services/discordRpc';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -381,6 +383,12 @@ if (!gotTheLock) {
         if (process.platform !== 'darwin') {
             app.quit();
         }
+    });
+
+    // Close the Discord RPC IPC socket cleanly so the activity drops off the
+    // user's profile the moment Grimoire quits (no-op if RPC was never enabled).
+    app.on('before-quit', () => {
+        destroyDiscordRpc();
     });
 }
 

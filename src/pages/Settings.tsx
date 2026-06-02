@@ -311,6 +311,12 @@ export default function Settings() {
     }
   };
 
+  const handleDiscordRpcChange = async (checked: boolean) => {
+    if (settings) {
+      await saveSettings({ ...settings, discordRpcEnabled: checked });
+    }
+  };
+
   const handleDateFormatChange = async (format: 'MM/DD/YYYY' | 'DD/MM/YYYY') => {
     if (settings && settings.dateFormat !== format) {
       await saveSettings({ ...settings, dateFormat: format });
@@ -1076,6 +1082,15 @@ export default function Settings() {
               onChange={handleIgnoreConflictsByDefaultChange}
               label="Ignore conflicts by default"
               description="Hide every detected mod conflict instead of surfacing it in the Conflicts page. Turn off to bring them back."
+            />
+
+            <div className="h-px bg-white/5" />
+
+            <Toggle
+              checked={settings?.discordRpcEnabled ?? false}
+              onChange={handleDiscordRpcChange}
+              label="Discord Rich Presence"
+              description="Show what you are doing in Grimoire on your Discord profile (browsing mods, in the Locker, and so on). Talks only to your local Discord app and sends nothing to Grimoire. Off by default."
             />
 
             <div className="h-px bg-white/5" />

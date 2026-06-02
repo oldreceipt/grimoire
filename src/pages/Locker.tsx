@@ -110,7 +110,7 @@ function RainbowPaletteIcon({ className = '', title }: { className?: string; tit
 }
 
 export default function Locker() {
-  const { settings, mods, modsLoading, modsError, loadSettings, loadMods, toggleMod } =
+  const { settings, mods, modsLoading, modsError, loadSettings, loadMods, toggleMod, setLockerHeroName } =
     useAppStore();
   const activeDeadlockPath = getActiveDeadlockPath(settings);
   const [categories, setCategories] = useState<GameBananaCategoryNode[]>(
@@ -375,6 +375,13 @@ export default function Locker() {
     ? null
     : heroList.find((hero) => hero.id === selectedHeroId) ?? null;
   const selectedHeroMissing = selectedHeroRouteParam !== null && !selectedHero;
+
+  // Publish the open hero's name for Discord Rich Presence (read by
+  // DiscordPresence). Clear it on unmount so leaving the Locker drops the hero.
+  useEffect(() => {
+    setLockerHeroName(selectedHero?.name ?? null);
+    return () => setLockerHeroName(null);
+  }, [selectedHero, setLockerHeroName]);
   const selectedHeroMods = useMemo(
     () => (selectedHero ? heroMods.map.get(selectedHero.id) ?? [] : []),
     [heroMods, selectedHero]

@@ -44,6 +44,12 @@ export interface AppSettings {
      *  persisted so hi-DPI laptops keep their preferred scale across launches.
      *  1 = 100%. */
     zoomFactor?: number;
+    /** Opt-in Discord Rich Presence. When on, the main process shows what the
+     *  user is doing in Grimoire on their Discord profile by talking to their
+     *  local Discord client over an IPC socket. Off by default: it broadcasts
+     *  activity outward (through Discord), so it stays a deliberate choice and
+     *  never sends anything to a Grimoire server. */
+    discordRpcEnabled: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -68,6 +74,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     dateFormat: 'MM/DD/YYYY',
     language: null,
     zoomFactor: 1,
+    discordRpcEnabled: false,
 };
 
 /**

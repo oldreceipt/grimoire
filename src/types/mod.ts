@@ -609,4 +609,7 @@ export interface AppSettings {
   language?: string | null;
   /** UI zoom factor (Ctrl +/-/0), persisted across launches. 1 = 100%. */
   zoomFactor?: number;
+  /** Opt-in Discord Rich Presence. Off by default. Talks only to the user's
+   *  local Discord client (no network calls from Grimoire). */
+  discordRpcEnabled: boolean;
 }

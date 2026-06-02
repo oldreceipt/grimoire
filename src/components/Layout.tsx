@@ -13,6 +13,7 @@ import { applyAccentColor } from '../lib/accentColor';
 import { useAppStore } from '../stores/appStore';
 import type { OneClickSuspiciousFilesData, MultiVpkPickData } from '../types/electron';
 import MultiVpkPickerModal from './MultiVpkPickerModal';
+import DiscordPresence from './DiscordPresence';
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -283,6 +284,8 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen">
+      {/* Headless: drives opt-in Discord Rich Presence from the active route. */}
+      <DiscordPresence />
       <Sidebar />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-bg-primary">
         {gameinfoAlert && (
