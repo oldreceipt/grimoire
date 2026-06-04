@@ -115,6 +115,10 @@ export default function ModDetailsModal({
   const [updatesLoading, setUpdatesLoading] = useState(true);
   const [updatesTotalCount, setUpdatesTotalCount] = useState(0);
   const [updatesError, setUpdatesError] = useState<string | null>(null);
+  // The whole changelog is minimized behind an outer dropdown; each version
+  // entry inside is its own collapsed dropdown.
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const [openUpdates, setOpenUpdates] = useState<Set<number>>(new Set());
   const [archivedFilesOpen, setArchivedFilesOpen] = useState(false);
   // Lightbox state - when true, the selected image renders full-screen at
   // its native GB resolution so the user can inspect detail the inline
@@ -159,8 +163,13 @@ export default function ModDetailsModal({
     getModUpdates(mod.id, section)
       .then((res) => {
         if (!cancelled) {
-          setUpdates(res.updates.filter((update) => update.text || update.title || update.version));
+          setUpdates(
+            res.updates.filter(
+              (update) => update.text || update.changes?.length || update.title || update.version
+            )
+          );
           setUpdatesTotalCount(res.totalCount);
+          setOpenUpdates(new Set());
         }
       })
       .catch((err) => {
@@ -298,6 +307,46 @@ export default function ModDetailsModal({
   const outdated = dateModified ? isModOutdated(dateModified) : false;
   const formatUpdateVersion = (version: string) =>
     version.trim().match(/^v/i) ? version.trim() : `v${version.trim()}`;
+
+  const toggleUpdate = (id: number) => {
+    setOpenUpdates((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  // Color the GameBanana changelog label (Bugfix, Feature, ...). Grouped so
+  // related labels share a hue; anything unrecognized falls back to neutral.
+  const changeCategoryStyle = (category: string): string => {
+    switch (category.toLowerCase()) {
+      case 'feature':
+      case 'addition':
+        return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+      case 'bugfix':
+        return 'bg-rose-500/15 text-rose-300 border-rose-500/30';
+      case 'improvement':
+      case 'optimization':
+      case 'overhaul':
+      case 'rewrite':
+        return 'bg-sky-500/15 text-sky-300 border-sky-500/30';
+      case 'adjustment':
+      case 'tweak':
+      case 'amendment':
+      case 'refactor':
+        return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+      case 'removal':
+        return 'bg-zinc-500/15 text-zinc-300 border-zinc-500/40';
+      case 'suggestion':
+        return 'bg-violet-500/15 text-violet-300 border-violet-500/30';
+      default:
+        return 'bg-bg-secondary text-text-secondary border-border';
+    }
+  };
 
   const renderFileRow = (file: GameBananaFile, archived = false) => {
     const isInstalled = installedFileIds.has(file.id);
@@ -795,11 +844,24 @@ export default function ModDetailsModal({
               )}
 
               <section>
-                <h3 className="font-semibold text-xs uppercase tracking-wide text-text-secondary mb-2 flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Changelog {updatesTotalCount > 0 && <span className="normal-case tracking-normal text-text-secondary/70">({updatesTotalCount})</span>}
-                </h3>
-                {updatesLoading ? (
+                <button
+                  type="button"
+                  onClick={() => setChangelogOpen((o) => !o)}
+                  aria-expanded={changelogOpen}
+                  className="group mb-2 flex w-full cursor-pointer items-center gap-2 text-left"
+                >
+                  {changelogOpen ? (
+                    <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-text-secondary" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-text-secondary" />
+                  )}
+                  <RefreshCw className="h-3.5 w-3.5 flex-shrink-0 text-text-secondary" />
+                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary transition-colors group-hover:text-text-primary">
+                    Changelog {updatesTotalCount > 0 && <span className="normal-case tracking-normal text-text-secondary/70">({updatesTotalCount})</span>}
+                  </span>
+                </button>
+                {changelogOpen && (
+                  updatesLoading ? (
                   <div className="space-y-2">
                     {Array.from({ length: 2 }).map((_, i) => (
                       <div key={i} className="rounded-lg border border-border bg-bg-tertiary p-3">
@@ -820,31 +882,82 @@ export default function ModDetailsModal({
                   <p className="text-sm text-text-secondary py-1">No changelog entries found</p>
                 ) : (
                   <div className="space-y-2">
-                    {updates.map((update) => (
-                      <article key={update.id} className="rounded-lg border border-border bg-bg-tertiary p-3">
-                        <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                          {(update.version || update.title) && (
-                            <h4 className="min-w-0 text-sm font-semibold text-text-primary">
-                              {update.version ? formatUpdateVersion(update.version) : update.title}
-                              {update.version && update.title ? ` - ${update.title}` : ''}
-                            </h4>
+                    {updates.map((update) => {
+                      const isOpen = openUpdates.has(update.id);
+                      const hasChanges = (update.changes?.length ?? 0) > 0;
+                      const hasBody = hasChanges || !!update.text;
+                      return (
+                        <article key={update.id} className="rounded-lg border border-border bg-bg-tertiary overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => hasBody && toggleUpdate(update.id)}
+                            aria-expanded={hasBody ? isOpen : undefined}
+                            disabled={!hasBody}
+                            className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors ${
+                              hasBody ? 'cursor-pointer hover:bg-bg-secondary/60' : 'cursor-default'
+                            }`}
+                          >
+                            {hasBody ? (
+                              isOpen ? (
+                                <ChevronDown className="w-4 h-4 flex-shrink-0 text-text-secondary" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4 flex-shrink-0 text-text-secondary" />
+                              )
+                            ) : (
+                              <span className="w-4 h-4 flex-shrink-0" />
+                            )}
+                            {(update.version || update.title) && (
+                              <h4 className="min-w-0 truncate text-sm font-semibold text-text-primary">
+                                {update.version ? formatUpdateVersion(update.version) : update.title}
+                                {update.version && update.title ? ` - ${update.title}` : ''}
+                              </h4>
+                            )}
+                            {hasChanges && (
+                              <span className="flex-shrink-0 rounded-full bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                                {update.changes!.length}
+                              </span>
+                            )}
+                            {update.dateAdded > 0 && (
+                              <span className="ml-auto flex flex-shrink-0 items-center gap-1 text-[11px] text-text-tertiary">
+                                <Clock className="w-3 h-3" />
+                                {formatDate(update.dateAdded)}
+                              </span>
+                            )}
+                          </button>
+                          {isOpen && hasBody && (
+                            <div className="border-t border-border px-3 py-2.5">
+                              {hasChanges ? (
+                                <ul className="space-y-1.5">
+                                  {update.changes!.map((change, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-sm text-text-primary/90">
+                                      {change.category && (
+                                        <span
+                                          className={`mt-0.5 flex-shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${changeCategoryStyle(
+                                            change.category
+                                          )}`}
+                                        >
+                                          {change.category}
+                                        </span>
+                                      )}
+                                      <span className="min-w-0 leading-relaxed">{change.text}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                update.text && (
+                                  <div
+                                    className="text-sm text-text-primary/90 leading-relaxed [&_p]:mb-1 [&_a]:text-accent [&_a]:hover:underline"
+                                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(update.text) }}
+                                  />
+                                )
+                              )}
+                            </div>
                           )}
-                          {update.dateAdded > 0 && (
-                            <span className="flex items-center gap-1 text-[11px] text-text-tertiary">
-                              <Clock className="w-3 h-3" />
-                              {formatDate(update.dateAdded)}
-                            </span>
-                          )}
-                        </div>
-                        {update.text && (
-                          <div
-                            className="text-sm text-text-primary/90 leading-relaxed [&_p]:mb-1 [&_a]:text-accent [&_a]:hover:underline"
-                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(update.text) }}
-                          />
-                        )}
-                      </article>
-                    ))}
+                        </article>
+                      );
+                    })}
                   </div>
+                  )
                 )}
               </section>
 

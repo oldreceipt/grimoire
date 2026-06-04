@@ -130,11 +130,21 @@ export interface GameBananaComment {
     };
 }
 
+export interface GameBananaModUpdateChange {
+    /** The change description (plain text). */
+    text: string;
+    /** GameBanana label for the change: Bugfix, Feature, Addition, Adjustment, etc. */
+    category?: string;
+}
+
 export interface GameBananaModUpdate {
     id: number;
     version?: string;
     title?: string;
+    /** Freeform HTML changelog body (used when the author didn't use labels). */
     text?: string;
+    /** Structured, labeled changelog entries (GameBanana's _aChangeLog). */
+    changes?: GameBananaModUpdateChange[];
     dateAdded: number;
 }
 
@@ -295,6 +305,10 @@ interface UpdateRaw {
     _sText?: string;
     _sDescription?: string;
     _sChangeLog?: string;
+    // Structured changelog: mods authored with GameBanana's labeled changelog
+    // editor leave _sText empty and put every line here as { text, cat },
+    // where cat is the label (Bugfix, Feature, Addition, Adjustment, ...).
+    _aChangeLog?: Array<{ text?: string; cat?: string }>;
     _tsDateAdded?: number;
     _tsDateModified?: number;
     _tsDateUpdated?: number;
@@ -618,6 +632,12 @@ export async function fetchModUpdates(
             version: update._sVersion,
             title: update._sTitle ?? update._sName,
             text: update._sText ?? update._sChangeLog ?? update._sDescription,
+            changes: (update._aChangeLog ?? [])
+                .map((entry) => ({
+                    text: (entry.text ?? '').trim(),
+                    category: entry.cat?.trim() || undefined,
+                }))
+                .filter((entry) => entry.text.length > 0),
             dateAdded: update._tsDateAdded ?? update._tsDateModified ?? update._tsDateUpdated ?? 0,
         })),
         totalCount: Array.isArray(raw) ? records.length : raw._aMetadata?._nRecordCount ?? records.length,
