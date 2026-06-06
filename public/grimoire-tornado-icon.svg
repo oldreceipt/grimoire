@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1c1c1f"/>
+      <stop offset="1" stop-color="#0d0d0f"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="300" x2="0" y2="440" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d6d6db"/>
+    </linearGradient>
+    <linearGradient id="funnel" x1="150" y1="96" x2="320" y2="320" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fb923c"/>
+      <stop offset="1" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- open book, tilted ~ -20deg -->
+  <g transform="rotate(-20 256 360)">
+    <!-- page stack thickness -->
+    <path d="M256 420 L126 432 L121 446 L256 434 L391 446 L386 432 Z" fill="#9a9aa2"/>
+    <!-- pages -->
+    <path d="M256 316 C206 324 156 330 108 344 L126 428 C170 418 214 414 256 420 Z" fill="url(#page)"/>
+    <path d="M256 316 C306 324 356 330 404 344 L386 428 C342 418 298 414 256 420 Z" fill="url(#page)"/>
+    <!-- a couple of faint page lines for legibility -->
+    <g stroke="#c2c2ca" stroke-width="5" stroke-linecap="round" fill="none">
+      <path d="M150 358 C176 353 202 351 228 352"/>
+      <path d="M147 378 C175 373 203 371 231 372"/>
+      <path d="M362 358 C336 353 310 351 284 352"/>
+      <path d="M365 378 C337 373 309 371 281 372"/>
+    </g>
+    <!-- spine -->
+    <path d="M256 316 L256 420" stroke="#ea580c" stroke-width="9" stroke-linecap="round"/>
+  </g>
+
+  <!-- upright tornado rising from the book, base tucked into the page valley -->
+  <g stroke="url(#funnel)" stroke-width="21" stroke-linecap="round" fill="none">
+    <path d="M150 112 Q256 88 362 112"/>
+    <path d="M168 150 Q255 128 342 150"/>
+    <path d="M185 186 Q254 166 323 186"/>
+    <path d="M200 220 Q252 202 305 220"/>
+    <path d="M213 252 Q250 236 289 252"/>
+    <path d="M225 283 Q248 270 273 284"/>
+    <path d="M238 311 Q246 304 256 314"/>
+  </g>
+</svg>

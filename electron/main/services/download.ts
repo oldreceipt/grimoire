@@ -785,11 +785,21 @@ async function executeDownload(
                 const vpkLabels = getVpkLabels(
                     installedVpks.map((vpk) => ({ fileName: vpk, absPath: join(targetPath, vpk) }))
                 );
+                const vpkFileSizes = Object.fromEntries(
+                    await Promise.all(
+                        installedVpks.map(async (vpk) => {
+                            const absPath = join(targetPath, vpk);
+                            const stat = await fs.stat(absPath);
+                            return [vpk, stat.size] as const;
+                        })
+                    )
+                );
                 const pick = await awaitMultiVpkPick(
                     pickRequestId,
                     details.name ?? fileName,
                     installedVpks,
                     vpkLabels,
+                    vpkFileSizes,
                     mainWindow
                 );
                 if (!pick || pick.selected.length === 0) {
@@ -959,6 +969,7 @@ function awaitMultiVpkPick(
     modName: string,
     vpkFileNames: string[],
     vpkLabels: Record<string, string>,
+    vpkFileSizes: Record<string, number>,
     mainWindow: BrowserWindow | null
 ): Promise<{ selected: string[] } | null> {
     return new Promise((resolve) => {
@@ -978,6 +989,7 @@ function awaitMultiVpkPick(
             modName,
             vpkFileNames,
             vpkLabels,
+            vpkFileSizes,
         });
     });
 }
@@ -1279,11 +1291,21 @@ async function executeOneClickDownload(
             const vpkLabels = getVpkLabels(
                 installedVpks.map((vpk) => ({ fileName: vpk, absPath: join(targetPath, vpk) }))
             );
+            const vpkFileSizes = Object.fromEntries(
+                await Promise.all(
+                    installedVpks.map(async (vpk) => {
+                        const absPath = join(targetPath, vpk);
+                        const stat = await fs.stat(absPath);
+                        return [vpk, stat.size] as const;
+                    })
+                )
+            );
             const pick = await awaitMultiVpkPick(
                 pickRequestId,
                 enriched?.name ?? fileName,
                 installedVpks,
                 vpkLabels,
+                vpkFileSizes,
                 mainWindow
             );
             if (!pick || pick.selected.length === 0) {

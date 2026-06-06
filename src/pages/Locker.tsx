@@ -1,10 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, ExternalLink, Layers, MoreVertical, Music, PowerOff, Shield, Shirt, Star } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, ExternalLink, Layers, MoreVertical, Music, Palette, PowerOff, Shield, Shirt, Star } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import {
   applyMinaVariant,
   getGamebananaCategories,
+  getHeroColorSupport,
   listMinaVariants,
   setMinaPreset,
   setModGlobalType,
@@ -83,8 +84,33 @@ function prewarmLockerImage(src: string | undefined) {
   image.src = src;
 }
 
+function RainbowPaletteIcon({ className = '', title }: { className?: string; title?: string }) {
+  const gradientId = `rainbow-palette-${useId().replace(/:/g, '')}`;
+
+  return (
+    <Palette
+      className={className}
+      stroke={`url(#${gradientId})`}
+      aria-label={title}
+      role={title ? 'img' : undefined}
+      aria-hidden={title ? undefined : true}
+    >
+      <defs>
+        <linearGradient id={gradientId} x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#ff4d6d" />
+          <stop offset="22%" stopColor="#ffb703" />
+          <stop offset="44%" stopColor="#3ddc97" />
+          <stop offset="66%" stopColor="#38bdf8" />
+          <stop offset="84%" stopColor="#818cf8" />
+          <stop offset="100%" stopColor="#f472b6" />
+        </linearGradient>
+      </defs>
+    </Palette>
+  );
+}
+
 export default function Locker() {
-  const { settings, mods, modsLoading, modsError, loadSettings, loadMods, toggleMod, setBrowseUi } =
+  const { settings, mods, modsLoading, modsError, loadSettings, loadMods, toggleMod, setBrowseUi, setLockerHeroName } =
     useAppStore();
   const activeDeadlockPath = getActiveDeadlockPath(settings);
   const [categories, setCategories] = useState<GameBananaCategoryNode[]>(
@@ -96,6 +122,8 @@ export default function Locker() {
     const stored = localStorage.getItem('lockerViewMode');
     return stored === 'list' ? 'list' : 'gallery';
   });
+  const [abilityRecolorSupport, setAbilityRecolorSupport] = useState<Record<string, boolean>>({});
+  const [showAbilityRecolorOnly, setShowAbilityRecolorOnly] = useState(false);
   // List-view accordion state. Empty set = every hero collapsed (the default),
   // so the list reads as a compact set of rows until the user opens one.
   const [expandedHeroes, setExpandedHeroes] = useState<Set<number>>(() => new Set());
@@ -233,6 +261,40 @@ export default function Locker() {
 
   // Build basic hero list first (needed for mod categorization)
   const baseHeroList = useMemo(() => buildHeroList(categories), [categories]);
+  const heroNamesForColorSupport = useMemo(
+    () => Array.from(new Set(baseHeroList.map((hero) => hero.name))).sort((a, b) => a.localeCompare(b)),
+    [baseHeroList]
+  );
+
+  useEffect(() => {
+    let active = true;
+    if (heroNamesForColorSupport.length === 0) {
+      setAbilityRecolorSupport({});
+      return () => {
+        active = false;
+      };
+    }
+
+    Promise.all(
+      heroNamesForColorSupport.map(async (heroName) => ({
+        heroName,
+        supported: await getHeroColorSupport(heroName),
+      }))
+    )
+      .then((entries) => {
+        if (!active) return;
+        const next: Record<string, boolean> = {};
+        for (const entry of entries) next[entry.heroName] = entry.supported;
+        setAbilityRecolorSupport(next);
+      })
+      .catch((err) => {
+        if (active) console.warn('[Locker] Failed to load ability color support:', err);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [heroNamesForColorSupport]);
 
   // Global-typed mods live on their own axis (the Global card / drill-in), so
   // keep them out of the hero grouping entirely. Without this a fuzzy name
@@ -293,19 +355,45 @@ export default function Locker() {
       return a.name.localeCompare(b.name);
     });
   }, [baseHeroList, favoriteHeroes, heroMods, heroSounds]);
+  const abilityRecolorSupportLoaded = useMemo(
+    () =>
+      heroNamesForColorSupport.length === 0 ||
+      heroNamesForColorSupport.every((name) =>
+        Object.prototype.hasOwnProperty.call(abilityRecolorSupport, name)
+      ),
+    [abilityRecolorSupport, heroNamesForColorSupport]
+  );
+  const abilityRecolorCount = useMemo(
+    () => heroList.filter((hero) => abilityRecolorSupport[hero.name]).length,
+    [abilityRecolorSupport, heroList]
+  );
+  const visibleHeroList = useMemo(
+    () =>
+      showAbilityRecolorOnly
+        ? heroList.filter((hero) => abilityRecolorSupport[hero.name])
+        : heroList,
+    [abilityRecolorSupport, heroList, showAbilityRecolorOnly]
+  );
   const allExpanded =
-    heroList.length > 0 && heroList.every((hero) => expandedHeroes.has(hero.id));
+    visibleHeroList.length > 0 && visibleHeroList.every((hero) => expandedHeroes.has(hero.id));
   const toggleExpandAll = useCallback(() => {
     setExpandedHeroes((prev) => {
       const everyOpen =
-        heroList.length > 0 && heroList.every((hero) => prev.has(hero.id));
-      return everyOpen ? new Set() : new Set(heroList.map((hero) => hero.id));
+        visibleHeroList.length > 0 && visibleHeroList.every((hero) => prev.has(hero.id));
+      return everyOpen ? new Set() : new Set(visibleHeroList.map((hero) => hero.id));
     });
-  }, [heroList]);
+  }, [visibleHeroList]);
   const selectedHero = selectedHeroId === null
     ? null
     : heroList.find((hero) => hero.id === selectedHeroId) ?? null;
   const selectedHeroMissing = selectedHeroRouteParam !== null && !selectedHero;
+
+  // Publish the open hero's name for Discord Rich Presence (read by
+  // DiscordPresence). Clear it on unmount so leaving the Locker drops the hero.
+  useEffect(() => {
+    setLockerHeroName(selectedHero?.name ?? null);
+    return () => setLockerHeroName(null);
+  }, [selectedHero, setLockerHeroName]);
   const selectedHeroMods = useMemo(
     () => (selectedHero ? heroMods.map.get(selectedHero.id) ?? [] : []),
     [heroMods, selectedHero]
@@ -501,7 +589,9 @@ export default function Locker() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm text-text-secondary">
           {[
-            `${heroList.length} heroes`,
+            showAbilityRecolorOnly
+              ? `${visibleHeroList.length}/${heroList.length} heroes`
+              : `${heroList.length} heroes`,
             `${installedSkinCount} skin${installedSkinCount !== 1 ? 's' : ''}`,
             installedSoundCount > 0
               ? `${installedSoundCount} sound${installedSoundCount !== 1 ? 's' : ''}`
@@ -522,7 +612,27 @@ export default function Locker() {
                 {unassignedSkins.length + unassignedSounds.length} unassigned
               </button>
             )}
-          {viewMode === 'list' && heroList.length > 0 && (
+          {abilityRecolorCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAbilityRecolorOnly((show) => !show)}
+              disabled={!abilityRecolorSupportLoaded}
+              aria-pressed={showAbilityRecolorOnly}
+              className={`flex items-center gap-1.5 self-stretch rounded-sm border px-3 text-sm transition-colors ${
+                showAbilityRecolorOnly
+                  ? 'border-accent/50 bg-accent/15 text-text-primary'
+                  : 'border-border bg-bg-secondary text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+              } ${abilityRecolorSupportLoaded ? 'cursor-pointer' : 'cursor-wait opacity-60'}`}
+              title="Show only heroes with ability color recoloring"
+            >
+              <RainbowPaletteIcon className="h-4 w-4" />
+              Recolorable
+              <span className="ml-0.5 rounded-sm bg-black/20 px-1.5 py-0.5 text-[11px] leading-none text-current">
+                {abilityRecolorCount}
+              </span>
+            </button>
+          )}
+          {viewMode === 'list' && visibleHeroList.length > 0 && (
             <button
               onClick={toggleExpandAll}
               className="flex items-center gap-1.5 self-stretch rounded-sm border border-border bg-bg-secondary px-3 text-sm text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-colors cursor-pointer"
@@ -552,21 +662,27 @@ export default function Locker() {
           <Layers className="w-12 h-12 mb-3 opacity-50" />
           <p>No hero categories found.</p>
         </div>
+      ) : visibleHeroList.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-64 text-text-secondary">
+          <RainbowPaletteIcon className="w-12 h-12 mb-3 opacity-80" />
+          <p>No heroes with ability recoloring available.</p>
+        </div>
       ) : viewMode === 'gallery' ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-          {globalCount > 0 && (
+          {globalCount > 0 && !showAbilityRecolorOnly && (
             <GlobalGalleryCard
               count={globalCount}
               typeCount={globalTypeCount}
               onNavigate={() => navigate('/locker/global')}
             />
           )}
-          {heroList.map((hero) => (
+          {visibleHeroList.map((hero) => (
             <HeroGalleryCard
               key={hero.id}
               hero={hero}
               skinCount={countLockerSkins(heroMods.map.get(hero.id) ?? [])}
               soundCount={countLockerSkins(heroSounds.map.get(hero.id) ?? [])}
+              hasAbilityRecolor={Boolean(abilityRecolorSupport[hero.name])}
               isFavorite={favoriteHeroes.includes(hero.id)}
               onNavigate={() => goToHero(hero)}
               onBrowse={() => openHeroInBrowse(hero)}
@@ -582,7 +698,7 @@ export default function Locker() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {globalCount > 0 && (
+          {globalCount > 0 && !showAbilityRecolorOnly && (
             <button
               type="button"
               onClick={() => navigate('/locker/global')}
@@ -613,12 +729,13 @@ export default function Locker() {
               <ChevronDown className="relative z-10 h-4 w-4 -rotate-90 text-text-secondary" />
             </button>
           )}
-          {heroList.map((hero) => (
+          {visibleHeroList.map((hero) => (
             <HeroCard
               key={hero.id}
               hero={hero}
               mods={heroMods.map.get(hero.id) ?? []}
               sounds={heroSounds.map.get(hero.id) ?? []}
+              hasAbilityRecolor={Boolean(abilityRecolorSupport[hero.name])}
               expanded={expandedHeroes.has(hero.id)}
               onToggleExpanded={() => toggleHeroExpanded(hero.id)}
               onBrowseSkins={() => openHeroInBrowse(hero)}
@@ -652,7 +769,7 @@ export default function Locker() {
         </div>
       )}
 
-      {viewMode === 'list' && (unassignedSkins.length > 0 || unassignedSounds.length > 0) && (
+      {viewMode === 'list' && !showAbilityRecolorOnly && (unassignedSkins.length > 0 || unassignedSounds.length > 0) && (
         <div className="space-y-3">
           <SectionHeader>Unassigned</SectionHeader>
           <p className="text-xs text-text-secondary -mt-1">
@@ -800,6 +917,7 @@ interface HeroCardProps {
   hero: HeroCategory;
   mods: Mod[];
   sounds: Mod[];
+  hasAbilityRecolor: boolean;
   expanded: boolean;
   onToggleExpanded: () => void;
   onBrowseSkins: () => void;
@@ -828,6 +946,7 @@ interface HeroGalleryCardProps {
   hero: HeroCategory;
   skinCount: number;
   soundCount: number;
+  hasAbilityRecolor: boolean;
   isFavorite: boolean;
   onNavigate: () => void;
   onBrowse: () => void;
@@ -893,6 +1012,7 @@ interface LockerGlobalViewProps {
  * art + blur language). Selecting a tile reveals that type's toggleable mods.
  */
 function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType }: LockerGlobalViewProps) {
+  const soundVolume = useAppStore((s) => s.soundVolume);
   const available = GLOBAL_MOD_TYPE_ORDER.filter((type) => groups[type].length > 0);
   const [selectedType, setSelectedType] = useState<GlobalModType>(
     () => available[0] ?? 'soul-container'
@@ -1192,7 +1312,7 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
                           onClick={(e) => e.stopPropagation()}
                           onMouseDown={(e) => e.stopPropagation()}
                         >
-                          <AudioPreviewPlayer src={mod.audioUrl} compact />
+                          <AudioPreviewPlayer src={mod.audioUrl} compact volume={soundVolume} />
                         </div>
                       )}
 
@@ -1294,6 +1414,7 @@ function HeroGalleryCard({
   hero,
   skinCount,
   soundCount,
+  hasAbilityRecolor,
   isFavorite,
   onNavigate,
   onBrowse,
@@ -1416,8 +1537,17 @@ function HeroGalleryCard({
       >
         <Star className={`w-3 h-3 ${isFavorite ? 'fill-current' : ''}`} />
       </button>
-      {(skinCount > 0 || soundCount > 0) && (
+      {(skinCount > 0 || soundCount > 0 || hasAbilityRecolor) && (
         <div className="absolute left-2 top-2 z-20 flex items-center gap-2 rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-medium text-white/85 backdrop-blur-sm">
+          {hasAbilityRecolor && (
+            <span
+              className="flex items-center gap-1"
+              title="Ability color recoloring available"
+              aria-label="Ability color recoloring available"
+            >
+              <RainbowPaletteIcon className="h-3 w-3" />
+            </span>
+          )}
           {skinCount > 0 && (
             <span
               className="flex items-center gap-1"
@@ -1466,6 +1596,7 @@ function HeroCard({
   hero,
   mods,
   sounds,
+  hasAbilityRecolor,
   expanded,
   onToggleExpanded,
   onBrowseSkins,
@@ -1567,8 +1698,16 @@ function HeroCard({
           className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left cursor-pointer"
         >
           <div className="min-w-0 flex-1">
-            <div className="font-semibold truncate drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)]">
-              {hero.name}
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate font-semibold drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)]">
+                {hero.name}
+              </div>
+              {hasAbilityRecolor && (
+                <RainbowPaletteIcon
+                  className="h-3.5 w-3.5 flex-shrink-0 text-accent drop-shadow-[0_1px_4px_rgba(0,0,0,0.7)]"
+                  title="Ability color recoloring available"
+                />
+              )}
             </div>
             <div className="text-xs text-text-secondary drop-shadow-[0_1px_3px_rgba(0,0,0,0.7)]">
               {countLabel}

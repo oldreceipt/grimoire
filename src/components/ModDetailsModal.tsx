@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Volume2,
   Loader2,
@@ -18,11 +19,13 @@ import {
   Maximize2,
   BellOff,
   Bell,
+  Trash2,
 } from 'lucide-react';
 import DOMPurify from 'dompurify';
-import type { GameBananaModDetails, GameBananaComment, GameBananaFile } from '../types/gamebanana';
+import type { GameBananaModDetails, GameBananaComment, GameBananaFile, GameBananaModUpdate } from '../types/gamebanana';
 import { isModOutdated, formatDate } from '../types/gamebanana';
-import { getModComments } from '../lib/api';
+import { getModComments, getModUpdates } from '../lib/api';
+import { useAppStore } from '../stores/appStore';
 import AudioPreviewPlayer from './AudioPreviewPlayer';
 import { Skeleton } from './common/Skeleton';
 import { ArchivedTag } from './common/ui';
@@ -62,6 +65,13 @@ interface ModDetailsModalProps {
   onToggleIgnoreUpdates?: () => void;
   onClose: () => void;
   onDownload: (fileId: number, fileName: string) => void;
+  onNavigatePrevious?: () => void;
+  onNavigateNext?: () => void;
+  previousLabel?: string;
+  nextLabel?: string;
+  /** Browse-only file removal. Receives the local installed mod id that backs
+   *  the GameBanana file row. */
+  onDeleteFile?: (modId: string) => Promise<void> | void;
 }
 
 export default function ModDetailsModal({
@@ -84,9 +94,15 @@ export default function ModDetailsModal({
   onToggleIgnoreUpdates,
   onClose,
   onDownload,
+  onNavigatePrevious,
+  onNavigateNext,
+  previousLabel,
+  nextLabel,
+  onDeleteFile,
 }: ModDetailsModalProps) {
   const images = mod.previewMedia?.images ?? [];
   const audioPreviewUrl = mod.previewMedia?.metadata?.audioUrl;
+  const soundVolume = useAppStore((state) => state.soundVolume);
   // Cursor into the images array - only the lightbox cares about this now
   // that previews are stacked vertically rather than swapped via carousel.
   // It tracks which image is currently zoomed and which one keyboard arrows
@@ -95,6 +111,14 @@ export default function ModDetailsModal({
   const [comments, setComments] = useState<GameBananaComment[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentsTotalCount, setCommentsTotalCount] = useState(0);
+  const [updates, setUpdates] = useState<GameBananaModUpdate[]>([]);
+  const [updatesLoading, setUpdatesLoading] = useState(true);
+  const [updatesTotalCount, setUpdatesTotalCount] = useState(0);
+  const [updatesError, setUpdatesError] = useState<string | null>(null);
+  // The whole changelog is minimized behind an outer dropdown; each version
+  // entry inside is its own collapsed dropdown.
+  const [changelogOpen, setChangelogOpen] = useState(false);
+  const [openUpdates, setOpenUpdates] = useState<Set<number>>(new Set());
   const [archivedFilesOpen, setArchivedFilesOpen] = useState(false);
   // Lightbox state - when true, the selected image renders full-screen at
   // its native GB resolution so the user can inspect detail the inline
@@ -104,6 +128,8 @@ export default function ModDetailsModal({
   // can size to its real proportions instead of being forced into 16:9
   // (which letterboxed portraits and chopped UI screenshots).
   const [imageRatios, setImageRatios] = useState<Record<number, number>>({});
+  const [deleteCandidate, setDeleteCandidate] = useState<{ modId: string; fileName: string } | null>(null);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
 
   useEffect(() => {
     setArchivedFilesOpen(false);
@@ -131,8 +157,44 @@ export default function ModDetailsModal({
   }, [mod.id, section]);
 
   useEffect(() => {
+    let cancelled = false;
+    setUpdatesLoading(true);
+    setUpdatesError(null);
+    getModUpdates(mod.id, section)
+      .then((res) => {
+        if (!cancelled) {
+          setUpdates(
+            res.updates.filter(
+              (update) => update.text || update.changes?.length || update.title || update.version
+            )
+          );
+          setUpdatesTotalCount(res.totalCount);
+          setOpenUpdates(new Set());
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('[ModDetailsModal] Failed to load updates:', err);
+          setUpdates([]);
+          setUpdatesTotalCount(0);
+          setUpdatesError(String(err).replace(/^Error:\s*/, ''));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setUpdatesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mod.id, section]);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (deleteCandidate) {
+          if (!deleteInProgress) setDeleteCandidate(null);
+          return;
+        }
         // Lightbox eats ESC before the modal does, so users can dismiss the
         // zoomed view without losing their place on the detail card.
         if (lightboxOpen) {
@@ -142,11 +204,26 @@ export default function ModDetailsModal({
         }
       }
       // Arrow keys only navigate while the lightbox is open - otherwise
-      // they'd silently mutate hidden state while the user scrolls the
-      // description with the cursor.
+      // they step between mods when the caller provides modal navigation.
       if (lightboxOpen && images.length > 1) {
         if (e.key === 'ArrowLeft') goToPrevious();
         if (e.key === 'ArrowRight') goToNext();
+      } else if (!deleteCandidate) {
+        const target = e.target as HTMLElement | null;
+        const tag = target?.tagName?.toLowerCase();
+        const editing =
+          tag === 'input' ||
+          tag === 'textarea' ||
+          tag === 'select' ||
+          target?.isContentEditable;
+        if (!editing && e.key === 'ArrowLeft' && onNavigatePrevious) {
+          e.preventDefault();
+          onNavigatePrevious();
+        }
+        if (!editing && e.key === 'ArrowRight' && onNavigateNext) {
+          e.preventDefault();
+          onNavigateNext();
+        }
       }
     };
     // Side mouse buttons (3 = back, 4 = forward) would otherwise let Chromium
@@ -180,7 +257,15 @@ export default function ModDetailsModal({
       window.removeEventListener('mouseup', handleMouseUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onClose, images.length, lightboxOpen]);
+  }, [
+    onClose,
+    images.length,
+    lightboxOpen,
+    deleteCandidate,
+    deleteInProgress,
+    onNavigatePrevious,
+    onNavigateNext,
+  ]);
 
   const currentImage = images[currentImageIndex];
   // The lightbox loads the original GB asset for detail inspection.
@@ -220,6 +305,48 @@ export default function ModDetailsModal({
   const archivedFiles = files.filter((file) => file.isArchived);
   const totalDownloads = files.reduce((sum, f) => sum + f.downloadCount, 0);
   const outdated = dateModified ? isModOutdated(dateModified) : false;
+  const formatUpdateVersion = (version: string) =>
+    version.trim().match(/^v/i) ? version.trim() : `v${version.trim()}`;
+
+  const toggleUpdate = (id: number) => {
+    setOpenUpdates((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  // Color the GameBanana changelog label (Bugfix, Feature, ...). Grouped so
+  // related labels share a hue; anything unrecognized falls back to neutral.
+  const changeCategoryStyle = (category: string): string => {
+    switch (category.toLowerCase()) {
+      case 'feature':
+      case 'addition':
+        return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+      case 'bugfix':
+        return 'bg-rose-500/15 text-rose-300 border-rose-500/30';
+      case 'improvement':
+      case 'optimization':
+      case 'overhaul':
+      case 'rewrite':
+        return 'bg-sky-500/15 text-sky-300 border-sky-500/30';
+      case 'adjustment':
+      case 'tweak':
+      case 'amendment':
+      case 'refactor':
+        return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+      case 'removal':
+        return 'bg-zinc-500/15 text-zinc-300 border-zinc-500/40';
+      case 'suggestion':
+        return 'bg-violet-500/15 text-violet-300 border-violet-500/30';
+      default:
+        return 'bg-bg-secondary text-text-secondary border-border';
+    }
+  };
 
   const renderFileRow = (file: GameBananaFile, archived = false) => {
     const isInstalled = installedFileIds.has(file.id);
@@ -240,6 +367,7 @@ export default function ModDetailsModal({
       !installedFileState.enabled &&
       !!onEnableFile &&
       !isBusyThis;
+    const showDeleteButton = !!installedFileState && !!onDeleteFile;
     const pct = progress && progress.total > 0
       ? Math.round((progress.downloaded / progress.total) * 100)
       : null;
@@ -313,61 +441,105 @@ export default function ModDetailsModal({
             </div>
           )}
         </div>
-        {showEnablePill && installedFileState && (
-          <button
-            onClick={() => onEnableFile!(installedFileState.modId)}
-            disabled={isBusyThis}
-            title="Enable this mod"
-            className="flex-shrink-0 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed bg-yellow-500/15 hover:bg-yellow-500/25 text-yellow-300 border border-yellow-500/40"
-          >
-            <Power className="w-3.5 h-3.5" />
-            Enable
-          </button>
-        )}
-        <button
-          onClick={() => onDownload(file.id, file.fileName)}
-          disabled={isBusyThis}
-          className={`flex-shrink-0 flex items-center justify-center gap-2 px-4 py-2 min-w-[110px] text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer ${
-            isUpdate
-              ? 'bg-accent hover:bg-accent-hover text-white'
-              : isInstalled
-                ? 'bg-bg-secondary hover:bg-bg-primary text-text-primary border border-border'
-                : 'bg-accent hover:bg-accent-hover text-white'
-          }`}
-        >
-          {isDownloadingThis ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              {extracting ? 'Extracting...' : pct !== null ? `${pct}%` : 'Starting'}
-            </>
-          ) : isQueuedThis ? (
-            <>
-              <Clock className="w-4 h-4" />
-              Queued
-            </>
-          ) : (
-            <>
-              <Download className="w-4 h-4" />
-              {actionLabel(file.id, archived)}
-            </>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          {showEnablePill && installedFileState && (
+            <button
+              type="button"
+              onClick={() => onEnableFile!(installedFileState.modId)}
+              disabled={isBusyThis}
+              title="Enable this mod"
+              className="flex items-center justify-center gap-1.5 rounded-md border border-yellow-500/40 bg-yellow-500/15 px-3 py-2 text-sm font-medium text-yellow-300 transition-colors hover:bg-yellow-500/25 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+            >
+              <Power className="w-3.5 h-3.5" />
+              Enable
+            </button>
           )}
-        </button>
+          {showDeleteButton && installedFileState && (
+            <button
+              type="button"
+              onClick={() => setDeleteCandidate({ modId: installedFileState.modId, fileName: file.fileName })}
+              disabled={isBusyThis || deleteInProgress}
+              title={`Delete ${file.fileName}`}
+              aria-label={`Delete ${file.fileName}`}
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-state-danger/35 bg-state-danger/10 text-state-danger transition-colors hover:border-state-danger/55 hover:bg-state-danger/20 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onDownload(file.id, file.fileName)}
+            disabled={isBusyThis}
+            className={`flex min-w-[110px] items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${
+              isUpdate || !isInstalled
+                ? 'border-accent/45 bg-accent/10 text-text-primary hover:border-accent/65 hover:bg-accent/20'
+                : 'border-border bg-bg-secondary text-text-primary hover:bg-bg-primary'
+            }`}
+          >
+            {isDownloadingThis ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {extracting ? 'Extracting...' : pct !== null ? `${pct}%` : 'Starting'}
+              </>
+            ) : isQueuedThis ? (
+              <>
+                <Clock className="w-4 h-4" />
+                Queued
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                {actionLabel(file.id, archived)}
+              </>
+            )}
+          </button>
+        </div>
       </div>
     );
   };
 
-  return (
+  if (typeof document === 'undefined') return null;
+
+  const modal = (
     <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in"
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 md:px-24 z-50 animate-fade-in"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={mod.name}
     >
       <div
-        className="relative bg-bg-secondary rounded-xl w-full max-w-4xl lg:max-w-6xl max-h-[90vh] overflow-hidden flex flex-col border border-border shadow-2xl"
+        className="relative bg-bg-secondary rounded-xl w-full max-w-4xl lg:max-w-6xl max-h-[90vh] overflow-visible flex flex-col border border-border shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        {onNavigatePrevious && !lightboxOpen && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onNavigatePrevious();
+            }}
+            aria-label={previousLabel ? `Previous mod: ${previousLabel}` : 'Previous mod'}
+            title={previousLabel ? `Previous: ${previousLabel}` : 'Previous mod'}
+            className="absolute -left-16 top-1/2 z-20 flex h-14 w-14 -translate-y-1/2 items-center justify-center rounded-lg border border-border bg-bg-secondary text-text-primary shadow-2xl transition-colors hover:border-accent/60 hover:bg-bg-tertiary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 cursor-pointer"
+          >
+            <ChevronLeft className="h-8 w-8" />
+          </button>
+        )}
+        {onNavigateNext && !lightboxOpen && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onNavigateNext();
+            }}
+            aria-label={nextLabel ? `Next mod: ${nextLabel}` : 'Next mod'}
+            title={nextLabel ? `Next: ${nextLabel}` : 'Next mod'}
+            className="absolute -right-16 top-1/2 z-20 flex h-14 w-14 -translate-y-1/2 items-center justify-center rounded-lg border border-border bg-bg-secondary text-text-primary shadow-2xl transition-colors hover:border-accent/60 hover:bg-bg-tertiary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 cursor-pointer"
+          >
+            <ChevronRight className="h-8 w-8" />
+          </button>
+        )}
         {/* Header - single row. Status badges, category, title, and dense
             metadata cluster all fit on one line so the modal's vertical
             budget goes to content, not chrome. Title shrinks/truncates
@@ -490,6 +662,60 @@ export default function ModDetailsModal({
           </button>
         </div>
 
+        {deleteCandidate && (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/65 p-4"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-file-title"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!deleteInProgress) setDeleteCandidate(null);
+            }}
+          >
+            <div
+              className="w-full max-w-md rounded-lg border border-border bg-bg-secondary p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 id="delete-file-title" className="text-lg font-semibold text-text-primary">
+                Delete installed file?
+              </h3>
+              <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+                Delete <span className="font-medium text-text-primary">{deleteCandidate.fileName}</span> from your installed mods?
+                This action cannot be undone.
+              </p>
+              <div className="mt-5 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDeleteCandidate(null)}
+                  disabled={deleteInProgress}
+                  className="rounded-md border border-border bg-bg-tertiary px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!onDeleteFile || !deleteCandidate) return;
+                    setDeleteInProgress(true);
+                    try {
+                      await onDeleteFile(deleteCandidate.modId);
+                      setDeleteCandidate(null);
+                    } finally {
+                      setDeleteInProgress(false);
+                    }
+                  }}
+                  disabled={deleteInProgress}
+                  className="inline-flex items-center gap-2 rounded-md border border-state-danger/35 bg-state-danger/10 px-4 py-2 text-sm font-medium text-state-danger transition-colors hover:border-state-danger/55 hover:bg-state-danger/20 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  {deleteInProgress && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Body - single scroll on narrow (everything flows top to bottom),
             two independently-scrollable columns on lg+. Independent scroll
             on wide is critical now that previews stack vertically: scrolling
@@ -587,6 +813,7 @@ export default function ModDetailsModal({
                     <AudioPreviewPlayer
                       src={audioPreviewUrl}
                       className="w-full"
+                      volume={soundVolume}
                     />
                   </div>
                 </div>
@@ -615,6 +842,124 @@ export default function ModDetailsModal({
                   </div>
                 </section>
               )}
+
+              <section>
+                <button
+                  type="button"
+                  onClick={() => setChangelogOpen((o) => !o)}
+                  aria-expanded={changelogOpen}
+                  className="group mb-2 flex w-full cursor-pointer items-center gap-2 text-left"
+                >
+                  {changelogOpen ? (
+                    <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-text-secondary" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-text-secondary" />
+                  )}
+                  <RefreshCw className="h-3.5 w-3.5 flex-shrink-0 text-text-secondary" />
+                  <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary transition-colors group-hover:text-text-primary">
+                    Changelog {updatesTotalCount > 0 && <span className="normal-case tracking-normal text-text-secondary/70">({updatesTotalCount})</span>}
+                  </span>
+                </button>
+                {changelogOpen && (
+                  updatesLoading ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 2 }).map((_, i) => (
+                      <div key={i} className="rounded-lg border border-border bg-bg-tertiary p-3">
+                        <div className="mb-2 flex items-center gap-2">
+                          <Skeleton className="h-3 w-20" />
+                          <Skeleton className="h-2.5 w-14" />
+                        </div>
+                        <Skeleton className="h-2.5 w-full" />
+                        <Skeleton className="mt-1.5 h-2.5 w-2/3" />
+                      </div>
+                    ))}
+                  </div>
+                ) : updatesError ? (
+                  <p className="rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-secondary">
+                    Changelog unavailable.
+                  </p>
+                ) : updates.length === 0 ? (
+                  <p className="text-sm text-text-secondary py-1">No changelog entries found</p>
+                ) : (
+                  <div className="space-y-2">
+                    {updates.map((update) => {
+                      const isOpen = openUpdates.has(update.id);
+                      const hasChanges = (update.changes?.length ?? 0) > 0;
+                      const hasBody = hasChanges || !!update.text;
+                      return (
+                        <article key={update.id} className="rounded-lg border border-border bg-bg-tertiary overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => hasBody && toggleUpdate(update.id)}
+                            aria-expanded={hasBody ? isOpen : undefined}
+                            disabled={!hasBody}
+                            className={`w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors ${
+                              hasBody ? 'cursor-pointer hover:bg-bg-secondary/60' : 'cursor-default'
+                            }`}
+                          >
+                            {hasBody ? (
+                              isOpen ? (
+                                <ChevronDown className="w-4 h-4 flex-shrink-0 text-text-secondary" />
+                              ) : (
+                                <ChevronRight className="w-4 h-4 flex-shrink-0 text-text-secondary" />
+                              )
+                            ) : (
+                              <span className="w-4 h-4 flex-shrink-0" />
+                            )}
+                            {(update.version || update.title) && (
+                              <h4 className="min-w-0 truncate text-sm font-semibold text-text-primary">
+                                {update.version ? formatUpdateVersion(update.version) : update.title}
+                                {update.version && update.title ? ` - ${update.title}` : ''}
+                              </h4>
+                            )}
+                            {hasChanges && (
+                              <span className="flex-shrink-0 rounded-full bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
+                                {update.changes!.length}
+                              </span>
+                            )}
+                            {update.dateAdded > 0 && (
+                              <span className="ml-auto flex flex-shrink-0 items-center gap-1 text-[11px] text-text-tertiary">
+                                <Clock className="w-3 h-3" />
+                                {formatDate(update.dateAdded)}
+                              </span>
+                            )}
+                          </button>
+                          {isOpen && hasBody && (
+                            <div className="border-t border-border px-3 py-2.5">
+                              {hasChanges ? (
+                                <ul className="space-y-1.5">
+                                  {update.changes!.map((change, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-sm text-text-primary/90">
+                                      {change.category && (
+                                        <span
+                                          className={`mt-0.5 flex-shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${changeCategoryStyle(
+                                            change.category
+                                          )}`}
+                                        >
+                                          {change.category}
+                                        </span>
+                                      )}
+                                      <span className="min-w-0 leading-relaxed">{change.text}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                update.text && (
+                                  <div
+                                    className="text-sm text-text-primary/90 leading-relaxed [&_p]:mb-1 [&_a]:text-accent [&_a]:hover:underline"
+                                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(update.text) }}
+                                  />
+                                )
+                              )}
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                  )
+                )}
+              </section>
 
               {files.length > 0 && (
                 <section>
@@ -783,4 +1128,6 @@ export default function ModDetailsModal({
       )}
     </div>
   );
+
+  return createPortal(modal, document.body);
 }

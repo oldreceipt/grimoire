@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
-import { Palette, Loader2, AlertCircle, Check, RefreshCw, RotateCcw } from 'lucide-react';
+import { Palette, Loader2, AlertCircle, Check, RefreshCw, RotateCcw, Sparkles, Blend } from 'lucide-react';
 import {
   applyHeroColor,
+  applyHeroPrism,
   previewHeroColor,
   revertHeroColor,
   getActiveHeroColor,
   getHeroColorSupport,
   getGameRunningStatus,
 } from '../../lib/api';
+import {
+  GRADIENT_PRESETS,
+  DEFAULT_CUSTOM_STOPS,
+  gradientCss,
+  rainbowCss,
+  gradientSpecOf,
+  selectedGradientStops,
+  parseGradientSpec,
+  type GStop,
+} from '../../lib/abilityColorPreview';
 
 interface HeroColorPickerProps {
   heroName: string;
@@ -81,6 +92,16 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
   const [hue, setHue] = useState(DEFAULT_HUE);
   const [saturation, setSaturation] = useState(DEFAULT_SCALE);
   const [brightness, setBrightness] = useState(DEFAULT_SCALE);
+  // Recolor mode: a single picked color, the rainbow prism, or a custom gradient.
+  const [mode, setMode] = useState<'hue' | 'prism' | 'gradient'>('hue');
+  const [animated, setAnimated] = useState(false);
+  // Gradient mode: the chosen preset name (or 'custom') and the custom editor stops.
+  const [gradientPreset, setGradientPreset] = useState<string>(GRADIENT_PRESETS[0].name);
+  const [customStops, setCustomStops] = useState<GStop[]>(DEFAULT_CUSTOM_STOPS);
+  // What's applied in-game: the mode (null = nothing), its animated flag, and gradient.
+  const [activeMode, setActiveMode] = useState<'hue' | 'prism' | 'gradient' | null>(null);
+  const [activeAnimated, setActiveAnimated] = useState(false);
+  const [activeGradient, setActiveGradient] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
@@ -97,10 +118,14 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
   useEffect(() => {
     mounted.current = true;
     setLoading(true);
-    // Fresh hero: drop any prior hero's preview state.
+    // Fresh hero: drop any prior hero's preview + mode state.
     setPreviewUrl(null);
     setPreviewFailed(false);
     setPreviewUnavailable(false);
+    setMode('hue');
+    setAnimated(false);
+    setGradientPreset(GRADIENT_PRESETS[0].name);
+    setCustomStops(DEFAULT_CUSTOM_STOPS);
     Promise.all([
       getHeroColorSupport(heroName),
       getActiveHeroColor(heroName),
@@ -109,10 +134,25 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
       .then(([isSupported, active, status]) => {
         if (!mounted.current) return;
         setSupported(isSupported);
+        const activeM = active ? (active.mode ?? 'hue') : null;
+        setActiveMode(activeM);
         setActiveHue(active?.hue ?? null);
         setActiveSaturation(active?.saturation ?? null);
         setActiveBrightness(active?.brightness ?? null);
-        if (active) {
+        setActiveAnimated(active?.animated ?? false);
+        setActiveGradient(active?.gradient ?? null);
+        if (active && (activeM === 'prism' || activeM === 'gradient')) {
+          setMode(activeM);
+          setAnimated(active.animated ?? false);
+          setHue(active.hue);
+          setSaturation(active.saturation);
+          setBrightness(active.brightness);
+          if (activeM === 'gradient') {
+            const parsed = parseGradientSpec(active.gradient);
+            setGradientPreset(parsed.preset);
+            setCustomStops(parsed.stops);
+          }
+        } else if (active) {
           setHue(active.hue);
           setSaturation(active.saturation);
           setBrightness(active.brightness);
@@ -134,7 +174,8 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
   // sliders stay smooth. Best-effort: if it can't render (no game path, old
   // binary) we silently fall back to the approximate CSS swatch.
   useEffect(() => {
-    if (!supported || busy || previewUnavailable) return;
+    // Prism / gradient have no per-pixel swatch to bake; they show a CSS chip instead.
+    if (!supported || busy || previewUnavailable || mode !== 'hue') return;
     let cancelled = false;
     setPreviewLoading(true);
     const handle = setTimeout(() => {
@@ -159,7 +200,7 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [heroName, hue, saturation, brightness, supported, busy, previewUnavailable]);
+  }, [heroName, hue, saturation, brightness, supported, busy, previewUnavailable, mode]);
 
   const refreshGameRunning = async () => {
     try {
@@ -174,11 +215,24 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
     setBusy(true);
     setActionError(null);
     try {
-      const result = await applyHeroColor(heroName, hue, saturation, brightness);
-      if (!mounted.current) return;
-      setActiveHue(result.hue);
-      setActiveSaturation(result.saturation);
-      setActiveBrightness(result.brightness);
+      if (mode === 'prism' || mode === 'gradient') {
+        const grad = mode === 'gradient' ? gradientSpecOf(gradientPreset, customStops) : null;
+        const result = await applyHeroPrism(heroName, hue, saturation, brightness, animated, grad);
+        if (!mounted.current) return;
+        setActiveMode(mode);
+        setActiveHue(result.hue);
+        setActiveSaturation(result.saturation);
+        setActiveBrightness(result.brightness);
+        setActiveAnimated(result.animated);
+        setActiveGradient(result.gradient);
+      } else {
+        const result = await applyHeroColor(heroName, hue, saturation, brightness);
+        if (!mounted.current) return;
+        setActiveMode('hue');
+        setActiveHue(result.hue);
+        setActiveSaturation(result.saturation);
+        setActiveBrightness(result.brightness);
+      }
       setChanged(true);
       await refreshGameRunning();
     } catch (err) {
@@ -195,9 +249,12 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
     try {
       await revertHeroColor(heroName);
       if (!mounted.current) return;
+      setActiveMode(null);
       setActiveHue(null);
       setActiveSaturation(null);
       setActiveBrightness(null);
+      setActiveAnimated(false);
+      setActiveGradient(null);
       setChanged(true);
       await refreshGameRunning();
     } catch (err) {
@@ -213,12 +270,27 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
     setBrightness(p.brightness);
   };
 
-  const applied = activeHue !== null;
-  const dirty =
-    !applied ||
+  const applied = activeMode !== null;
+  const gradientSpec = gradientSpecOf(gradientPreset, customStops);
+  const gradientStops = selectedGradientStops(gradientPreset, customStops);
+  const gradientLabel =
+    gradientPreset === 'custom'
+      ? 'Custom'
+      : (GRADIENT_PRESETS.find((g) => g.name === gradientPreset)?.label ?? gradientPreset);
+  const spectrumDirty =
+    activeAnimated !== animated ||
     activeHue !== hue ||
     activeSaturation !== saturation ||
     activeBrightness !== brightness;
+  const dirty =
+    mode === 'gradient'
+      ? activeMode !== 'gradient' || activeGradient !== gradientSpec || spectrumDirty
+      : mode === 'prism'
+        ? activeMode !== 'prism' || spectrumDirty
+        : activeMode !== 'hue' ||
+          activeHue !== hue ||
+          activeSaturation !== saturation ||
+          activeBrightness !== brightness;
 
   const swatchCss = approxSwatch(hue, saturation, brightness);
 
@@ -255,19 +327,70 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
       {!loading && !error && supported && (
         <>
           <p className="text-xs text-text-secondary">
-            Recolor {heroName}&apos;s ability effects (particles, projectiles, and the ult body) to
-            a color. Adjust hue, saturation, and brightness; the preview shows a real ability
-            texture recolored to your pick.
+            Recolor {heroName}&apos;s ability effects (particles, projectiles, and the ult body).
+            Pick a single color, a rainbow, or spread the VFX over a gradient.
           </p>
+
+          {/* Mode toggle: a single picked color vs the rainbow prism. */}
+          <div className="inline-flex rounded-md border border-border p-0.5 text-xs">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setMode('hue')}
+              className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-medium transition-colors disabled:cursor-not-allowed ${
+                mode === 'hue'
+                  ? 'border border-accent/40 bg-accent/10 text-text-primary'
+                  : 'border border-transparent text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+              }`}
+            >
+              <Palette className="h-3.5 w-3.5" /> Single Color
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setMode('prism')}
+              className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-medium transition-colors disabled:cursor-not-allowed ${
+                mode === 'prism'
+                  ? 'border border-accent/40 bg-accent/10 text-text-primary'
+                  : 'border border-transparent text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Rainbow
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setMode('gradient')}
+              className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-medium transition-colors disabled:cursor-not-allowed ${
+                mode === 'gradient'
+                  ? 'border border-accent/40 bg-accent/10 text-text-primary'
+                  : 'border border-transparent text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+              }`}
+            >
+              <Blend className="h-3.5 w-3.5" /> Gradient
+            </button>
+          </div>
 
           {/* Live recolored preview + current target */}
           <div className="flex items-center gap-3">
             <div
               className="relative h-14 w-14 flex-shrink-0 overflow-hidden rounded-md border border-border shadow-inner"
-              style={{ backgroundColor: swatchCss }}
-              aria-label={`Hue ${hue}, saturation ${pct(saturation)}%, brightness ${pct(brightness)}%`}
+              style={
+                mode === 'prism'
+                  ? { background: rainbowCss(hue, saturation, brightness) }
+                  : mode === 'gradient'
+                    ? { background: gradientCss(gradientStops, hue, saturation, brightness) }
+                    : { backgroundColor: swatchCss }
+              }
+              aria-label={
+                mode === 'prism'
+                  ? `Rainbow prism${animated ? ', animated' : ''}`
+                  : mode === 'gradient'
+                    ? `${gradientLabel} gradient${animated ? ', animated' : ''}`
+                    : `Hue ${hue}, saturation ${pct(saturation)}%, brightness ${pct(brightness)}%`
+              }
             >
-              {previewUrl && !previewFailed && (
+              {mode === 'hue' && previewUrl && !previewFailed && (
                 <img
                   src={previewUrl}
                   alt="Ability color preview"
@@ -275,7 +398,7 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
                   style={{ imageRendering: 'auto' }}
                 />
               )}
-              {previewLoading && (
+              {mode === 'hue' && previewLoading && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/20">
                   <Loader2 className="h-4 w-4 animate-spin text-white/80" />
                 </div>
@@ -283,21 +406,32 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
             </div>
             <div className="min-w-0">
               <div className="text-sm font-semibold text-text-primary tabular-nums">
-                {hue}&deg; &middot; S {pct(saturation)}% &middot; B {pct(brightness)}%
+                {mode === 'prism'
+                  ? `Rainbow${animated ? ' (animated)' : ''} · rot ${hue}° · S ${pct(saturation)}% · B ${pct(brightness)}%`
+                  : mode === 'gradient'
+                    ? `${gradientLabel}${animated ? ' (animated)' : ''} · rot ${hue}° · S ${pct(saturation)}% · B ${pct(brightness)}%`
+                    : `${hue}° · S ${pct(saturation)}% · B ${pct(brightness)}%`}
               </div>
               <div className="text-[11px] text-text-secondary">
                 {!applied
                   ? 'No color applied'
                   : !dirty
                     ? 'Applied'
-                    : `Applied: ${activeHue}° / S ${pct(activeSaturation ?? 1)}% / B ${pct(activeBrightness ?? 1)}%`}
+                    : activeMode === 'prism'
+                      ? `Applied: Rainbow${activeAnimated ? ' (animated)' : ''} · rot ${activeHue ?? 0}°`
+                      : activeMode === 'gradient'
+                        ? `Applied: ${activeGradient && GRADIENT_PRESETS.some((g) => g.name === activeGradient) ? (GRADIENT_PRESETS.find((g) => g.name === activeGradient)?.label ?? 'Gradient') : 'Custom'} gradient${activeAnimated ? ' (animated)' : ''}`
+                        : `Applied: ${activeHue}° / S ${pct(activeSaturation ?? 1)}% / B ${pct(activeBrightness ?? 1)}%`}
               </div>
             </div>
           </div>
 
-          {/* Hue slider over a rainbow track */}
+          {/* Hue slider over a rainbow track. In prism mode it rotates where the
+              spectrum starts rather than picking one color. */}
           <label className="block space-y-1">
-            <span className="text-[11px] font-medium text-text-secondary">Hue</span>
+            <span className="text-[11px] font-medium text-text-secondary">
+              {mode === 'hue' ? 'Hue' : 'Rotation'}
+            </span>
             <input
               type="range"
               min={0}
@@ -354,7 +488,8 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
             />
           </label>
 
-          {/* Preset colors (each sets hue + saturation + brightness) */}
+          {/* Preset colors (single-color mode only; each sets hue + saturation + brightness) */}
+          {mode === 'hue' && (
           <div className="flex flex-wrap gap-1.5">
             {PRESETS.map((p) => {
               const selected =
@@ -375,6 +510,115 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
               );
             })}
           </div>
+          )}
+
+          {mode === 'prism' && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={animated}
+                  disabled={busy}
+                  onChange={(e) => setAnimated(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-accent disabled:cursor-not-allowed"
+                />
+                <span className="font-medium text-text-primary">Animated</span>
+                <span>sweep the spectrum over each effect&apos;s lifetime</span>
+              </label>
+              <p className="text-[11px] text-text-secondary/80">
+                Prism spreads {heroName}&apos;s existing ability colors across a rainbow instead of
+                one hue. Use the sliders above to rotate the spectrum and tune its saturation /
+                brightness. Animated adds a moving sweep on the showy effects (glow, beams, trails).
+              </p>
+            </div>
+          )}
+
+          {mode === 'gradient' && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {GRADIENT_PRESETS.map((g) => (
+                  <button
+                    key={g.name}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setGradientPreset(g.name)}
+                    title={g.label}
+                    className={`h-7 w-10 rounded border transition-transform hover:scale-105 disabled:cursor-not-allowed ${
+                      gradientPreset === g.name
+                        ? 'border-text-primary ring-2 ring-accent/60'
+                        : 'border-border'
+                    }`}
+                    style={{ background: gradientCss(g.stops, hue, saturation, brightness) }}
+                    aria-label={g.label}
+                  />
+                ))}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setGradientPreset('custom')}
+                  title="Custom gradient"
+                  className={`flex h-7 items-center rounded border px-2 text-[11px] font-medium transition-colors disabled:cursor-not-allowed ${
+                    gradientPreset === 'custom'
+                      ? 'border-text-primary text-text-primary ring-2 ring-accent/60'
+                      : 'border-border text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  Custom
+                </button>
+              </div>
+
+              {gradientPreset === 'custom' && (
+                <div className="space-y-1.5 rounded-md border border-border/60 bg-bg-secondary/40 p-2">
+                  {customStops.map((st, i) => (
+                    <label key={i} className="block space-y-0.5">
+                      <span className="text-[10px] font-medium text-text-secondary">
+                        Stop {i + 1}{' '}
+                        <span className="tabular-nums text-text-secondary/70">
+                          {Math.round(st.hue)}&deg;
+                        </span>
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={359}
+                        step={1}
+                        value={Math.round(st.hue)}
+                        disabled={busy}
+                        onChange={(e) => {
+                          const hueVal = Number(e.target.value);
+                          setCustomStops((prev) =>
+                            prev.map((s, j) => (j === i ? { ...s, hue: hueVal } : s)),
+                          );
+                        }}
+                        className="h-2.5 w-full cursor-pointer appearance-none rounded-full disabled:cursor-not-allowed"
+                        style={{
+                          background:
+                            'linear-gradient(to right, hsl(0,85%,55%), hsl(60,85%,55%), hsl(120,85%,55%), hsl(180,85%,55%), hsl(240,85%,55%), hsl(300,85%,55%), hsl(360,85%,55%))',
+                        }}
+                      />
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={animated}
+                  disabled={busy}
+                  onChange={(e) => setAnimated(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-accent disabled:cursor-not-allowed"
+                />
+                <span className="font-medium text-text-primary">Animated</span>
+                <span>sweep the gradient over each effect&apos;s lifetime</span>
+              </label>
+              <p className="text-[11px] text-text-secondary/80">
+                Gradient spreads {heroName}&apos;s ability colors over a chosen ramp instead of the
+                full rainbow. Pick a preset or Custom (a hue per stop); the sliders above rotate and
+                tune it.
+              </p>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex items-center gap-2 pt-1">
@@ -382,14 +626,20 @@ export default function HeroColorPicker({ heroName }: HeroColorPickerProps) {
               type="button"
               onClick={handleApply}
               disabled={busy || !dirty}
-              className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Check className="h-3.5 w-3.5" />
               )}
-              {applied && !dirty ? 'Applied' : 'Apply Color'}
+              {applied && !dirty
+                ? 'Applied'
+                : mode === 'prism'
+                  ? 'Apply Rainbow'
+                  : mode === 'gradient'
+                    ? 'Apply Gradient'
+                    : 'Apply Color'}
             </button>
             {applied && (
               <button

@@ -21,6 +21,7 @@ import type {
     ApplyHeroSoundResult,
     ActiveHeroColor,
     ApplyHeroColorResult,
+    ApplyHeroPrismResult,
     LockerOverview,
     LockerCardThumbnail,
     LockerClearScope,
@@ -29,6 +30,7 @@ import type {
     GameBananaModsResponse,
     GameBananaModDetails,
     GameBananaModFileList,
+    GameBananaModUpdatesResponse,
     GameBananaSection,
     GameBananaCategoryNode,
     GameBananaCollection,
@@ -197,6 +199,8 @@ export interface MultiVpkPickData {
     /** filename → human-readable label derived from VPK contents. Missing
      *  entries fall back to the filename in the picker. */
     vpkLabels?: Record<string, string>;
+    /** filename → file size in bytes. */
+    vpkFileSizes?: Record<string, number>;
 }
 
 export interface SyncProgressData {
@@ -302,6 +306,12 @@ export interface ElectronAPI {
     getSettings: () => Promise<AppSettings>;
     setSettings: (settings: AppSettings) => Promise<void>;
 
+    // Discord Rich Presence (opt-in; talks only to the local Discord client)
+    discord: {
+        update: (ctx: { surface: string; count?: number; hero?: string }) => Promise<void>;
+        clear: () => Promise<void>;
+    };
+
     // Mods
     getMods: () => Promise<Mod[]>;
     enableMod: (modId: string) => Promise<Mod>;
@@ -347,6 +357,14 @@ export interface ElectronAPI {
         saturation: number,
         brightness: number,
     ) => Promise<ApplyHeroColorResult>;
+    applyHeroPrism: (
+        heroName: string,
+        hue: number,
+        saturation: number,
+        brightness: number,
+        animated: boolean,
+        gradient: string | null,
+    ) => Promise<ApplyHeroPrismResult>;
     previewHeroColor: (
         heroName: string,
         hue: number,
@@ -388,6 +406,7 @@ export interface ElectronAPI {
     getModDetails: (args: GetModDetailsArgs) => Promise<GameBananaModDetails>;
     getModFileList: (args: GetModDetailsArgs) => Promise<GameBananaModFileList>;
     getModComments: (args: { modId: number; section?: string; page?: number }) => Promise<{ comments: Array<{ id: number; text: string; dateAdded: number; poster: { id: number; name: string; avatarUrl?: string } }>; totalCount: number }>;
+    getModUpdates: (args: { modId: number; section?: string; page?: number }) => Promise<GameBananaModUpdatesResponse>;
     downloadMod: (args: DownloadModArgs) => Promise<void>;
     getGameBananaSections: () => Promise<GameBananaSection[]>;
     getGameBananaCategories: (args: GetCategoriesArgs) => Promise<GameBananaCategoryNode[]>;

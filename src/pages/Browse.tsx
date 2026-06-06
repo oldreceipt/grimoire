@@ -816,6 +816,7 @@ export default function Browse() {
   const settings = useAppStore((s) => s.settings);
   const loadSettings = useAppStore((s) => s.loadSettings);
   const loadMods = useAppStore((s) => s.loadMods);
+  const deleteMod = useAppStore((s) => s.deleteMod);
   const installedMods = useAppStore((s) => s.mods);
   const soundVolume = useAppStore((s) => s.soundVolume);
   const setSoundVolume = useAppStore((s) => s.setSoundVolume);
@@ -2176,6 +2177,14 @@ export default function Browse() {
 
     return nextMods;
   }, [mods, settings?.hideOutdatedMods, section, heroCategoryId]);
+  const selectedModIndex = selectedMod
+    ? displayMods.findIndex((mod) => mod.id === selectedMod.id)
+    : -1;
+  const previousSelectedMod = selectedModIndex > 0 ? displayMods[selectedModIndex - 1] : undefined;
+  const nextSelectedMod =
+    selectedModIndex >= 0 && selectedModIndex < displayMods.length - 1
+      ? displayMods[selectedModIndex + 1]
+      : undefined;
 
   const gridGap =
     layout === 'list'
@@ -2879,6 +2888,13 @@ export default function Browse() {
           dateModified={selectedModDates?.dateModified}
           onClose={() => setSelectedMod(null)}
           onDownload={handleDownload}
+          onNavigatePrevious={
+            previousSelectedMod ? () => void handleModClick(previousSelectedMod) : undefined
+          }
+          onNavigateNext={nextSelectedMod ? () => void handleModClick(nextSelectedMod) : undefined}
+          previousLabel={previousSelectedMod?.name}
+          nextLabel={nextSelectedMod?.name}
+          onDeleteFile={deleteMod}
         />
       )}
 
@@ -3082,7 +3098,7 @@ function ReadableBrowseModCard({
 
         <div className={`${titleMarginClass} min-w-0`}>
           <h3
-            className={`block truncate font-bold text-[#eee8df] ${
+            className={`block truncate font-mod-title font-bold text-[#eee8df] ${
               isMicro
                 ? 'text-[13px] leading-4'
                 : 'text-[clamp(11px,5.3571cqw,17px)] leading-[1.28] pb-px'
@@ -3092,7 +3108,7 @@ function ReadableBrowseModCard({
             {mod.name}
           </h3>
           {showAuthor && (
-            <p className="-mt-0.5 truncate text-[clamp(10px,4.2857cqw,13px)] font-normal leading-[1.12] text-text-secondary/64">
+            <p className="mt-0 truncate text-[clamp(10px,4.2857cqw,13px)] font-normal leading-[1.12] text-text-secondary/64">
               by {mod.submitter?.name ?? 'Unknown author'}
             </p>
           )}
@@ -3320,7 +3336,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <h3 className="font-medium truncate flex-1">{mod.name}</h3>
+            <h3 className="font-mod-title font-medium truncate flex-1">{mod.name}</h3>
             {installed && installedDisabled && onEnable ? (
               <button
                 onClick={(e) => { e.stopPropagation(); onEnable(); }}
@@ -3552,7 +3568,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
               )}
             </div>
           )}
-          <h3 className={`font-semibold truncate text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${isCompact ? 'text-sm' : 'text-base'}`}>{mod.name}</h3>
+          <h3 className={`font-mod-title font-semibold truncate text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${isCompact ? 'text-sm' : 'text-base'}`}>{mod.name}</h3>
           <div className={`mt-1 flex flex-wrap items-center gap-3 text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] ${isCompact ? 'text-[11px]' : 'text-xs'}`}>
             <BrowseStatItem type="likes" icon={ThumbsUp} value={formatCount(mod.likeCount)} title={`${mod.likeCount ?? 0} likes`} />
             <BrowseStatItem type="views" icon={Eye} value={formatCount(mod.viewCount)} title={`${mod.viewCount ?? 0} views`} />
@@ -3561,7 +3577,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
         </div>
       ) : (
         <div className={`absolute bottom-0 left-0 right-0 ${isCompact ? 'p-2.5' : 'p-3'}`}>
-          <h3 className={`font-semibold truncate text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${isCompact ? 'text-sm' : 'text-base'}`}>{mod.name}</h3>
+          <h3 className={`font-mod-title font-semibold truncate text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] ${isCompact ? 'text-sm' : 'text-base'}`}>{mod.name}</h3>
           <div className={`mt-1 flex flex-wrap items-center gap-3 text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] ${isCompact ? 'text-xs' : 'text-sm'}`}>
             <BrowseStatItem type="likes" icon={ThumbsUp} value={formatCount(mod.likeCount)} title={`${mod.likeCount ?? 0} likes`} />
             <BrowseStatItem type="views" icon={Eye} value={formatCount(mod.viewCount)} title={`${mod.viewCount ?? 0} views`} />
@@ -3729,5 +3745,3 @@ const MemoizedModCard = React.memo(ModCard, (prev, next) => (
   prev.enableModId === next.enableModId &&
   prev.actionContextKey === next.actionContextKey
 ));
-
-

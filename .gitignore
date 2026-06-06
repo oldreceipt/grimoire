@@ -46,3 +46,10 @@ icon-32.png
 
 # Project summary (LaTeX source + build artifacts)
 docs/grimoire-project-summary.*
+
+# Spare README screenshots, kept locally but not yet wired into the grid
+docs/screenshots/browse2.png
+docs/screenshots/locker-3d-ladygeist.png
+docs/screenshots/locker-cards.png
+docs/screenshots/locker-skins.png
+docs/screenshots/mod-details.png

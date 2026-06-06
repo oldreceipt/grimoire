@@ -105,6 +105,10 @@ export default function Profiles() {
   const [isCreating, setIsCreating] = useState(false);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  // Profile id pending an "overwrite this profile?" confirmation. Gated on the
+  // confirmProfileUpdate setting (on by default) so Update isn't a one-click,
+  // no-undo overwrite sitting right next to Apply.
+  const [updateConfirmId, setUpdateConfirmId] = useState<string | null>(null);
   const [expandedProfiles, setExpandedProfiles] = useState<Set<string>>(new Set());
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -710,11 +714,15 @@ export default function Profiles() {
                             size="sm"
                             className="flex-1 min-w-0"
                             variant="secondary"
-                            onClick={() => handleUpdateProfile(profile.id)}
+                            onClick={() =>
+                              (settings?.confirmProfileUpdate ?? true)
+                                ? setUpdateConfirmId(profile.id)
+                                : handleUpdateProfile(profile.id)
+                            }
                             disabled={isUpdating || isApplying}
                             isLoading={isUpdating}
                             icon={Save}
-                            title="Overwrite with current mods"
+                            title="Overwrite this profile with your current mods"
                           >
                             Update
                           </Button>
@@ -848,6 +856,31 @@ export default function Profiles() {
           )}
         </div>
       </div>
+
+      {/* Update (overwrite) Confirmation Modal. Gated on confirmProfileUpdate so
+          Update isn't a one-click overwrite that gets fired when Apply was meant. */}
+      <ConfirmModal
+        isOpen={updateConfirmId !== null}
+        onCancel={() => setUpdateConfirmId(null)}
+        onConfirm={() => {
+          const id = updateConfirmId;
+          setUpdateConfirmId(null);
+          if (id) handleUpdateProfile(id);
+        }}
+        title="Update Profile"
+        message={
+          <>
+            Overwrite{' '}
+            <span className="text-text-primary font-medium">
+              {profiles.find((p) => p.id === updateConfirmId)?.name ?? 'this profile'}
+            </span>{' '}
+            with your currently enabled mods? The profile's saved mod list will be
+            replaced and can't be undone. (To load this profile onto your install
+            instead, use Apply.) You can turn this prompt off in Settings &rarr; Preferences.
+          </>
+        }
+        confirmLabel="Update"
+      />
 
       {/* Delete Confirmation Modal */}
       <ConfirmModal

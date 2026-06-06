@@ -12,6 +12,10 @@ export interface AppSettings {
     steamLaunchOptions: string;      // Args written to Steam's localconfig.vdf for Deadlock just before launch
     activeProfileId: string | null;  // Currently active profile
     autoSaveProfile: boolean;        // Auto-save when mods change
+    /** Ask for confirmation before "Update" overwrites a profile with the current
+     *  mod set. On by default: Update sits next to Apply and overwriting is easy to
+     *  trigger by accident, with no undo. Turn off to overwrite immediately. */
+    confirmProfileUpdate: boolean;
     experimentalStats: boolean;
     experimentalCrosshair: boolean;
     experimentalSocial: boolean;     // Grimoire Social: Discover page + publish/account UI
@@ -34,12 +38,22 @@ export interface AppSettings {
     /** UI accent color (hex, e.g. "#f97316"). Used to theme buttons, links, and
      *  focus rings throughout the app. */
     accentColor: string;
+    /** Hero render used as the active sidebar highlight background. */
+    sidebarHeroHighlight?: string | null;
     /** Order used to render absolute dates (mod/file upload + update dates). */
     dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY';
+    /** Preferred UI language. Null uses the OS/browser language when available. */
+    language?: string | null;
     /** UI zoom factor (webContents.setZoomFactor). Driven by Ctrl +/-/0 and
      *  persisted so hi-DPI laptops keep their preferred scale across launches.
      *  1 = 100%. */
     zoomFactor?: number;
+    /** Opt-in Discord Rich Presence. When on, the main process shows what the
+     *  user is doing in Grimoire on their Discord profile by talking to their
+     *  local Discord client over an IPC socket. Off by default: it broadcasts
+     *  activity outward (through Discord), so it stays a deliberate choice and
+     *  never sends anything to a Grimoire server. */
+    discordRpcEnabled: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -52,6 +66,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     steamLaunchOptions: '',
     activeProfileId: null,
     autoSaveProfile: false,
+    confirmProfileUpdate: true,
     experimentalStats: false,
     experimentalCrosshair: false,
     experimentalSocial: false,
@@ -60,8 +75,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     ignoredConflicts: [],
     ignoreConflictsByDefault: false,
     accentColor: '#f97316',
+    sidebarHeroHighlight: 'Abrams',
     dateFormat: 'MM/DD/YYYY',
+    language: null,
     zoomFactor: 1,
+    discordRpcEnabled: false,
 };
 
 /**

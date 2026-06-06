@@ -801,6 +801,7 @@ export default function Installed() {
     const section = m.sourceSection ?? 'Mod';
     const categoryId = m.categoryId ?? 0;
     setDetailsLoading(true);
+    setDetailsMod(null);
     setDetailsError(null);
     setDetailsSection(section);
     setDetailsCategoryId(categoryId);
@@ -1825,8 +1826,8 @@ export default function Installed() {
    *
    * The picker shows a group's variants sorted by priority, so the
    * before/after semantics match what the user sees: drop "before" puts
-   * the source at the neighbor's slot (loads earlier); drop "after" puts
-   * it just past the neighbor (loads later, wins overlapping files).
+   * the source at the neighbor's slot (loads earlier, wins overlapping
+   * files); drop "after" puts it just past the neighbor (loads later).
    *
    * Implementation: splice the source out of its section list, re-find the
    * neighbor's index (it may have shifted when source was removed), splice
@@ -2180,6 +2181,25 @@ export default function Installed() {
     ? sortEntries(disabledEntries.filter(matchesAllFilters))
     : [];
   const totalMatches = visibleEnabled.length + visibleDisabled.length;
+  const detailsNavigationEntries = [...visibleEnabled, ...visibleDisabled].filter(
+    (entry) => typeof entryPrimaryMod(entry).gameBananaId === 'number'
+  );
+  const detailsNavigationIndex = detailsSourceModId
+    ? detailsNavigationEntries.findIndex((entry) =>
+        entry.kind === 'single'
+          ? entry.mod.id === detailsSourceModId
+          : entry.variants.some((variant) => variant.id === detailsSourceModId)
+      )
+    : -1;
+  const previousDetailsEntry =
+    detailsNavigationIndex > 0 ? detailsNavigationEntries[detailsNavigationIndex - 1] : undefined;
+  const nextDetailsEntry =
+    detailsNavigationIndex >= 0 && detailsNavigationIndex < detailsNavigationEntries.length - 1
+      ? detailsNavigationEntries[detailsNavigationIndex + 1]
+      : undefined;
+  const navigateToDetailsEntry = (entry: ModEntry) => {
+    void openModDetails(entryPrimaryMod(entry));
+  };
 
   const selectAllVisible = () => {
     const ids = new Set<string>();
@@ -2655,7 +2675,7 @@ export default function Installed() {
                 title="Sort and filter installed mods"
               />
               {activeAdjustmentCount > 0 && (
-                <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-bg-primary">
+                <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-accent-foreground ring-2 ring-bg-primary">
                   {activeAdjustmentCount}
                 </span>
               )}
@@ -2787,7 +2807,7 @@ export default function Installed() {
                             >
                               <span
                                 className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${
-                                  checked ? 'border-accent bg-accent text-white' : 'border-border'
+                                  checked ? 'border-accent bg-accent text-accent-foreground' : 'border-border'
                                 }`}
                               >
                                 {checked && <Check className="h-3 w-3" />}
@@ -2878,7 +2898,7 @@ export default function Installed() {
                 title="Locker overrides: review and remove applied hero cards, ability sounds, and ability colors"
               />
               {lockerOverrideCount > 0 && (
-                <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-white ring-2 ring-bg-primary">
+                <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-accent-foreground ring-2 ring-bg-primary">
                   {lockerOverrideCount}
                 </span>
               )}
@@ -3211,6 +3231,14 @@ export default function Installed() {
           onToggleIgnoreUpdates={handleToggleIgnoreUpdates}
           onClose={closeModDetails}
           onDownload={handleDetailsDownload}
+          onNavigatePrevious={
+            previousDetailsEntry ? () => navigateToDetailsEntry(previousDetailsEntry) : undefined
+          }
+          onNavigateNext={
+            nextDetailsEntry ? () => navigateToDetailsEntry(nextDetailsEntry) : undefined
+          }
+          previousLabel={previousDetailsEntry ? entryName(previousDetailsEntry) : undefined}
+          nextLabel={nextDetailsEntry ? entryName(nextDetailsEntry) : undefined}
         />
       )}
 
@@ -5432,6 +5460,9 @@ function ModCard({
   const dangerInlineChipClasses = `${baseChipClasses} flex-shrink-0 border border-state-danger/40 bg-state-danger/10 text-state-danger`;
   const technicalMetaClasses = 'min-w-0 truncate font-mono text-[11px] text-text-secondary/55 hover:text-text-secondary cursor-help';
   const utilityActionClasses = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-all duration-200 hover:bg-bg-tertiary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 cursor-pointer disabled:opacity-60';
+  const hoverActionVisibilityClasses = selectMode
+    ? 'hidden'
+    : 'opacity-0 group-hover/card:opacity-90 focus:opacity-100';
   const menuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-primary hover:bg-bg-tertiary focus:outline-none focus-visible:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50';
   const dangerMenuItemClasses = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-state-danger hover:bg-state-danger/10 focus:outline-none focus-visible:bg-state-danger/10 disabled:cursor-not-allowed disabled:opacity-50';
   const toggleHitboxClasses = 'inline-flex h-7 w-12 items-center justify-center rounded-md cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-bg-primary';
@@ -5486,6 +5517,21 @@ function ModCard({
   const showGroupChip = !!group && (!isCompact || compactChipCount + (showNsfwChip ? 1 : 0) < 2);
   const actions = (
     <div className="ml-auto flex items-center gap-1">
+      {!mod.merged && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className={`${utilityActionClasses} ${hoverActionVisibilityClasses} text-state-danger hover:bg-state-danger/10 hover:text-state-danger focus-visible:ring-state-danger/60`}
+          title={`Delete ${mod.name}`}
+          aria-label={`Delete ${mod.name}`}
+          data-card-action="true"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      )}
       <div className="relative" ref={menuRef} data-card-action="true">
         <button
           type="button"
@@ -5507,7 +5553,7 @@ function ModCard({
             setTagPickerOpen(false);
             setMenuError(null);
           }}
-          className={`${utilityActionClasses} ${isList ? '' : 'opacity-0 group-hover/card:opacity-90 focus:opacity-100 aria-expanded:opacity-100'}`}
+          className={`${utilityActionClasses} ${selectMode ? 'hidden' : `${isList ? '' : 'opacity-0 group-hover/card:opacity-90 focus:opacity-100'} aria-expanded:opacity-100`}`}
           title="More actions"
           aria-label={`More actions for ${mod.name}`}
           aria-expanded={menuOpen}
@@ -5767,7 +5813,7 @@ function ModCard({
               selected ? 'bg-accent border-accent' : 'bg-bg-primary/85 border-white/40'
             }`}
           >
-            {selected && <Check className="w-4 h-4 text-white" strokeWidth={3} />}
+            {selected && <Check className="w-4 h-4 text-accent-foreground" strokeWidth={3} />}
           </div>
         </>
         )}

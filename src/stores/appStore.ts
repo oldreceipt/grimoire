@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Mod, AppSettings, EditLocalModArgs, GlobalModType } from '../types/mod';
 import { getActiveDeadlockPath } from '../lib/appSettings';
 import { setDateFormat } from '../lib/dateFormat';
+import { applyLanguagePreference } from '../i18n';
 import * as api from '../lib/api';
 
 // Cache entry with timestamp for TTL support
@@ -64,6 +65,7 @@ export interface BrowseUiState {
 const LAYOUT_KEY = 'browseLayout';
 const CARD_COLUMNS_KEY = 'browseCardColumns';
 const SORT_KEY = 'browseSort';
+const SOUND_VOLUME_KEY = 'grimoire:sound-preview-volume';
 // Pre-slider key holding 'grid' | 'compact' | 'dense' | 'list'. Read once for
 // migration so existing users keep a comparable layout.
 const LEGACY_VIEW_MODE_KEY = 'browseViewMode';
@@ -114,6 +116,19 @@ function readPersistedSort(): BrowseSortOption {
     // ignore
   }
   return 'default';
+}
+
+function readPersistedSoundVolume(): number {
+  try {
+    const raw = localStorage.getItem(SOUND_VOLUME_KEY);
+    if (raw !== null) {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return Math.min(1, Math.max(0, n));
+    }
+  } catch {
+    // localStorage may be unavailable.
+  }
+  return 0.7;
 }
 
 const DEFAULT_BROWSE_UI: BrowseUiState = {
@@ -169,6 +184,7 @@ interface AppState {
 
   // Global sound preview volume (0-1)
   soundVolume: number;
+  previewAudioPlaying: boolean;
 
   // Browse-page UI state (preserved across page nav)
   browseUi: BrowseUiState;
@@ -180,6 +196,11 @@ interface AppState {
   // Installed-page scroll position. Kept in memory so returning from another
   // tab can restore the page without persisting UI session state to disk.
   installedScrollTop: number;
+
+  // Display name of the hero currently open in the Locker (e.g. "Abrams"), or
+  // null. Published by the Locker page and read by DiscordPresence so Rich
+  // Presence can show the viewed hero. Renderer-only, never persisted.
+  lockerHeroName: string | null;
 
   // Actions
   loadSettings: () => Promise<void>;
@@ -211,6 +232,7 @@ interface AppState {
 
   // Sound volume
   setSoundVolume: (volume: number) => void;
+  setPreviewAudioPlaying: (playing: boolean) => void;
 
   // Browse UI state
   setBrowseUi: (partial: Partial<BrowseUiState>) => void;
@@ -219,6 +241,7 @@ interface AppState {
   // Browse session cache (loaded mods + scroll position)
   setBrowseSession: (cache: BrowseSessionCache | null) => void;
   setInstalledScrollTop: (scrollTop: number) => void;
+  setLockerHeroName: (name: string | null) => void;
 }
 
 // The main process throws this exact phrase from every "out of enabled slots"
@@ -240,10 +263,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   modsError: null,
   modsNotice: null,
   downloadCountsCache: new Map(),
-  soundVolume: 0.7,
+  soundVolume: readPersistedSoundVolume(),
+  previewAudioPlaying: false,
   browseUi: { ...DEFAULT_BROWSE_UI },
   browseSession: null,
   installedScrollTop: 0,
+  lockerHeroName: null,
 
   // Load settings from backend
   loadSettings: async () => {
@@ -251,6 +276,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const settings = await api.getSettings();
       setDateFormat(settings.dateFormat);
+      applyLanguagePreference(settings.language);
       set({ settings, settingsLoading: false });
     } catch (err) {
       set({ settingsError: String(err), settingsLoading: false });
@@ -263,6 +289,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       await api.setSettings(settings);
       setDateFormat(settings.dateFormat);
+      applyLanguagePreference(settings.language);
       set({ settings, settingsLoading: false });
       // Reload mods if path changed
       if (getActiveDeadlockPath(settings)) {
@@ -468,7 +495,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Set global sound preview volume
   setSoundVolume: (volume: number) => {
-    set({ soundVolume: Math.max(0, Math.min(1, volume)) });
+    const next = Math.max(0, Math.min(1, volume));
+    set({ soundVolume: next });
+    try {
+      localStorage.setItem(SOUND_VOLUME_KEY, String(next));
+    } catch {
+      // localStorage may be unavailable.
+    }
+  },
+
+  setPreviewAudioPlaying: (playing: boolean) => {
+    set({ previewAudioPlaying: playing });
   },
 
   // Patch Browse UI state. Use a partial so callers can update one field at
@@ -503,5 +540,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setInstalledScrollTop: (scrollTop: number) => {
     set({ installedScrollTop: Math.max(0, scrollTop) });
   },
-}));
 
+  setLockerHeroName: (name: string | null) => {
+    set({ lockerHeroName: name });
+  },
+}));

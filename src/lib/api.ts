@@ -1,4 +1,4 @@
-import type { Mod, AppSettings, GlobalModType, UnknownModFilterGuess, UnknownModDetectionProgress, ApplyUnknownModMatchArgs, ApplyUnknownCustomModArgs, AssociateUnknownModArgs, UnknownModFileList, EditLocalModArgs, MergeModsArgs, UnmergeModResult, ExtractMergeSourceResult, ApplyHeroCardResult, HeroAbilitySlot, AbilitySlot, AbilitySoundParams, ActiveHeroSound, ApplyHeroSoundResult, ActiveHeroColor, ApplyHeroColorResult, LockerOverview, LockerCardThumbnail, LockerClearScope } from '../types/mod';
+import type { Mod, AppSettings, GlobalModType, UnknownModFilterGuess, UnknownModDetectionProgress, ApplyUnknownModMatchArgs, ApplyUnknownCustomModArgs, AssociateUnknownModArgs, UnknownModFileList, EditLocalModArgs, MergeModsArgs, UnmergeModResult, ExtractMergeSourceResult, ApplyHeroCardResult, HeroAbilitySlot, AbilitySlot, AbilitySoundParams, ActiveHeroSound, ApplyHeroSoundResult, ActiveHeroColor, ApplyHeroColorResult, ApplyHeroPrismResult, LockerOverview, LockerCardThumbnail, LockerClearScope } from '../types/mod';
 import type { HeroPortrait, SoulModelInfo, HeroPoseInfo } from '../types/portrait';
 import type {
   GameBananaModsResponse,
@@ -8,6 +8,7 @@ import type {
   GameBananaCategoryNode,
   GameBananaMod,
   GameBananaCommentsResponse,
+  GameBananaModUpdatesResponse,
   GameBananaCollection,
   GameBananaCollectionItemsResponse,
 } from '../types/gamebanana';
@@ -20,6 +21,7 @@ export type {
   GameBananaSection,
   GameBananaCategoryNode,
   GameBananaMod,
+  GameBananaModUpdatesResponse,
   GameBananaCollection,
   GameBananaCollectionItemsResponse,
 };
@@ -204,6 +206,28 @@ export async function applyHeroColor(
   return window.electronAPI.applyHeroColor(heroName, hue, saturation, brightness);
 }
 
+/** Apply the rainbow prism (or a custom gradient) to a hero's ability VFX. In
+ *  prism/gradient mode `hue` is the spectrum rotation (degrees); saturation/
+ *  brightness scale the spectrum. A non-null `gradient` spec (preset name or
+ *  `pos:hue:sat,...` stops) switches from the full rainbow to that ramp. */
+export async function applyHeroPrism(
+  heroName: string,
+  hue: number,
+  saturation: number,
+  brightness: number,
+  animated: boolean,
+  gradient: string | null
+): Promise<ApplyHeroPrismResult> {
+  return window.electronAPI.applyHeroPrism(
+    heroName,
+    hue,
+    saturation,
+    brightness,
+    animated,
+    gradient
+  );
+}
+
 /** Render a fast PNG swatch of the recolor target as a data URL (live preview). */
 export async function previewHeroColor(
   heroName: string,
@@ -375,6 +399,10 @@ export async function getModDetails(modId: number, section?: string): Promise<Ga
 
 export async function getModComments(modId: number, section?: string, page = 1): Promise<GameBananaCommentsResponse> {
   return window.electronAPI.getModComments({ modId, section, page });
+}
+
+export async function getModUpdates(modId: number, section?: string, page = 1): Promise<GameBananaModUpdatesResponse> {
+  return window.electronAPI.getModUpdates({ modId, section, page });
 }
 
 export async function downloadMod(

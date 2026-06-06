@@ -130,6 +130,29 @@ export interface GameBananaComment {
     };
 }
 
+export interface GameBananaModUpdateChange {
+    /** The change description (plain text). */
+    text: string;
+    /** GameBanana label for the change: Bugfix, Feature, Addition, Adjustment, etc. */
+    category?: string;
+}
+
+export interface GameBananaModUpdate {
+    id: number;
+    version?: string;
+    title?: string;
+    /** Freeform HTML changelog body (used when the author didn't use labels). */
+    text?: string;
+    /** Structured, labeled changelog entries (GameBanana's _aChangeLog). */
+    changes?: GameBananaModUpdateChange[];
+    dateAdded: number;
+}
+
+export interface GameBananaModUpdatesResponse {
+    updates: GameBananaModUpdate[];
+    totalCount: number;
+}
+
 export interface GameBananaModDetails {
     id: number;
     name: string;
@@ -271,6 +294,32 @@ interface PostsResponseRaw {
         _nRecordCount: number;
         _nPerpage: number;
         _bIsComplete: boolean;
+    };
+}
+
+interface UpdateRaw {
+    _idRow?: number;
+    _sVersion?: string;
+    _sName?: string;
+    _sTitle?: string;
+    _sText?: string;
+    _sDescription?: string;
+    _sChangeLog?: string;
+    // Structured changelog: mods authored with GameBanana's labeled changelog
+    // editor leave _sText empty and put every line here as { text, cat },
+    // where cat is the label (Bugfix, Feature, Addition, Adjustment, ...).
+    _aChangeLog?: Array<{ text?: string; cat?: string }>;
+    _tsDateAdded?: number;
+    _tsDateModified?: number;
+    _tsDateUpdated?: number;
+}
+
+interface UpdatesResponseRaw {
+    _aRecords?: UpdateRaw[];
+    _aMetadata?: {
+        _nRecordCount?: number;
+        _nPerpage?: number;
+        _bIsComplete?: boolean;
     };
 }
 
@@ -563,6 +612,39 @@ export async function fetchModComments(
 }
 
 /**
+ * Fetch update/changelog records for a mod. GameBanana's update payloads are
+ * sparse across item types, so map the common field names and let the renderer
+ * hide empty records.
+ */
+export async function fetchModUpdates(
+    modId: number,
+    section = 'Mod',
+    page = 1,
+    perPage = 5
+): Promise<GameBananaModUpdatesResponse> {
+    const url = `${GAMEBANANA_API_BASE}/${section}/${modId}/Updates?_nPerpage=${perPage}&_nPage=${page}`;
+    const raw = await fetchJson<UpdatesResponseRaw | UpdateRaw[]>(url);
+    const records = Array.isArray(raw) ? raw : raw._aRecords ?? [];
+
+    return {
+        updates: records.map((update, index) => ({
+            id: update._idRow ?? index,
+            version: update._sVersion,
+            title: update._sTitle ?? update._sName,
+            text: update._sText ?? update._sChangeLog ?? update._sDescription,
+            changes: (update._aChangeLog ?? [])
+                .map((entry) => ({
+                    text: (entry.text ?? '').trim(),
+                    category: entry.cat?.trim() || undefined,
+                }))
+                .filter((entry) => entry.text.length > 0),
+            dateAdded: update._tsDateAdded ?? update._tsDateModified ?? update._tsDateUpdated ?? 0,
+        })),
+        totalCount: Array.isArray(raw) ? records.length : raw._aMetadata?._nRecordCount ?? records.length,
+    };
+}
+
+/**
  * Fetch available sections for Deadlock
  */
 export async function fetchSections(): Promise<GameBananaSection[]> {
@@ -607,13 +689,16 @@ export async function fetchSubmissions(
     options: GameBananaRequestOptions = {}
 ): Promise<GameBananaModsResponse> {
     let url: string;
-    // The API's default order is already newest-submission-first, so 'recent'/'new'
-    // and 'default' need no explicit sort. 'updated' is distinct (date modified, not
-    // added) and must be requested explicitly or it silently mirrors 'recent'.
+    // GameBanana's default list order (no _sSort) is by date *modified*, not date
+    // added, so "Recently Added" (recent) has to request Generic_Newest explicitly
+    // or it silently mirrors "Recently Updated". 'updated' maps to
+    // Generic_LatestModified (date modified). Sort tokens verified against the live
+    // apiv11 endpoint (Generic_LatestAdded/Generic_New are rejected as UNKNOWN_SORT).
     const sortMap: Record<string, string> = {
         likes: 'Generic_MostLiked',
         popular: 'Generic_MostLiked',
         views: 'Generic_MostViewed',
+        recent: 'Generic_Newest',
         updated: 'Generic_LatestModified',
     };
 

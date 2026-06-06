@@ -222,6 +222,18 @@ export interface LockerColorSelection {
   saturation: number;
   /** Brightness (HSV value) scale (1 = keep source, >1 lighter, <1 darker). */
   brightness: number;
+  /** Recolor mode. 'hue' (or absent, for older persisted entries) = one absolute
+   *  color via `recolor-hero`. 'prism' = a rainbow spectrum via `vpkmerge prism`.
+   *  'gradient' = a prism spread over a custom gradient (see `gradient`). In
+   *  prism/gradient modes hue is a spectrum rotation, not an absolute color. */
+  mode?: 'hue' | 'prism' | 'gradient';
+  /** Prism/gradient only: animate the spectrum so it sweeps over each particle's
+   *  lifetime (`prism --animated`). Ignored in hue mode. */
+  animated?: boolean;
+  /** Gradient mode only: the `--gradient` spec, either a preset name
+   *  (fire/ice/toxic/sunset/ocean/neon/gold/void) or a stop list
+   *  `pos:hue:sat,...`. */
+  gradient?: string;
   addedAt: string;
 }
 
@@ -240,12 +252,19 @@ export interface LockerColorsInfo {
 /** The color applied for a hero's ability VFX, read back so the color picker can
  *  reflect the active selection. */
 export interface ActiveHeroColor {
-  /** Applied absolute hue (0-359 degrees). */
+  /** Applied absolute hue (0-359 degrees). Meaningless in prism mode. */
   hue: number;
   /** Applied saturation scale (1 = source). */
   saturation: number;
   /** Applied brightness scale (1 = source). */
   brightness: number;
+  /** Which recolor is applied: a single hue, the rainbow prism, or a custom
+   *  gradient. Absent on older persisted entries (treat as 'hue'). */
+  mode?: 'hue' | 'prism' | 'gradient';
+  /** Prism/gradient only: whether the applied spectrum is animated. */
+  animated?: boolean;
+  /** Gradient mode only: the applied gradient spec (preset name or stop list). */
+  gradient?: string;
 }
 
 export interface ApplyHeroColorResult {
@@ -255,6 +274,20 @@ export interface ApplyHeroColorResult {
   saturation: number | null;
   /** The applied brightness scale, or null after a revert. */
   brightness: number | null;
+}
+
+/** Result of applying the rainbow prism (or a custom gradient) to a hero's VFX. */
+export interface ApplyHeroPrismResult {
+  /** Applied spectrum rotation in degrees (prism reuses the hue field as a rotation). */
+  hue: number;
+  /** Applied saturation scale on the spectrum. */
+  saturation: number;
+  /** Applied brightness scale on the spectrum. */
+  brightness: number;
+  /** Whether the applied spectrum animates over each particle's lifetime. */
+  animated: boolean;
+  /** The applied gradient spec, or null for the full rainbow. */
+  gradient: string | null;
 }
 
 /**
@@ -559,6 +592,9 @@ export interface AppSettings {
   steamLaunchOptions: string;
   activeProfileId: string | null;
   autoSaveProfile: boolean;
+  /** Ask for confirmation before "Update" overwrites a profile with the current
+   *  mod set. On by default. */
+  confirmProfileUpdate: boolean;
   experimentalStats: boolean;
   experimentalCrosshair: boolean;
   experimentalSocial: boolean;
@@ -568,8 +604,15 @@ export interface AppSettings {
   ignoreConflictsByDefault: boolean;
   /** UI accent color (hex, e.g. "#f97316"). Falls back to default orange when unset. */
   accentColor: string;
+  /** Hero render used as the active sidebar highlight background. */
+  sidebarHeroHighlight?: string | null;
   /** Order used to render absolute dates (mod/file upload + update dates). */
   dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY';
+  /** Preferred UI language. Null uses the OS/browser language when available. */
+  language?: string | null;
   /** UI zoom factor (Ctrl +/-/0), persisted across launches. 1 = 100%. */
   zoomFactor?: number;
+  /** Opt-in Discord Rich Presence. Off by default. Talks only to the user's
+   *  local Discord client (no network calls from Grimoire). */
+  discordRpcEnabled: boolean;
 }

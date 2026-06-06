@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="resources/icon.png" width="128" height="128" alt="Grimoire">
+ <img width="684" height="214" alt="image" src="https://github.com/user-attachments/assets/fc1917ed-b8a0-4671-ad2c-9389e8b830d9" />
   <h1>Grimoire</h1>
   <p>A mod manager for Deadlock.</p>
 
@@ -37,21 +37,44 @@ Requires Deadlock installed via Steam.
 
 ## Features
 
-- Browse and install mods from GameBanana
-- Enable, disable, reorder, and detect conflicts
-- Per-hero skin locker
-- Autoexec manager
-- Profiles for saving and swapping mod configurations
+**Mods**
 
-Experimental:
+- Browse and install from GameBanana: download queue, automatic ZIP/7Z/RAR extraction, one-click `gb1click://` installs, and collection import by URL
+- Enable, disable, reorder, bulk-select, and delete, backed by an offline catalog with full-text search
+- Conflict detection for mods that overwrite the same game files
+- Merge several mods into one VPK (and pull individual sources back out)
 
-- Crosshair editor with live preview
+**Play**
+
+- Launch Modded or Launch Vanilla straight from the sidebar. Vanilla temporarily stashes your mods and auto-restores them once the game starts
+
+**Locker**
+
+- Organize cosmetic skins per hero with 2D and live 3D pose previews
+- Recolor a hero's ability VFX (solid, gradient, or rainbow)
+- Per-ability sound picker, plus a Global axis for soul containers and other non-hero cosmetics
+
+**Autoexec & Profiles**
+
+- Autoexec manager for console commands that run at game launch
+- Save and swap sets of enabled mods, and share them as short `mp1:` codes or `.modprofile.json` files (Grimoire-only format)
+
+**Experimental** (opt in under Settings)
+
+- Discover: sign in with Steam to publish your profiles and browse uploads from other players
+- Stats: MMR, match history, and hero stats from deadlock-api.com
+- Crosshair designer with live preview
+
+Offline-first and no telemetry: a fresh install phones home for nothing.
 
 ## Screenshots
 
-![Installed mods](docs/screenshots/installed.png)
-![Browse GameBanana](docs/screenshots/browse.png)
-![Hero Locker](docs/screenshots/locker.png)
+|  |  |
+| :---: | :---: |
+| ![Installed mods](docs/screenshots/installed.png)<br>**Installed**: enable, disable, reorder, bulk-select | ![Browse GameBanana](docs/screenshots/browse.png)<br>**Browse**: GameBanana media cards and filters |
+| ![Hero Locker](docs/screenshots/locker.png)<br>**Locker**: cosmetic skins organized by hero | ![Skin with 3D preview](docs/screenshots/locker-3d-celeste.png)<br>**Skins**: per-hero, with a live 3D pose preview |
+| ![Ability recolor](docs/screenshots/locker-recolor.png)<br>**Recolor**: shift a hero's ability VFX to any color | ![Per-ability sounds](docs/screenshots/locker-sounds.png)<br>**Sounds**: per-ability sound picker |
+| ![Global cosmetics](docs/screenshots/global-soul-containers.png)<br>**Global**: soul containers and other non-hero cosmetics, in 3D | ![Profiles](docs/screenshots/profiles.png)<br>**Profiles**: save, swap, and share mod sets |
 
 ## Development
 
@@ -80,7 +103,7 @@ that tie each artifact back to the exact commit and workflow run that
 produced it; verify with `gh attestation verify <file> --owner Slush97`.
 
 Windows installers are not yet code-signed, so SmartScreen will show an
-"Unknown Publisher" warning on first run — click **More info → Run
+"Unknown Publisher" warning on first run: click **More info → Run
 anyway** to proceed. Free Authenticode signing through the SignPath
 Foundation OSS program is being pursued.
 

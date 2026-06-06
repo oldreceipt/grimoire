@@ -71,6 +71,11 @@
   --color-bg-tertiary: #242424;
   --color-accent: #f97316;
   --color-accent-hover: #ea580c;
+  /* Foreground (text/icon) color for solid `bg-accent` surfaces. Flips between
+     white and near-black based on the accent's luminance so a light user accent
+     (cyan, emerald, amber) stays readable. Computed at runtime in
+     applyAccentColor(); this default matches the shipped Ember orange. */
+  --color-accent-foreground: #ffffff;
   --color-text-primary: #ffffff;
   --color-text-secondary: #a1a1aa;
   --color-text-tertiary: #8a8a94;
@@ -88,6 +93,12 @@
   --font-reaver: 'Reaver', serif;
   --font-valvepulp: 'ValvePulp', sans-serif;
   --font-captain: 'American Captain', sans-serif;
+  /* Browse mod-name titles. Radiance (the app-wide face) renders capital I and
+     lowercase l identically, which makes mod names like "Illusion" ambiguous.
+     Reaver is a serif we already ship, so its I gets serif bars and reads
+     distinctly from l. To switch to a cleaner neutral look, change this one line
+     to: Tahoma, Verdana, system-ui, sans-serif (OS fonts, nothing bundled). */
+  --font-mod-title: 'Reaver', serif;
 }
 
 /* Base styles */
@@ -694,6 +705,83 @@ body {
   animation: fadeIn 0.3s ease-out forwards;
 }
 
+.grimoire-sidebar {
+  width: 14rem;
+  transition: width 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: width;
+}
+
+.grimoire-sidebar[data-collapsed='true'] {
+  width: 4rem;
+}
+
+.sidebar-title-shell,
+.sidebar-collapse-toggle {
+  transition:
+    right 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 160ms ease-out,
+    background-color 160ms ease-out;
+  will-change: right;
+}
+
+.sidebar-title-text {
+  white-space: nowrap;
+  transition:
+    opacity 180ms ease-out,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.sidebar-title-text--visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.sidebar-title-text--hidden {
+  opacity: 0;
+  transform: translateX(-0.25rem);
+}
+
+.sidebar-collapsible-label {
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    opacity 180ms ease-out,
+    max-width 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, max-width, transform;
+}
+
+.sidebar-collapsible-label--visible {
+  max-width: 10rem;
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.sidebar-collapsible-label--hidden {
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-0.25rem);
+}
+
+.sidebar-active-indicator {
+  contain: paint;
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.sidebar-offset-transition {
+  transition: left 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sidebar-active-backdrop {
+  transform-origin: center;
+}
+
+.sidebar-active-backdrop__image {
+  will-change: transform;
+}
+
 /* Skeleton shimmer — used for async-loading placeholders. Surfaces apply
    `.skeleton-shimmer` on a muted-background element; the shimmer gradient
    sweeps left→right to signal "loading". */
@@ -890,6 +978,8 @@ body {
   .group:hover .browse-sound-wave-bar,
   .group:focus-visible .browse-sound-wave-bar,
   .group:focus-within .browse-sound-wave-bar,
+  .sidebar-active-backdrop,
+  .sidebar-active-backdrop__image,
   .browse-result-card {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
@@ -899,12 +989,30 @@ body {
   .browse-card-media-zoom,
   .browse-readable-card-media::after,
   .browse-sound-placeholder::before,
-  .browse-sound-wave-bar {
+  .browse-sound-wave-bar,
+  .grimoire-sidebar,
+  .sidebar-title-shell,
+  .sidebar-collapse-toggle,
+  .sidebar-title-text,
+  .sidebar-collapsible-label,
+  .sidebar-active-indicator,
+  .sidebar-offset-transition {
     transition-duration: 0.01ms;
   }
 
   .browse-card-media-zoom {
     transform: none !important;
+    will-change: auto;
+  }
+
+  .grimoire-sidebar,
+  .sidebar-title-shell,
+  .sidebar-collapse-toggle,
+  .sidebar-title-text,
+  .sidebar-collapsible-label,
+  .sidebar-active-indicator,
+  .sidebar-offset-transition,
+  .sidebar-active-backdrop__image {
     will-change: auto;
   }
 

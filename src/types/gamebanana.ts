@@ -112,6 +112,29 @@ export interface GameBananaCommentsResponse {
   totalCount: number;
 }
 
+export interface GameBananaModUpdateChange {
+  /** The change description (plain text). */
+  text: string;
+  /** GameBanana label for the change: Bugfix, Feature, Addition, Adjustment, etc. */
+  category?: string;
+}
+
+export interface GameBananaModUpdate {
+  id: number;
+  version?: string;
+  title?: string;
+  /** Freeform HTML changelog body (used when the author didn't use labels). */
+  text?: string;
+  /** Structured, labeled changelog entries (GameBanana's _aChangeLog). */
+  changes?: GameBananaModUpdateChange[];
+  dateAdded: number;
+}
+
+export interface GameBananaModUpdatesResponse {
+  updates: GameBananaModUpdate[];
+  totalCount: number;
+}
+
 export interface GameBananaCollection {
   id: number;
   name: string;

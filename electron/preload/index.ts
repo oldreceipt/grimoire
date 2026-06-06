@@ -48,6 +48,12 @@ export interface ElectronAPI {
     getSettings: () => Promise<AppSettings>;
     setSettings: (settings: AppSettings) => Promise<void>;
 
+    // Discord Rich Presence (opt-in; talks only to the local Discord client)
+    discord: {
+        update: (ctx: { surface: string; count?: number; hero?: string }) => Promise<void>;
+        clear: () => Promise<void>;
+    };
+
     // Mods
     getMods: () => Promise<Mod[]>;
     enableMod: (modId: string) => Promise<Mod>;
@@ -94,6 +100,7 @@ export interface ElectronAPI {
     getModDetails: (args: GetModDetailsArgs) => Promise<GameBananaModDetails>;
     getModFileList: (args: GetModDetailsArgs) => Promise<GameBananaModFileList>;
     getModComments: (args: GetModCommentsArgs) => Promise<GameBananaCommentsResponse>;
+    getModUpdates: (args: GetModCommentsArgs) => Promise<GameBananaModUpdatesResponse>;
     downloadMod: (args: DownloadModArgs) => Promise<void>;
     getGameBananaSections: () => Promise<GameBananaSection[]>;
     getGameBananaCategories: (args: GetCategoriesArgs) => Promise<GameBananaCategoryNode[]>;
@@ -559,6 +566,7 @@ interface MultiVpkPickData {
     modName: string;
     vpkFileNames: string[];
     vpkLabels?: Record<string, string>;
+    vpkFileSizes?: Record<string, number>;
 }
 
 interface GameBananaModsResponse {
@@ -580,6 +588,17 @@ interface GameBananaModDetails {
 interface GameBananaModFileList {
     id: number;
     files: Array<{ id: number; isArchived: boolean }>;
+}
+
+interface GameBananaModUpdatesResponse {
+    updates: Array<{
+        id: number;
+        version?: string;
+        title?: string;
+        text?: string;
+        dateAdded: number;
+    }>;
+    totalCount: number;
 }
 
 interface GameBananaSection {
@@ -774,6 +793,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSettings: () => ipcRenderer.invoke('get-settings'),
     setSettings: (settings: AppSettings) => ipcRenderer.invoke('set-settings', settings),
 
+    // Discord Rich Presence (opt-in; talks only to the local Discord client)
+    discord: {
+        update: (ctx: { surface: string; count?: number; hero?: string }) =>
+            ipcRenderer.invoke('discord:update', ctx),
+        clear: () => ipcRenderer.invoke('discord:clear'),
+    },
+
     // Mods
     getMods: () => ipcRenderer.invoke('get-mods'),
     enableMod: (modId: string) => ipcRenderer.invoke('enable-mod', modId),
@@ -838,6 +864,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('get-hero-color-support', heroName),
     applyHeroColor: (heroName: string, hue: number, saturation: number, brightness: number) =>
         ipcRenderer.invoke('apply-hero-color', heroName, hue, saturation, brightness),
+    applyHeroPrism: (
+        heroName: string,
+        hue: number,
+        saturation: number,
+        brightness: number,
+        animated: boolean,
+        gradient: string | null,
+    ) =>
+        ipcRenderer.invoke(
+            'apply-hero-prism',
+            heroName,
+            hue,
+            saturation,
+            brightness,
+            animated,
+            gradient,
+        ),
     previewHeroColor: (heroName: string, hue: number, saturation: number, brightness: number) =>
         ipcRenderer.invoke('preview-hero-color', heroName, hue, saturation, brightness),
     revertHeroColor: (heroName: string) =>
@@ -893,6 +936,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getModDetails: (args: GetModDetailsArgs) => ipcRenderer.invoke('get-mod-details', args),
     getModFileList: (args: GetModDetailsArgs) => ipcRenderer.invoke('get-mod-file-list', args),
     getModComments: (args: GetModCommentsArgs) => ipcRenderer.invoke('get-mod-comments', args),
+    getModUpdates: (args: GetModCommentsArgs) => ipcRenderer.invoke('get-mod-updates', args),
     downloadMod: (args: DownloadModArgs) => ipcRenderer.invoke('download-mod', args),
     getGameBananaSections: () => ipcRenderer.invoke('get-gamebanana-sections'),
     getGameBananaCategories: (args: GetCategoriesArgs) =>
