@@ -689,13 +689,16 @@ export async function fetchSubmissions(
     options: GameBananaRequestOptions = {}
 ): Promise<GameBananaModsResponse> {
     let url: string;
-    // The API's default order is already newest-submission-first, so 'recent'/'new'
-    // and 'default' need no explicit sort. 'updated' is distinct (date modified, not
-    // added) and must be requested explicitly or it silently mirrors 'recent'.
+    // GameBanana's default list order (no _sSort) is by date *modified*, not date
+    // added, so "Recently Added" (recent) has to request Generic_Newest explicitly
+    // or it silently mirrors "Recently Updated". 'updated' maps to
+    // Generic_LatestModified (date modified). Sort tokens verified against the live
+    // apiv11 endpoint (Generic_LatestAdded/Generic_New are rejected as UNKNOWN_SORT).
     const sortMap: Record<string, string> = {
         likes: 'Generic_MostLiked',
         popular: 'Generic_MostLiked',
         views: 'Generic_MostViewed',
+        recent: 'Generic_Newest',
         updated: 'Generic_LatestModified',
     };
 

@@ -317,6 +317,12 @@ export default function Settings() {
     }
   };
 
+  const handleConfirmProfileUpdateChange = async (checked: boolean) => {
+    if (settings) {
+      await saveSettings({ ...settings, confirmProfileUpdate: checked });
+    }
+  };
+
   const handleDateFormatChange = async (format: 'MM/DD/YYYY' | 'DD/MM/YYYY') => {
     if (settings && settings.dateFormat !== format) {
       await saveSettings({ ...settings, dateFormat: format });
@@ -1073,6 +1079,15 @@ export default function Settings() {
               onChange={handleAutoDisableSiblingsChange}
               label="Switch variants instead of stacking them"
               description="When you install a different file of a mod you already have enabled, disable the previous variant so only the new one is active. Turn off to keep multiple variants of the same mod enabled at once. (Updates always replace the old file regardless of this setting.)"
+            />
+
+            <div className="h-px bg-white/5" />
+
+            <Toggle
+              checked={settings?.confirmProfileUpdate ?? true}
+              onChange={handleConfirmProfileUpdateChange}
+              label="Confirm before updating a profile"
+              description="Ask first when you click Update on a profile, since it overwrites that profile's saved mods with your current set and can't be undone. Turn off to overwrite immediately."
             />
 
             <div className="h-px bg-white/5" />

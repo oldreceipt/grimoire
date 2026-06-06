@@ -93,6 +93,12 @@
   --font-reaver: 'Reaver', serif;
   --font-valvepulp: 'ValvePulp', sans-serif;
   --font-captain: 'American Captain', sans-serif;
+  /* Browse mod-name titles. Radiance (the app-wide face) renders capital I and
+     lowercase l identically, which makes mod names like "Illusion" ambiguous.
+     Reaver is a serif we already ship, so its I gets serif bars and reads
+     distinctly from l. To switch to a cleaner neutral look, change this one line
+     to: Tahoma, Verdana, system-ui, sans-serif (OS fonts, nothing bundled). */
+  --font-mod-title: 'Reaver', serif;
 }
 
 /* Base styles */

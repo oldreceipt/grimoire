@@ -592,6 +592,9 @@ export interface AppSettings {
   steamLaunchOptions: string;
   activeProfileId: string | null;
   autoSaveProfile: boolean;
+  /** Ask for confirmation before "Update" overwrites a profile with the current
+   *  mod set. On by default. */
+  confirmProfileUpdate: boolean;
   experimentalStats: boolean;
   experimentalCrosshair: boolean;
   experimentalSocial: boolean;
