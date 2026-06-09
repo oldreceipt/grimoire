@@ -386,6 +386,12 @@ const CARD_SIZE_MULTIPLIER_MIN = 0.8;
 const CARD_SIZE_MULTIPLIER_MAX = 2;
 const CARD_SIZE_MULTIPLIER_DEFAULT = 1;
 const CARD_SIZE_MULTIPLIER_STEP = 0.1;
+// Below this multiplier the grid drops to the dense "compact" card (shorter
+// media frame, fewer chips, single-line tags). The size slider doesn't expose a
+// separate compact toggle: dragging toward the small end past this cutoff flips
+// the treatment, same as the old px threshold did before the slider became a
+// responsive multiplier.
+const CARD_SIZE_COMPACT_MULTIPLIER = 0.95;
 const INSTALLED_CARD_SIZE_MULTIPLIER_KEY = 'installedCardSizeMultiplier';
 
 function clampCardSizeMultiplier(value: number): number {
@@ -471,7 +477,12 @@ export default function Installed() {
     () => getCardSizeGridStyle(cardSizeMultiplier),
     [cardSizeMultiplier]
   );
-  const viewMode: ViewMode = layout === 'list' ? 'list' : 'grid';
+  const viewMode: ViewMode =
+    layout === 'list'
+      ? 'list'
+      : cardSizeMultiplier < CARD_SIZE_COMPACT_MULTIPLIER
+        ? 'compact'
+        : 'grid';
   // Locker overrides (hero cards + ability sounds) live off the mod list in
   // citadel/grimoire. The toolbar icon opens the manage popup; the badge shows
   // how many are applied. Count is fetched on mount (covers changes made over
@@ -2475,7 +2486,8 @@ export default function Installed() {
     const activeEntry = draggingSection === section
       ? entries.find((entry) => entry.key === draggingKey)
       : undefined;
-    const gridClasses = layout === 'list' ? 'space-y-1.5' : 'grid gap-4';
+    const gridClasses =
+      layout === 'list' ? 'space-y-1.5' : viewMode === 'compact' ? 'grid gap-3' : 'grid gap-4';
     const gridStyle =
       layout === 'list'
         ? undefined
@@ -2872,7 +2884,7 @@ export default function Installed() {
               className={`order-last flex items-center gap-2 rounded-sm border border-border bg-bg-secondary px-2 py-1.5 transition-opacity ${
                 layout === 'list' ? 'opacity-40' : ''
               }`}
-              title="Card size is responsive for now"
+              title="Card size (drag to the small end for compact cards)"
             >
               <Grid3x3 className="h-4 w-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
               <input
