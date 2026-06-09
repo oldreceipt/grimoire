@@ -3139,7 +3139,7 @@ export default function Installed() {
         );
       })()}
 
-      {detailsLoading && (
+      {detailsLoading && createPortal(
         <div
           className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in"
           onClick={closeModDetails}
@@ -3151,10 +3151,11 @@ export default function Installed() {
             <Loader2 className="w-5 h-5 animate-spin text-accent" />
             <span className="text-sm text-text-secondary">Loading mod details...</span>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {detailsError && !detailsMod && (
+      {detailsError && !detailsMod && createPortal(
         <div
           className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
           onClick={closeModDetails}
@@ -3169,7 +3170,8 @@ export default function Installed() {
               <Button onClick={closeModDetails}>Close</Button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {detailsMod && (
@@ -3610,7 +3612,7 @@ function UnknownFilterGuessModal({
 }) {
   const { mod } = state;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in"
       role="dialog"
@@ -3661,7 +3663,8 @@ function UnknownFilterGuessModal({
         />
 
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -3716,7 +3719,7 @@ function BulkUnknownFixModal({
     (mod) => !pendingIds.has(mod.id) && cache[mod.id]?.crcMatch.status === 'not-found'
   ).length;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in"
       role="dialog"
@@ -3844,7 +3847,8 @@ function BulkUnknownFixModal({
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -6047,7 +6051,7 @@ function EditLocalModModal({ mod, onClose, onSave }: EditLocalModModalProps) {
     }
   };
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-bg-primary/75 p-4 backdrop-blur-sm"
       onClick={onClose}
@@ -6175,7 +6179,8 @@ function EditLocalModModal({ mod, onClose, onSave }: EditLocalModModalProps) {
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -6322,7 +6327,7 @@ function ImportCustomModModal({
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-bg-secondary border border-border rounded-xl w-full max-w-lg">
         <div className="flex items-center justify-between p-5 border-b border-border">
@@ -6480,6 +6485,7 @@ function ImportCustomModModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
