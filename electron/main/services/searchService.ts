@@ -1,4 +1,4 @@
-import { initDatabase, CachedMod, mapRowToMod } from './modDatabase';
+import { initDatabase, type CachedMod, mapRowToMod } from './modDatabase';
 
 /**
  * Escape special FTS5 characters in search terms

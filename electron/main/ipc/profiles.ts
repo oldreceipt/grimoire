@@ -8,8 +8,8 @@ import {
     applyProfile,
     deleteProfile,
     renameProfile,
-    Profile,
-    ProfileCrosshairSettings,
+    type Profile,
+    type ProfileCrosshairSettings,
 } from '../services/profiles';
 import {
     buildPortableProfile,

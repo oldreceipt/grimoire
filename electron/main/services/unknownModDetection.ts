@@ -609,7 +609,7 @@ function buildUnknownGuessBase(modId: string, fileName: string, paths: string[])
     };
 }
 
-function emptyCrcMatch(
+export function emptyCrcMatch(
     status: UnknownModCrcMatchResult['status'],
     reason?: string,
     stats: Partial<UnknownModCrcMatchResult> = {}
@@ -934,7 +934,9 @@ function toFoundMatch(
         nsfw: match.nsfw,
         fileId: match.fileId,
         fileName: match.fileName,
-        section: match.section,
+        // Cache rows store section as a plain string; the wire result only
+        // carries the two sections the unknown-mod flow understands.
+        section: match.section === 'Mod' || match.section === 'Sound' ? match.section : undefined,
         categoryName: match.categoryName ?? undefined,
         confidence: 'exact',
         reason,

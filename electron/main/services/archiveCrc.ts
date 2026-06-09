@@ -393,8 +393,11 @@ function readU64LE(buffer: Buffer, offset: number): number {
 
 class SevenZReader {
     private offset = 0;
+    private readonly buffer: Buffer;
 
-    constructor(private readonly buffer: Buffer) { }
+    constructor(buffer: Buffer) {
+        this.buffer = buffer;
+    }
 
     get position(): number {
         return this.offset;
@@ -506,7 +509,7 @@ function readSevenZCrcs(reader: SevenZReader, count: number): SevenZOptionalCrc[
     }));
 }
 
-function skipSevenZUnknownProperty(reader: SevenZReader, propertyName: string): never {
+function skipSevenZUnknownProperty(_reader: SevenZReader, propertyName: string): never {
     throw new Error(`Unsupported 7z metadata property in ${propertyName}`);
 }
 
@@ -794,8 +797,10 @@ class LzmaRangeDecoder {
     private range = 0xffffffff;
     private code = 0;
     private offset = 0;
+    private readonly input: Buffer;
 
-    constructor(private readonly input: Buffer) {
+    constructor(input: Buffer) {
+        this.input = input;
         for (let i = 0; i < 5; i++) {
             this.code = (this.code * 256 + this.readByte()) >>> 0;
         }

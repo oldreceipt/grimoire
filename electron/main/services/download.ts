@@ -8,11 +8,12 @@ import { extractArchive, isArchive, checkOneClickOptOut, scanSuspiciousFiles } f
 import { randomUUID } from 'crypto';
 import { setModMetadataWithHash, getModMetadata } from './metadata';
 import { inferHeroFromTitle } from '@grimoire/social-types/heroes';
-import { fetchModDetails, GameBananaModDetails } from './gamebanana';
+import { fetchModDetails, type GameBananaModDetails } from './gamebanana';
 import { makeDisabledFileName, scanMods, disableMod, enableMod } from './mods';
 import { validateDownloadUrl, validateFileSize } from './security';
 import { loadSettings } from './settings';
 import { getVpkLabels, inferHeroFromVpk } from './vpk';
+import type { LockerHeroSource } from '../../../src/types/mod';
 import https from 'https';
 import http from 'http';
 
@@ -123,7 +124,7 @@ function normalizePathForCompare(filePath: string): string {
  * still tag correctly because the underlying paths reference Source 2
  * codenames like `hornet` / `inferno` / `synth`.
  */
-function stampVpkLockerHero<T extends { lockerHero?: string; lockerHeroSource?: import('../../../src/types/mod').LockerHeroSource }>(
+function stampVpkLockerHero<T extends { lockerHero?: string; lockerHeroSource?: LockerHeroSource }>(
     base: T,
     section: string | undefined,
     vpkPath: string
@@ -671,7 +672,7 @@ async function executeDownload(
     // categoryId and don't need this fallback.
     const lockerHero =
         section === 'Sound' ? inferHeroFromTitle(details.name) ?? undefined : undefined;
-    const lockerHeroSource = lockerHero ? 'download-title' : undefined;
+    const lockerHeroSource: LockerHeroSource | undefined = lockerHero ? 'download-title' : undefined;
 
     const metadata = {
         modName: details.name,  // Store the actual mod name from GameBanana
@@ -1243,7 +1244,7 @@ async function executeOneClickDownload(
                 : undefined,
         sourceFileName: oneClickSourceFileName.length > 0 ? oneClickSourceFileName : undefined,
         lockerHero: oneClickLockerHero,
-        lockerHeroSource: oneClickLockerHero ? 'download-title' : undefined,
+        lockerHeroSource: (oneClickLockerHero ? 'download-title' : undefined) as LockerHeroSource | undefined,
     };
 
     let installedVpks: string[] = [];

@@ -8,7 +8,7 @@
 // the rolling log readable when the app is idle and surfaces real freezes
 // when they occur.
 
-import { monitorEventLoopDelay, IntervalHistogram } from 'perf_hooks';
+import { monitorEventLoopDelay, type IntervalHistogram } from 'perf_hooks';
 
 const SAMPLE_RESOLUTION_MS = 20;
 const WINDOW_MS = 10_000;

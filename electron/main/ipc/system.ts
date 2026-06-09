@@ -5,8 +5,8 @@ import {
     getGameinfoStatus,
     fixGameinfo,
     cleanupAddons,
-    GameinfoStatus,
-    CleanupResult,
+    type GameinfoStatus,
+    type CleanupResult,
 } from '../services/system';
 import { listArchiveContents } from '../services/extract';
 import { healLockerVpks } from '../services/lockerVpk';
@@ -233,7 +233,7 @@ ipcMain.handle('download-mina-variations', async (): Promise<string> => {
     await new Promise<void>((resolve, reject) => {
         const followRedirects = (url: string) => {
             const protocol = url.startsWith('https') ? https : http;
-            protocol.get(url, (response: { statusCode: number; headers: { location?: string }; pipe: (arg: NodeJS.WritableStream) => void }) => {
+            protocol.get(url, (response) => {
                 if (response.statusCode === 301 || response.statusCode === 302) {
                     const redirectUrl = response.headers.location;
                     if (redirectUrl) {

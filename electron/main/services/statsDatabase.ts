@@ -291,10 +291,14 @@ export function saveMMRSnapshot(mmr: PlayerMMR): void {
         )
         .run({
             account_id: mmr.account_id,
-            mmr: mmr.mmr,
+            // Column names are legacy; the API renamed these fields
+            // (mmr -> player_score, rank_badge -> division, rank_tier ->
+            // division_tier). Binding the old names was binding undefined,
+            // which better-sqlite3 rejects, so snapshots never saved.
+            mmr: mmr.player_score,
             rank: mmr.rank,
-            rank_badge: mmr.rank_badge,
-            rank_tier: mmr.rank_tier,
+            rank_badge: mmr.division,
+            rank_tier: mmr.division_tier,
             snapshot_date: today,
         })
 }
@@ -469,15 +473,21 @@ export function saveHeroStatsSnapshot(accountId: number, heroes: PlayerHeroStat[
             stmt.run({
                 account_id: accountId,
                 hero_id: hero.hero_id,
-                hero_name: hero.hero_name,
+                // hero_name is a service-layer computed field; undefined is
+                // not bindable, so coalesce to NULL.
+                hero_name: hero.hero_name ?? null,
                 matches_played: hero.matches_played,
                 wins: hero.wins,
-                losses: hero.losses,
+                // The hero-stats endpoint stopped shipping losses and
+                // per-match damage/healing averages. Losses derive exactly;
+                // the averages have no source, so the legacy columns get
+                // NULL (no renderer surface reads them today).
+                losses: hero.matches_played - hero.wins,
                 total_kills: hero.kills,
                 total_deaths: hero.deaths,
                 total_assists: hero.assists,
-                avg_damage: hero.avg_damage,
-                avg_healing: hero.avg_healing,
+                avg_damage: null,
+                avg_healing: null,
                 snapshot_date: today,
             })
         }

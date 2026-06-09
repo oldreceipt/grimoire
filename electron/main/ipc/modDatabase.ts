@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { initDatabase, getModById, getModCount, wipeDatabase, getModsNsfwStatus, updateModNsfw, getModsDownloadCounts, updateModDownloadCount } from '../services/modDatabase';
-import { searchMods, getCategories, getSectionStats, SearchOptions } from '../services/searchService';
+import { searchMods, getCategories, getSectionStats, type SearchOptions } from '../services/searchService';
 import { syncAllSections, syncSingleSection, getSyncStatus, needsSync, isSyncInProgress } from '../services/syncService';
 
 // Initialize database on module load

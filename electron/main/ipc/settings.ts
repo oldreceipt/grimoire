@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings, saveSettings, AppSettings } from '../services/settings';
+import { loadSettings, saveSettings, type AppSettings } from '../services/settings';
 import { detectDeadlockPath, looksLikeDeadlockPath } from '../services/deadlock';
 import { ensureDevDeadlockPath } from '../services/dev';
 

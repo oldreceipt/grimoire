@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { fetchSubmissions } from './gamebanana';
-import { upsertMods, getSyncState, updateSyncState, getModCount, CachedMod } from './modDatabase';
+import { upsertMods, getSyncState, updateSyncState, getModCount, type CachedMod } from './modDatabase';
 import type { GameBananaMod } from '../../../src/types/gamebanana';
 
 const SYNC_PER_PAGE = 50;
@@ -74,6 +74,7 @@ function mapToCache(mod: GameBananaMod, section: string): CachedMod {
         submitterId: mod.submitter?.id ?? null,
         likeCount: mod.likeCount ?? 0,
         viewCount: mod.viewCount ?? 0,
+        downloadCount: mod.downloadCount ?? null,
         dateAdded: mod.dateAdded ?? 0,
         dateModified: mod.dateModified ?? 0,
         hasFiles: mod.hasFiles ?? true,

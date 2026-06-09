@@ -278,7 +278,7 @@ export async function scanMods(deadlockPath: string): Promise<Mod[]> {
     const addonsPath = getAddonsPath(deadlockPath);
     const disabledPath = getDisabledPath(deadlockPath);
 
-    await reconcileEnabledDisabledCollisions(deadlockPath, addonsPath, disabledPath);
+    await reconcileEnabledDisabledCollisions(addonsPath, disabledPath);
 
     // Scan every enabled addon folder (base citadel/addons plus any overflow
     // addons1, addons2, ...) and the single shared .disabled parking lot. Each
@@ -302,7 +302,6 @@ export async function scanMods(deadlockPath: string): Promise<Mod[]> {
 }
 
 async function reconcileEnabledDisabledCollisions(
-    deadlockPath: string,
     addonsPath: string,
     disabledPath: string
 ): Promise<void> {

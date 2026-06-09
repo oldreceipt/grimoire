@@ -430,15 +430,17 @@ export interface HeroStatsSnapshot {
   id: number
   account_id: number
   hero_id: number
-  hero_name: string
+  hero_name: string | null
   matches_played: number
   wins: number
   losses: number
   total_kills: number
   total_deaths: number
   total_assists: number
-  avg_damage: number
-  avg_healing: number
+  /** Legacy columns; the hero-stats endpoint no longer ships per-match
+   *  damage/healing averages, so new snapshots store NULL here. */
+  avg_damage: number | null
+  avg_healing: number | null
   snapshot_date: string
 }
 

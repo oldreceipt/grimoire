@@ -163,7 +163,7 @@ async function request<T>(
             currentSessionToken = null;
             throw new SocialUnauthenticatedError();
         }
-        const errShape = parsedBody && ErrorResponse.safeParse(parsedBody);
+        const errShape = parsedBody === null ? null : ErrorResponse.safeParse(parsedBody);
         const message = errShape && errShape.success ? errShape.data.error : response.statusText;
         const issues = errShape && errShape.success ? errShape.data.issues : undefined;
         throw new SocialApiError(message || 'Grimoire Social error', response.status, issues);

@@ -11,16 +11,16 @@ import {
     fetchSubmitterLinks,
     fetchCollection,
     fetchCollectionItems,
-    GameBananaSection,
-    GameBananaCategoryNode,
-    GameBananaModsResponse,
-    GameBananaModDetails,
-    GameBananaModFileList,
-    GameBananaModUpdatesResponse,
-    GameBananaCollection,
-    GameBananaCollectionItemsResponse,
+    type GameBananaSection,
+    type GameBananaCategoryNode,
+    type GameBananaModsResponse,
+    type GameBananaModDetails,
+    type GameBananaModFileList,
+    type GameBananaModUpdatesResponse,
+    type GameBananaCollection,
+    type GameBananaCollectionItemsResponse,
 } from '../services/gamebanana';
-import { downloadMod, getDownloadQueue, getCurrentDownload, removeFromQueue, cancelActiveDownload, resolveSuspiciousFileDecision, resolveMultiVpkPick, DownloadModArgs } from '../services/download';
+import { downloadMod, getDownloadQueue, getCurrentDownload, removeFromQueue, cancelActiveDownload, resolveSuspiciousFileDecision, resolveMultiVpkPick, type DownloadModArgs } from '../services/download';
 import { getMainWindow } from '../index';
 import { updateModNsfw } from '../services/modDatabase';
 

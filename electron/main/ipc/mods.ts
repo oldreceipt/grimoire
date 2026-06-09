@@ -11,7 +11,7 @@ import {
     reorderMods,
     swapModPriority,
     allocateEnabledVpkPath,
-    Mod,
+    type Mod,
 } from '../services/mods';
 import { metaKeyFor } from '../services/deadlock';
 import { getModMetadata, setModMetadata, setModMetadataWithHash, removeModMetadata, pruneOrphanMetadata } from '../services/metadata';
@@ -23,6 +23,7 @@ import { isLockerManaged } from '../services/lockerVpk';
 import {
     detectUnknownModCacheMatches,
     detectUnknownModFilters,
+    emptyCrcMatch,
     inferHeroFromVpkTree,
     type UnknownModCacheMatchInput,
     type UnknownModFilterGuess,
@@ -30,7 +31,7 @@ import {
 import { downloadMod } from '../services/download';
 import { mergeMods, unmergeMod, extractMergeSource } from '../services/modMerger';
 import { getMainWindow } from '../index';
-import type { AbilitySoundClassification, ApplyUnknownCustomModArgs, ApplyUnknownModMatchArgs, AssociateUnknownModArgs, EditLocalModArgs, GlobalModType, LockerHeroSource, MergeModsArgs, UnmergeModResult, ExtractMergeSourceResult, UnknownModFileList } from '../../../src/types/mod';
+import type { AbilitySoundClassification, ApplyUnknownCustomModArgs, ApplyUnknownModMatchArgs, AssociateUnknownModArgs, EditLocalModArgs, GlobalModType, LockerHeroSource, MergeModsArgs, Mod as WireMod, UnmergeModResult, ExtractMergeSourceResult, UnknownModFileList } from '../../../src/types/mod';
 
 const unknownDetectionControllers = new Map<string, AbortController>();
 
@@ -127,7 +128,7 @@ function resolveUnknownLockerHero(
     return { lockerHero, lockerHeroSource };
 }
 
-function enrichMod(mod: Mod): Mod {
+function enrichMod(mod: Mod): WireMod {
     const metadata = getModMetadata(mod.metaKey);
     const isUnknown =
         !metadata?.gameBananaId &&
@@ -334,7 +335,15 @@ ipcMain.handle(
                 missing.push({
                     modId: request.modId,
                     fileName: '',
-                    crcMatch: { status: 'not-found', reason: `Mod not found: ${request.modId}` },
+                    fileCount: 0,
+                    section: 'Mod',
+                    search: null,
+                    confidence: 'low',
+                    contentHints: [],
+                    reasons: [`Mod not found: ${request.modId}`],
+                    detectedHeroes: [],
+                    samplePaths: [],
+                    crcMatch: emptyCrcMatch('not-found', `Mod not found: ${request.modId}`),
                 });
                 continue;
             }
@@ -373,7 +382,9 @@ ipcMain.handle(
         if (!match || !Number.isFinite(match.gameBananaId) || !match.modName?.trim()) {
             throw new Error('Invalid GameBanana match');
         }
-        if (!Number.isFinite(match.gameBananaFileId) || !match.sourceFileName?.trim()) {
+        const matchFileId = match.gameBananaFileId;
+        const matchFileName = match.sourceFileName?.trim();
+        if (matchFileId === undefined || !Number.isFinite(matchFileId) || !matchFileName) {
             throw new Error('The matched GameBanana file is missing download information');
         }
 
@@ -389,8 +400,8 @@ ipcMain.handle(
         const wasEnabled = target.enabled;
         const downloadResult = await downloadMod(deadlockPath, {
             modId: match.gameBananaId,
-            fileId: match.gameBananaFileId,
-            fileName: match.sourceFileName,
+            fileId: matchFileId,
+            fileName: matchFileName,
             modName: match.modName,
             section: match.sourceSection ?? 'Mod',
         }, getMainWindow());

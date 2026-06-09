@@ -1,4 +1,4 @@
-import { scanMods, Mod } from './mods';
+import { scanMods, type Mod } from './mods';
 import { parseVpkDirectoryCached, type VpkParseStats } from './vpk';
 import { loadSettings } from './settings';
 import { getModMetadata } from './metadata';

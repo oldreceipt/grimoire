@@ -11,13 +11,22 @@ import type { GameBananaArtistLink } from '../../src/types/gamebanana';
 import type {
     AbilitySlot,
     AbilitySoundParams,
+    ActiveHeroColor,
+    ActiveHeroSound,
     AppSettings,
+    ApplyHeroCardResult,
+    ApplyHeroColorResult,
+    ApplyHeroPrismResult,
+    ApplyHeroSoundResult,
     ApplyUnknownCustomModArgs,
     ApplyUnknownModMatchArgs,
     AssociateUnknownModArgs,
     GlobalModType,
     EditLocalModArgs,
+    HeroAbilitySlot,
+    LockerCardThumbnail,
     LockerClearScope,
+    LockerOverview,
     MergeModsArgs,
     Mod,
     ModConflict,
@@ -27,6 +36,12 @@ import type {
     UnknownModFilterGuess,
     UnmergeModResult,
 } from '../../src/types/mod';
+import type {
+    HeroPortrait,
+    HeroPoseInfo,
+    HeroPoseSkinSource,
+    SoulModelInfo,
+} from '../../src/types/portrait';
 import type {
     LikeResponse,
     ListProfilesResponse,
@@ -71,6 +86,63 @@ export interface ElectronAPI {
     editLocalMod: (modId: string, args: EditLocalModArgs) => Promise<Mod>;
     setVariantLabel: (modId: string, label: string) => Promise<Mod>;
     setModLockerHero: (modId: string, heroName: string | null) => Promise<Mod>;
+    // Locker surface. Signatures mirror src/types/electron.d.ts; this whole
+    // local interface is slated to be replaced by the canonical one there.
+    getHeroPortraits: (heroName: string) => Promise<HeroPortrait[]>;
+    getHeroAbilitySlots: (heroName: string) => Promise<HeroAbilitySlot[]>;
+    applyHeroCard: (heroName: string, sourceFileName: string) => Promise<ApplyHeroCardResult>;
+    revertHeroCard: (heroName: string) => Promise<ApplyHeroCardResult>;
+    getActiveHeroCard: (
+        heroName: string
+    ) => Promise<{ sourceFileName: string; variants: string[] } | null>;
+    getLockerCardThumbnails: () => Promise<LockerCardThumbnail[]>;
+    getLockerOverview: () => Promise<LockerOverview>;
+    clearLockerOverrides: (scope: LockerClearScope) => Promise<void>;
+    getHeroPoseInfo: (
+        heroName: string,
+        skinSources?: HeroPoseSkinSource[]
+    ) => Promise<HeroPoseInfo>;
+    exportHeroPose: (
+        heroName: string,
+        skinSources?: HeroPoseSkinSource[],
+        fallbackSkinMetaKey?: string
+    ) => Promise<HeroPoseInfo>;
+    exportSoulModel: (metaKey: string) => Promise<SoulModelInfo>;
+    getSoulModelInfo: (key: string) => Promise<SoulModelInfo>;
+    clearSoulModel: (key: string) => Promise<void>;
+    applyHeroSound: (
+        heroName: string,
+        slot: AbilitySlot,
+        sourceFileName: string,
+        params?: AbilitySoundParams
+    ) => Promise<ApplyHeroSoundResult>;
+    revertHeroSound: (heroName: string, slot: AbilitySlot) => Promise<ApplyHeroSoundResult>;
+    getActiveHeroSounds: (heroName: string) => Promise<ActiveHeroSound[]>;
+    getHeroColorSupport: (heroName: string) => Promise<boolean>;
+    applyHeroColor: (
+        heroName: string,
+        hue: number,
+        saturation: number,
+        brightness: number,
+    ) => Promise<ApplyHeroColorResult>;
+    applyHeroPrism: (
+        heroName: string,
+        hue: number,
+        saturation: number,
+        brightness: number,
+        animated: boolean,
+        gradient: string | null,
+    ) => Promise<ApplyHeroPrismResult>;
+    previewHeroColor: (
+        heroName: string,
+        hue: number,
+        saturation: number,
+        brightness: number,
+    ) => Promise<string>;
+    revertHeroColor: (heroName: string) => Promise<ApplyHeroColorResult>;
+    getActiveHeroColor: (heroName: string) => Promise<ActiveHeroColor | null>;
+    getPreviewCacheSize: () => Promise<{ bytes: number }>;
+    clearPreviewCache: () => Promise<{ bytesFreed: number }>;
     setModGlobalType: (modId: string, globalType: GlobalModType | null) => Promise<Mod>;
     setModIgnoreUpdates: (modId: string, ignore: boolean) => Promise<Mod>;
     backfillGameBananaFileId: (

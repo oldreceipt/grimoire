@@ -5,7 +5,7 @@ import {
     conflictPairKey,
     modConflictIdentity,
     migrateIgnoredConflictKeysForMods,
-    ModConflict,
+    type ModConflict,
 } from '../services/conflicts';
 import { scanMods } from '../services/mods';
 
