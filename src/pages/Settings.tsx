@@ -311,6 +311,12 @@ export default function Settings() {
     }
   };
 
+  const handleAutoEnableDownloadsChange = async (checked: boolean) => {
+    if (settings) {
+      await saveSettings({ ...settings, autoEnableDownloads: checked });
+    }
+  };
+
   const handleIgnoreConflictsByDefaultChange = async (checked: boolean) => {
     if (settings) {
       await saveSettings({ ...settings, ignoreConflictsByDefault: checked });
@@ -1094,6 +1100,15 @@ export default function Settings() {
               onChange={handleAutoDisableSiblingsChange}
               label="Switch variants instead of stacking them"
               description="When you install a different file of a mod you already have enabled, disable the previous variant so only the new one is active. Turn off to keep multiple variants of the same mod enabled at once. (Updates always replace the old file regardless of this setting.)"
+            />
+
+            <div className="h-px bg-white/5" />
+
+            <Toggle
+              checked={settings?.autoEnableDownloads ?? false}
+              onChange={handleAutoEnableDownloadsChange}
+              label="Enable mods after download"
+              description="Move newly downloaded mods into the active load order as soon as installation finishes. If no enabled slot is available, the mod stays installed and disabled."
             />
 
             <div className="h-px bg-white/5" />

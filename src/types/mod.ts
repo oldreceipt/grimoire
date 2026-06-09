@@ -590,6 +590,9 @@ export interface AppSettings {
   hideOutdatedMods: boolean;
   lockerCardsExpandedByDefault: boolean;
   autoDisableSiblingVariants: boolean;
+  /** After a successful GameBanana download, immediately enable the installed
+   *  VPKs instead of leaving them in the disabled library. Off by default. */
+  autoEnableDownloads: boolean;
   steamLaunchOptions: string;
   activeProfileId: string | null;
   autoSaveProfile: boolean;

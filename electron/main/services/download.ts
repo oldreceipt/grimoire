@@ -44,6 +44,8 @@ export interface OneClickInstallArgs {
     enrichedDetails?: GameBananaModDetails;
 }
 
+type DisabledSiblingVariant = { id: string; name: string; fileName: string };
+
 /**
  * Strip the trailing archive extension from a GameBanana filename so we keep
  * a clean stem to use as a label fallback. Case-insensitive; leaves the rest
@@ -578,6 +580,57 @@ async function renameVpksToAvoidConflicts(
     return renamedFiles;
 }
 
+async function enableInstalledVpks(
+    deadlockPath: string,
+    installedVpks: string[],
+    context: string
+): Promise<void> {
+    if (installedVpks.length === 0) return;
+
+    const installedSet = new Set(installedVpks);
+    const refreshed = await scanMods(deadlockPath);
+    for (const vpkFileName of installedVpks) {
+        const newMod = refreshed.find((m) => installedSet.has(m.fileName) && m.fileName === vpkFileName);
+        if (!newMod || newMod.enabled) continue;
+        try {
+            await enableMod(deadlockPath, newMod.id);
+        } catch (err) {
+            console.warn(`[download] Failed to auto-enable ${vpkFileName} (${context}):`, err);
+        }
+    }
+}
+
+async function disableSiblingVariants(
+    deadlockPath: string,
+    installedVpks: string[],
+    modId: number | undefined,
+    fileId: number | undefined
+): Promise<DisabledSiblingVariant[]> {
+    if (installedVpks.length === 0 || modId === undefined || modId <= 0) return [];
+
+    const installedSet = new Set(installedVpks);
+    const allMods = await scanMods(deadlockPath);
+    // scanMods returns filesystem state only; gameBananaId and gameBananaFileId
+    // live in the metadata sidecar. Read them per-mod here or the filter never
+    // matches and no sibling variants get disabled.
+    const stalePeers = allMods.filter((m) => {
+        if (!m.enabled) return false;
+        if (installedSet.has(m.fileName)) return false;
+        const meta = getModMetadata(m.metaKey);
+        return (
+            meta?.gameBananaId === modId &&
+            (fileId === undefined || meta?.gameBananaFileId !== fileId)
+        );
+    });
+    const disabledPeers: DisabledSiblingVariant[] = [];
+    for (const peer of stalePeers) {
+        console.log(`[download] Auto-disabling sibling variant: ${peer.fileName}`);
+        await disableMod(deadlockPath, peer.id);
+        disabledPeers.push({ id: peer.id, name: peer.name, fileName: peer.fileName });
+    }
+    return disabledPeers;
+}
+
 /**
  * Execute the actual download (internal, called from queue)
  */
@@ -864,29 +917,10 @@ async function executeDownload(
     // Opt-out: settings.autoDisableSiblingVariants = false keeps every variant
     // enabled (e.g. a mod page whose separate files are meant to run together).
     const settings = loadSettings();
+    let enabledInstalledVpks = false;
     if (settings.autoDisableSiblingVariants !== false) {
         try {
-            const installedSet = new Set(installedVpks);
-            const allMods = await scanMods(deadlockPath);
-            // scanMods returns filesystem state only; gameBananaId and
-            // gameBananaFileId live in the metadata sidecar (enriched at
-            // the IPC boundary by enrichMod). Read them per-mod here or the
-            // filter never matches and no sibling variants ever get disabled.
-            const stalePeers = allMods.filter((m) => {
-                if (!m.enabled) return false;
-                if (installedSet.has(m.fileName)) return false;
-                const meta = getModMetadata(m.metaKey);
-                return (
-                    meta?.gameBananaId === modId &&
-                    meta?.gameBananaFileId !== fileId
-                );
-            });
-            const disabledPeers: Array<{ id: string; name: string; fileName: string }> = [];
-            for (const peer of stalePeers) {
-                console.log(`[downloadMod] Auto-disabling sibling variant: ${peer.fileName}`);
-                await disableMod(deadlockPath, peer.id);
-                disabledPeers.push({ id: peer.id, name: peer.name, fileName: peer.fileName });
-            }
+            const disabledPeers = await disableSiblingVariants(deadlockPath, installedVpks, modId, fileId);
             // Downloads land in /disabled by default, so just disabling the
             // previously-enabled sibling would leave the mod entirely off
             // ("the newest pick is the active one" in the surrounding comment
@@ -894,17 +928,8 @@ async function executeDownload(
             // enabled variant, move the freshly-downloaded VPK(s) into the
             // addons folder so the user ends up with the new variant active.
             if (disabledPeers.length > 0 && installedVpks.length > 0) {
-                const refreshed = await scanMods(deadlockPath);
-                for (const vpkFileName of installedVpks) {
-                    const newMod = refreshed.find((m) => m.fileName === vpkFileName);
-                    if (newMod && !newMod.enabled) {
-                        try {
-                            await enableMod(deadlockPath, newMod.id);
-                        } catch (err) {
-                            console.warn(`[downloadMod] Failed to enable new variant ${vpkFileName}:`, err);
-                        }
-                    }
-                }
+                await enableInstalledVpks(deadlockPath, installedVpks, 'sibling-variant');
+                enabledInstalledVpks = true;
                 mainWindow?.webContents.send('mods-auto-disabled', {
                     reason: 'sibling-variant',
                     modId,
@@ -915,6 +940,10 @@ async function executeDownload(
         } catch (err) {
             console.warn(`[downloadMod] Failed to auto-disable sibling variants:`, err);
         }
+    }
+
+    if (settings.autoEnableDownloads === true && !enabledInstalledVpks) {
+        await enableInstalledVpks(deadlockPath, installedVpks, 'auto-enable-downloads');
     }
 
     // Notify completion
@@ -1350,6 +1379,35 @@ async function executeOneClickDownload(
         const vpkPath = join(targetPath, vpkFileName);
         const perVpkMetadata = stampVpkLockerHero(metadata, section, vpkPath);
         await setModMetadataWithHash(vpkFileName, perVpkMetadata, vpkPath);
+    }
+
+    const settings = loadSettings();
+    let enabledInstalledVpks = false;
+    if (settings.autoDisableSiblingVariants !== false) {
+        try {
+            const disabledPeers = await disableSiblingVariants(
+                deadlockPath,
+                installedVpks,
+                realModId,
+                resolvedFileId
+            );
+            if (disabledPeers.length > 0 && installedVpks.length > 0) {
+                await enableInstalledVpks(deadlockPath, installedVpks, 'sibling-variant');
+                enabledInstalledVpks = true;
+                mainWindow?.webContents.send('mods-auto-disabled', {
+                    reason: 'sibling-variant',
+                    modId: realModId ?? modId,
+                    fileId: resolvedFileId ?? fileId,
+                    disabled: disabledPeers,
+                });
+            }
+        } catch (err) {
+            console.warn(`[oneClickInstall] Failed to auto-disable sibling variants:`, err);
+        }
+    }
+
+    if (settings.autoEnableDownloads === true && !enabledInstalledVpks) {
+        await enableInstalledVpks(deadlockPath, installedVpks, 'auto-enable-downloads');
     }
 
     mainWindow?.webContents.send('download-complete', { modId, fileId });

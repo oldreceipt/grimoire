@@ -309,7 +309,7 @@ export default function ModDetailsModal({
 
   const currentImage = images[currentImageIndex];
   // The lightbox loads the original GB asset for detail inspection.
-  // The inline stack uses file530 per image directly via raw <img> tags so
+  // The inline stack uses file530 per image directly via plain image elements so
   // each thumb can render and load independently as the user scrolls.
   const currentImageFullUrl = currentImage
     ? `${currentImage.baseUrl}/${currentImage.file}`
@@ -663,16 +663,16 @@ export default function ModDetailsModal({
     : 'fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 md:px-24 z-50 animate-fade-in';
   const panelClass = isSidebar
     ? 'relative bg-bg-secondary h-full w-full overflow-hidden flex flex-col'
-    : 'relative bg-bg-secondary rounded-xl w-full max-w-4xl lg:max-w-6xl max-h-[90vh] overflow-visible flex flex-col border border-border shadow-2xl';
+    : 'relative bg-bg-secondary rounded-xl w-full max-w-4xl lg:max-w-6xl h-[min(90vh,920px)] max-h-[90vh] overflow-visible flex flex-col border border-border shadow-2xl';
   const bodyContentClass = isSidebar
-    ? 'mod-details-body-content flex h-full min-h-0 flex-col overflow-y-auto'
-    : 'mod-details-body-content flex h-full min-h-0 flex-col lg:flex-row overflow-y-auto lg:overflow-hidden';
+    ? 'mod-details-body-content flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain'
+    : 'mod-details-body-content flex h-full min-h-0 flex-col lg:flex-row overflow-y-auto overscroll-contain lg:overflow-hidden';
   const imageColClass = isSidebar
     ? 'p-4 space-y-3'
-    : 'lg:w-[460px] lg:flex-shrink-0 lg:overflow-y-auto lg:max-h-full p-5 lg:pr-3 space-y-3';
+    : 'lg:w-[460px] lg:flex-shrink-0 lg:overflow-y-auto lg:overscroll-contain lg:max-h-full p-5 lg:pr-3 space-y-3';
   const detailsColClass = isSidebar
     ? 'flex-1 min-w-0 p-4 space-y-5'
-    : 'flex-1 min-w-0 lg:overflow-y-auto lg:max-h-full p-5 lg:pl-3 space-y-5';
+    : 'flex-1 min-w-0 lg:overflow-y-auto lg:overscroll-contain lg:max-h-full p-5 lg:pl-3 space-y-5';
 
   const modal = (
     <div
@@ -1470,16 +1470,25 @@ export default function ModDetailsModal({
                 </section>
               )}
               <section>
-                <h3 className="font-semibold text-xs uppercase tracking-wide text-text-secondary mb-2 flex items-center gap-2">
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  Comments {commentsTotalCount > 0 && <span className="normal-case tracking-normal text-text-secondary/70">({commentsTotalCount})</span>}
-                </h3>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <h3 className="flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                    <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span className="truncate">
+                      Comments {commentsTotalCount > 0 && <span className="normal-case tracking-normal text-text-secondary/70">({commentsTotalCount})</span>}
+                    </span>
+                  </h3>
+                  {!commentsLoading && commentsTotalCount > comments.length && comments.length > 0 && (
+                    <span className="flex-shrink-0 text-[11px] text-text-tertiary">
+                      Showing {comments.length.toLocaleString()} of {commentsTotalCount.toLocaleString()}
+                    </span>
+                  )}
+                </div>
                 {commentsLoading ? (
-                  <ul className="divide-y divide-border/60">
+                  <ul className="divide-y divide-border/60 rounded-lg border border-border/80 bg-bg-tertiary/30 px-3">
                     {Array.from({ length: 2 }).map((_, i) => (
-                      <li key={i} className="flex gap-3 py-3 first:pt-0">
-                        <Skeleton className="w-7 h-7 flex-shrink-0" rounded="full" />
-                        <div className="flex-1 space-y-1.5">
+                      <li key={i} className="flex gap-3 py-3">
+                        <Skeleton className="h-8 w-8 flex-shrink-0" rounded="full" />
+                        <div className="min-w-0 flex-1 space-y-1.5">
                           <div className="flex items-center gap-2">
                             <Skeleton className="h-3 w-24" />
                             <Skeleton className="h-2.5 w-16" />
@@ -1491,37 +1500,55 @@ export default function ModDetailsModal({
                     ))}
                   </ul>
                 ) : comments.length === 0 ? (
-                  <p className="text-sm text-text-secondary py-1">No comments yet</p>
+                  <div className="flex items-center gap-3 rounded-lg border border-dashed border-border bg-bg-tertiary/30 px-3 py-4 text-sm text-text-secondary">
+                    <MessageSquare className="h-4 w-4 flex-shrink-0 text-text-tertiary" />
+                    <span>No comments yet</span>
+                  </div>
                 ) : (
                   /* Flat threaded layout - no per-comment card. Files stay
                      as bordered action cards (each is something you DO);
                      comments are conversational content (something you
                      READ), so we strip the boxes and let the avatar + name
                      + divider carry the visual hierarchy instead. */
-                  <ul className="divide-y divide-border/60">
-                    {comments.map((comment) => (
-                      <li key={comment.id} className="flex gap-3 py-3 first:pt-0">
-                        {comment.poster.avatarUrl ? (
-                          <img
-                            src={comment.poster.avatarUrl}
-                            alt={comment.poster.name}
-                            className="w-7 h-7 rounded-full flex-shrink-0"
-                          />
-                        ) : (
-                          <div className="w-7 h-7 rounded-full flex-shrink-0 bg-bg-tertiary" />
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-baseline gap-2 mb-0.5">
-                            <span className="text-sm font-medium text-text-primary">{comment.poster.name}</span>
-                            <span className="text-[11px] text-text-tertiary">{formatDate(comment.dateAdded)}</span>
+                  <ul className="divide-y divide-border/60 rounded-lg border border-border/80 bg-bg-tertiary/30">
+                    {comments.map((comment) => {
+                      const posterInitial = comment.poster.name.trim().charAt(0).toUpperCase() || '?';
+                      return (
+                        <li key={comment.id} className="flex min-w-0 gap-3 px-3 py-3">
+                          {comment.poster.avatarUrl ? (
+                            <img
+                              src={comment.poster.avatarUrl}
+                              alt={`${comment.poster.name} avatar`}
+                              loading="lazy"
+                              referrerPolicy="no-referrer"
+                              className="h-8 w-8 flex-shrink-0 rounded-full border border-border bg-bg-secondary object-cover"
+                            />
+                          ) : (
+                            <div
+                              aria-hidden="true"
+                              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-accent/30 bg-accent/15 text-xs font-bold text-accent"
+                            >
+                              {posterInitial}
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                              <span className="min-w-0 max-w-full truncate text-sm font-semibold text-text-primary" title={comment.poster.name}>
+                                {comment.poster.name}
+                              </span>
+                              <span className="inline-flex flex-shrink-0 items-center gap-1 text-[11px] text-text-tertiary">
+                                <Clock className="h-3 w-3" />
+                                {formatDate(comment.dateAdded)}
+                              </span>
+                            </div>
+                            <div
+                              className="mod-comment-content mt-1"
+                              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(comment.text) }}
+                            />
                           </div>
-                          <div
-                            className="text-sm text-text-primary/90 leading-relaxed [&_p]:mb-1 [&_a]:text-accent [&_a]:hover:underline"
-                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(comment.text) }}
-                          />
-                        </div>
-                      </li>
-                    ))}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </section>

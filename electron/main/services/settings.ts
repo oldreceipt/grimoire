@@ -10,6 +10,9 @@ export interface AppSettings {
     hideOutdatedMods: boolean;       // Hide GameBanana mods flagged as outdated in Browse
     lockerCardsExpandedByDefault: boolean; // Open Locker list-view hero cards expanded on first load
     autoDisableSiblingVariants: boolean; // Installing a different file of an already-enabled mod disables the prior variant (not about updates)
+    /** Enable newly downloaded VPKs after a successful install. Off by default
+     *  so downloads keep behaving as a staging step unless the user opts in. */
+    autoEnableDownloads: boolean;
     steamLaunchOptions: string;      // Args written to Steam's localconfig.vdf for Deadlock just before launch
     activeProfileId: string | null;  // Currently active profile
     autoSaveProfile: boolean;        // Auto-save when mods change
@@ -65,6 +68,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     hideOutdatedMods: false,
     lockerCardsExpandedByDefault: false,
     autoDisableSiblingVariants: true,
+    autoEnableDownloads: false,
     steamLaunchOptions: '',
     activeProfileId: null,
     autoSaveProfile: false,
