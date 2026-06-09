@@ -113,6 +113,33 @@ function browseSocialIcon(platform: string): LucideIcon {
   return BROWSE_SOCIAL_ICONS[platform] ?? Globe;
 }
 
+// Brand colors so the social symbols read as the real platforms. All chosen to
+// contrast with a white glyph; unknown platforms fall back to the accent.
+const BROWSE_SOCIAL_COLORS: Record<string, string> = {
+  youtube: '#FF0000',
+  twitter: '#1D9BF0',
+  x: '#1D9BF0',
+  twitch: '#9146FF',
+  instagram: '#E4405F',
+  facebook: '#1877F2',
+  github: '#333333',
+  discord: '#5865F2',
+  bluesky: '#1185FE',
+  tiktok: '#111111',
+  patreon: '#FF424D',
+  kofi: '#FF5E5B',
+  steam: '#1B2838',
+  reddit: '#FF4500',
+  spotify: '#1DB954',
+  soundcloud: '#FF5500',
+  carrd: '#1F2D3D',
+  linktree: '#43E660',
+};
+
+function browseSocialColor(platform: string): string {
+  return BROWSE_SOCIAL_COLORS[platform] ?? '#f97316';
+}
+
 function clampSidebarWidth(value: number): number {
   return clampNumber(value, BROWSE_SIDEBAR_WIDTH_MIN, BROWSE_SIDEBAR_WIDTH_MAX);
 }
@@ -2558,39 +2585,43 @@ export default function Browse() {
                   </span>
                 )}
               </div>
-              {artistSocials.length > 0 && (
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  {artistSocials.map((link) => {
-                    const Icon = browseSocialIcon(link.platform);
-                    return (
-                      <a
-                        key={link.url}
-                        href={link.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title={link.label}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg-secondary/60 px-2.5 py-1 text-xs font-medium text-text-secondary transition-colors hover:border-accent/40 hover:text-text-primary"
-                      >
-                        <Icon className="h-3.5 w-3.5" />
-                        {link.label}
-                      </a>
-                    );
-                  })}
-                </div>
+            </div>
+            {/* Social symbols + Ko-fi grouped on the right. Ko-fi is filtered out
+                of the symbol row since it gets its own labelled brand button. */}
+            <div className="flex flex-shrink-0 items-center gap-1.5">
+              {artistSocials
+                .filter((link) => !(submitter.kofiUrl && link.platform === 'kofi'))
+                .map((link) => {
+                  const Icon = browseSocialIcon(link.platform);
+                  const color = browseSocialColor(link.platform);
+                  return (
+                    <a
+                      key={link.url}
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={link.label}
+                      aria-label={link.label}
+                      style={{ backgroundColor: color }}
+                      className="flex h-8 w-8 items-center justify-center rounded-full text-white shadow-sm ring-1 ring-white/10 transition-transform hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    >
+                      <Icon className="h-4 w-4" />
+                    </a>
+                  );
+                })}
+              {submitter.kofiUrl && (
+                <a
+                  href={submitter.kofiUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Support ${submitter.name} on Ko-fi`}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[#FF5E5B] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#ff4542]"
+                >
+                  <Coffee className="h-4 w-4" />
+                  Ko-fi
+                </a>
               )}
             </div>
-            {submitter.kofiUrl && (
-              <a
-                href={submitter.kofiUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={`Support ${submitter.name} on Ko-fi`}
-                className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-full bg-[#FF5E5B] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#ff4542]"
-              >
-                <Coffee className="h-4 w-4" />
-                Ko-fi
-              </a>
-            )}
             <div className="hidden flex-shrink-0 items-center gap-1 rounded-lg border border-border bg-bg-secondary p-0.5 sm:flex">
               {(['Mod', 'Sound'] as const).map((s) => (
                 <button
