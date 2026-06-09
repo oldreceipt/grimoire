@@ -1088,8 +1088,10 @@ export async function fetchSubmitterLinks(memberId: number): Promise<GameBananaA
             links = mapContactInfo(raw._aContactInfo);
         }
     } catch (err) {
+        // Don't cache the failure: a transient 429 or network blip would
+        // otherwise hide this artist's socials until the app restarts.
         console.warn('[gamebanana] Failed to load submitter links:', err);
-        links = [];
+        return [];
     }
 
     submitterLinksCache.set(memberId, links);

@@ -1092,9 +1092,13 @@ export default function Browse() {
   // Artist social/contact links for the banner. Loaded only when an artist is
   // highlighted (not on every mod open), and cached per member id main-side.
   const [artistSocials, setArtistSocials] = useState<GameBananaArtistLink[]>([]);
+  // Falls back to the monogram when the banner avatar URL 404s or is blocked.
+  // Reset per artist in the effect below so one dead URL doesn't stick.
+  const [artistAvatarFailed, setArtistAvatarFailed] = useState(false);
   useEffect(() => {
     const memberId = submitter?.id;
     setArtistSocials([]);
+    setArtistAvatarFailed(false);
     if (!memberId || memberId <= 0) return;
     let cancelled = false;
     getSubmitterLinks(memberId)
@@ -1110,6 +1114,10 @@ export default function Browse() {
     ? Math.max(BROWSE_SIDEBAR_WIDTH_MIN, browseViewportMetrics.windowWidth - BROWSE_SIDEBAR_GRID_RESERVE)
     : BROWSE_SIDEBAR_WIDTH_MAX;
   const effectiveSidebarWidth = Math.min(clampSidebarWidth(browseSidebarWidth), sidebarWidthCeiling);
+  // Tears down an in-flight sidebar drag (listeners + body styles). Held in a ref
+  // so an unmount can finish a drag that's still mid-gesture, instead of leaking
+  // the window listeners and stranding the col-resize cursor on <body>.
+  const sidebarResizeCleanupRef = useRef<(() => void) | null>(null);
   const startSidebarResize = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     document.body.style.cursor = 'col-resize';
@@ -1119,11 +1127,15 @@ export default function Browse() {
       const next = Math.min(clampSidebarWidth(window.innerWidth - ev.clientX), ceiling);
       setBrowseSidebarWidthState(next);
     };
-    const onUp = () => {
+    const cleanup = () => {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      sidebarResizeCleanupRef.current = null;
+    };
+    const onUp = () => {
+      cleanup();
       // Persist the raw width (not the window-capped value) so widening the
       // window later restores the size the user actually picked.
       setBrowseSidebarWidthState((w) => {
@@ -1131,9 +1143,12 @@ export default function Browse() {
         return w;
       });
     };
+    sidebarResizeCleanupRef.current = cleanup;
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   }, []);
+  // Drop a half-finished drag if Browse unmounts mid-gesture.
+  useEffect(() => () => sidebarResizeCleanupRef.current?.(), []);
 
   // Load settings on mount (needed for hideNsfwPreviews)
   useEffect(() => {
@@ -2176,8 +2191,10 @@ export default function Browse() {
     if (downloadQueue.some(q => q.modId === mod.id)) return;
 
     try {
-      // Fetch mod details to get the first file
-      const details = await getModDetails(mod.id, section);
+      // Fetch mod details to get the first file. Include the submitter up front
+      // so the multi-file branch below can open the details panel (which shows
+      // the artist card) without a second round-trip against the rate limiter.
+      const details = await getModDetails(mod.id, section, { includeSubmitter: true });
       if (!details.files || details.files.length === 0) {
         setError('No downloadable files found');
         return;
@@ -2185,11 +2202,10 @@ export default function Browse() {
 
       // When a mod has more than one downloadable file (different versions,
       // variant builds, etc.) we used to silently pick whichever had the
-      // highest download count. Forum feedback flagged that — surface the
-      // details modal so the user can choose which file to install.
+      // highest download count. Forum feedback flagged that, so surface the
+      // details modal and let the user choose which file to install.
       if (details.files.length > 1) {
-        const enrichedDetails = await getModDetails(mod.id, section, { includeSubmitter: true });
-        setSelectedMod(enrichedDetails);
+        setSelectedMod(details);
         setSelectedModDates({ dateAdded: mod.dateAdded, dateModified: mod.dateModified });
         return;
       }
@@ -2416,9 +2432,18 @@ export default function Browse() {
     if (section === 'Sound' && heroCategoryId === 'none') {
       nextMods = nextMods.filter((m) => inferHeroFromTitle(m.name) === null);
     }
+    // The NSFW filter is only enforced server-side by the local-search path.
+    // The remote paths (artist mode, and the no-local-cache fallback) return
+    // unfiltered records, so enforce it here too. Local results already match,
+    // so re-filtering them is a no-op.
+    if (nsfw === 'sfw') {
+      nextMods = nextMods.filter((m) => !m.nsfw);
+    } else if (nsfw === 'nsfw') {
+      nextMods = nextMods.filter((m) => m.nsfw);
+    }
 
     return nextMods;
-  }, [mods, settings?.hideOutdatedMods, section, heroCategoryId]);
+  }, [mods, settings?.hideOutdatedMods, section, heroCategoryId, nsfw]);
   const selectedModIndex = selectedMod
     ? displayMods.findIndex((mod) => mod.id === selectedMod.id)
     : -1;
@@ -2552,11 +2577,12 @@ export default function Browse() {
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
-            {submitter.avatarUrl ? (
+            {submitter.avatarUrl && !artistAvatarFailed ? (
               <img
                 src={submitter.avatarUrl}
                 alt={submitter.name}
                 className="h-11 w-11 flex-shrink-0 rounded-full border border-border object-cover"
+                onError={() => setArtistAvatarFailed(true)}
               />
             ) : (
               <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border border-accent/30 bg-accent/15 text-lg font-bold uppercase text-accent">

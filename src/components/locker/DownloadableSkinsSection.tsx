@@ -22,6 +22,9 @@ export default function DownloadableSkinsSection({ categoryId }: DownloadableSki
       heroCategoryId: categoryId,
       categoryId: 'all',
       search: '',
+      // Leave artist mode: it persists in the session store and would
+      // otherwise override the hero filter this entry point asks for.
+      submitter: undefined,
     });
     navigate('/browse');
   };

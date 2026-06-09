@@ -580,10 +580,13 @@ export default function ModDetailsModal({
       className="mod-details-navigation-skeleton absolute inset-0 bg-bg-secondary"
       aria-hidden
     >
-      <div className="flex h-full min-h-0 flex-col overflow-hidden lg:flex-row">
-        <div className="lg:w-[460px] lg:flex-shrink-0 p-5 lg:pr-3 space-y-3 overflow-hidden">
+      {/* Match the real body's layout per variant: the sidebar stacks into one
+          column, so its loading skeleton must too (the modal's lg:flex-row /
+          460px image column would overflow and clip a ~440px panel). */}
+      <div className={`flex h-full min-h-0 flex-col overflow-hidden ${isSidebar ? '' : 'lg:flex-row'}`}>
+        <div className={`space-y-3 overflow-hidden ${isSidebar ? 'p-4' : 'lg:w-[460px] lg:flex-shrink-0 p-5 lg:pr-3'}`}>
           <Skeleton className="aspect-[16/9] w-full" rounded="lg" />
-          <Skeleton className="aspect-[16/10] w-full" rounded="lg" />
+          {!isSidebar && <Skeleton className="aspect-[16/10] w-full" rounded="lg" />}
           <div className="rounded-lg border border-border bg-bg-tertiary p-3">
             <div className="mb-2 flex items-center gap-2">
               <Skeleton className="h-4 w-4" rounded="full" />
@@ -593,7 +596,7 @@ export default function ModDetailsModal({
           </div>
         </div>
 
-        <div className="flex-1 min-w-0 p-5 lg:pl-3 space-y-5 overflow-hidden">
+        <div className={`flex-1 min-w-0 space-y-5 overflow-hidden ${isSidebar ? 'p-4' : 'p-5 lg:pl-3'}`}>
           <section>
             <Skeleton className="mb-2 h-3 w-16" />
             <div className="flex items-center gap-2">
@@ -675,7 +678,10 @@ export default function ModDetailsModal({
     <div
       className={outerClass}
       onClick={isSidebar ? undefined : onClose}
-      role="dialog"
+      // The docked sidebar is a persistent, non-blocking panel, so it's a
+      // labelled region, not a modal dialog (which would wrongly imply a
+      // focus trap / inert background to screen readers).
+      role={isSidebar ? 'region' : 'dialog'}
       aria-modal={isSidebar ? undefined : true}
       aria-label={isNavigating ? navigationLabel ?? 'Loading mod details' : mod.name}
       aria-busy={isNavigating}
