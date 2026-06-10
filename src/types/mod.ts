@@ -582,6 +582,9 @@ export interface AppSettings {
   /** Installing a different file of an already-enabled mod disables the
    *  prior variant (not about updates). */
   autoDisableSiblingVariants: boolean;
+  /** After a successful GameBanana download, immediately enable the installed
+   *  VPKs instead of leaving them in the disabled library. Off by default. */
+  autoEnableDownloads: boolean;
   /** Args written to Steam's localconfig.vdf for Deadlock just before launch. */
   steamLaunchOptions: string;
   /** Currently active profile. */

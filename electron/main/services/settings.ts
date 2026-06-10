@@ -8,7 +8,6 @@ import { getSettingsPath } from '../utils/paths';
 import type { AppSettings } from '../../../src/types/mod';
 export type { AppSettings };
 
-
 const DEFAULT_SETTINGS: AppSettings = {
     deadlockPath: null,
     devMode: false,
@@ -17,6 +16,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     hideOutdatedMods: false,
     lockerCardsExpandedByDefault: false,
     autoDisableSiblingVariants: true,
+    autoEnableDownloads: false,
     steamLaunchOptions: '',
     activeProfileId: null,
     autoSaveProfile: false,
