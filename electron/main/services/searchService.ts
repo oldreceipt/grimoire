@@ -1,4 +1,12 @@
-import { initDatabase, type CachedMod, mapRowToMod } from './modDatabase';
+import { initDatabase, mapRowToMod } from './modDatabase';
+// SearchOptions/SearchResult are the canonical SearchLocalModsOptions and
+// LocalSearchResult from src/types/electron.ts under this module's
+// historical names.
+import type {
+    SearchLocalModsOptions as SearchOptions,
+    LocalSearchResult as SearchResult,
+} from '../../../src/types/electron';
+export type { SearchOptions, SearchResult };
 
 /**
  * Escape special FTS5 characters in search terms
@@ -10,34 +18,6 @@ function escapeFts5Term(term: string): string {
     return term.replace(/["\-*^:()]/g, ' ').trim();
 }
 
-
-export interface SearchOptions {
-    query?: string;
-    section?: string;
-    categoryId?: number;
-    // Enhanced hero search: also match mods in parent Skins category with hero name in title
-    heroName?: string;
-    skinsCategoryId?: number;
-    sortBy?: 'relevance' | 'likes' | 'date' | 'date_added' | 'views' | 'name';
-    // Content-rating filter: 'all' (default), SFW only, or NSFW only.
-    nsfw?: 'all' | 'sfw' | 'nsfw';
-    // Recency window on date_added: 'all' (default), a preset (day/week/month),
-    // or 'custom' bounded by addedFrom/addedTo.
-    addedWithin?: 'all' | 'today' | 'week' | 'month' | 'custom';
-    // Custom-range bounds (Unix seconds, inclusive). Only used when
-    // addedWithin === 'custom'; either bound may be omitted for an open range.
-    addedFrom?: number;
-    addedTo?: number;
-    limit?: number;
-    offset?: number;
-}
-
-export interface SearchResult {
-    mods: CachedMod[];
-    totalCount: number;
-    offset: number;
-    limit: number;
-}
 
 /**
  * Order-by clause for a sort option. `hasQuery` differentiates relevance:

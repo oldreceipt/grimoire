@@ -1,27 +1,10 @@
 import { ipcMain, app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-
-export interface CrosshairSettings {
-    pipGap: number;
-    pipHeight: number;
-    pipWidth: number;
-    pipOpacity: number;
-    pipBorder: boolean;
-    dotOpacity: number;
-    dotOutlineOpacity: number;
-    colorR: number;
-    colorG: number;
-    colorB: number;
-}
-
-export interface CrosshairPreset {
-    id: string;
-    name: string;
-    settings: CrosshairSettings;
-    thumbnail: string; // base64 PNG
-    createdAt: string;
-}
+// Wire types are single-sourced in src/types/electron.ts; re-exported to
+// keep this module's surface unchanged.
+import type { CrosshairSettings, CrosshairPreset } from '../../../src/types/electron';
+export type { CrosshairSettings, CrosshairPreset };
 
 interface PresetsData {
     presets: CrosshairPreset[];

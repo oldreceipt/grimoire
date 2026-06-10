@@ -31,6 +31,7 @@ import {
 import { downloadMod } from '../services/download';
 import { mergeMods, unmergeMod, extractMergeSource } from '../services/modMerger';
 import { getMainWindow } from '../index';
+import type { ImportCustomModArgs } from '../../../src/types/electron';
 import type { AbilitySoundClassification, ApplyUnknownCustomModArgs, ApplyUnknownModMatchArgs, AssociateUnknownModArgs, EditLocalModArgs, GlobalModType, LockerHeroSource, MergeModsArgs, Mod as WireMod, UnmergeModResult, ExtractMergeSourceResult, UnknownModFileList } from '../../../src/types/mod';
 
 const unknownDetectionControllers = new Map<string, AbortController>();
@@ -747,13 +748,6 @@ ipcMain.handle(
         return mods.map(enrichMod);
     }
 );
-
-interface ImportCustomModArgs {
-    vpkPath: string;
-    name: string;
-    thumbnailDataUrl?: string;
-    nsfw?: boolean;
-}
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
     '.png': 'image/png',

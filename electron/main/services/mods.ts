@@ -24,6 +24,10 @@ export const ENABLE_LIMIT_MESSAGE =
 
 type CollisionMetadataOwner = 'enabled' | 'disabled';
 
+/** Filesystem-level mod record produced by scanMods. NOT the renderer-facing
+ *  Mod from src/types/mod.ts: that wire type is a superset that the ipc
+ *  layer's enrichMod builds from this plus the metadata sidecar (globalType,
+ *  lockerCosmetics, abilitySounds, ...). Keep new wire-only fields there. */
 export interface Mod {
     id: string;
     name: string;

@@ -34,28 +34,12 @@ import {
     setModMetadataWithHash,
     deleteModMetadata,
 } from '../services/metadata';
-
-interface OpenDialogOptions {
-    directory?: boolean;
-    title?: string;
-    defaultPath?: string;
-    filters?: Array<{ name: string; extensions: string[] }>;
-}
-
-interface SetMinaPresetArgs {
-    presetFileName: string;
-}
-
-interface ListMinaVariantsArgs {
-    archivePath: string;
-}
-
-interface ApplyMinaVariantArgs {
-    archivePath: string;
-    archiveEntry: string;
-    presetLabel: string;
-    heroCategoryId?: number;
-}
+import type {
+    OpenDialogOptions,
+    SetMinaPresetArgs,
+    ListMinaVariantsArgs,
+    ApplyMinaVariantArgs,
+} from '../../../src/types/electron';
 
 async function loadClipboardImage(source: string): Promise<Electron.NativeImage> {
     if (!source) {

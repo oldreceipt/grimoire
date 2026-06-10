@@ -6,47 +6,11 @@ import { getModMetadata } from './metadata';
 import { isLockerManaged, pinLockerVpksToFront } from './lockerVpk';
 import { readAutoexec, writeAutoexec } from './autoexec';
 
-export interface ProfileMod {
-    /** Filename when the profile was saved. NOT stable across reorders or
-     *  collision-renames; use `gameBananaId` + `gameBananaFileId` as the
-     *  primary identifier when present, and fall back to `fileName` only for
-     *  pre-stable-id profiles or custom mods that lack GameBanana ids. */
-    fileName: string;
-    enabled: boolean;
-    priority: number;
-    /** Stable identity pair. Populated from metadata at save time so apply
-     *  can find the mod even if its fileName has changed since. */
-    gameBananaId?: number;
-    gameBananaFileId?: number;
-    /** Content fingerprint, populated from metadata at save time. The identity
-     *  of last resort for custom/local mods that carry no GameBanana ids: it
-     *  survives a fileName change (reorder, or the free-form rename a mod gets
-     *  when disabled), so apply can still re-enable the right local mod. */
-    sha256?: string;
-}
-
-export interface ProfileCrosshairSettings {
-    pipGap: number;
-    pipHeight: number;
-    pipWidth: number;
-    pipOpacity: number;
-    pipBorder: boolean;
-    dotOpacity: number;
-    dotOutlineOpacity: number;
-    colorR: number;
-    colorG: number;
-    colorB: number;
-}
-
-export interface Profile {
-    id: string;
-    name: string;
-    mods: ProfileMod[];
-    crosshair?: ProfileCrosshairSettings;
-    autoexecCommands?: string[];
-    createdAt: string;
-    updatedAt: string;
-}
+// The Profile wire types are single-sourced in src/types/electron.ts
+// (docstrings included); re-exported because portableProfile.ts and the
+// ipc layer import them from this service.
+import type { Profile, ProfileMod, ProfileCrosshairSettings } from '../../../src/types/electron';
+export type { Profile, ProfileMod, ProfileCrosshairSettings };
 
 /**
  * Get the profiles file path

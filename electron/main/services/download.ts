@@ -14,17 +14,12 @@ import { validateDownloadUrl, validateFileSize } from './security';
 import { loadSettings } from './settings';
 import { getVpkLabels, inferHeroFromVpk } from './vpk';
 import type { LockerHeroSource } from '../../../src/types/mod';
+// DownloadModArgs is single-sourced in src/types/electron.ts; re-exported
+// because ipc/gamebanana.ts imports it from this service.
+import type { DownloadModArgs } from '../../../src/types/electron';
+export type { DownloadModArgs };
 import https from 'https';
 import http from 'http';
-
-export interface DownloadModArgs {
-    modId: number;
-    fileId: number;
-    fileName: string;
-    modName?: string;
-    section?: string;
-    categoryId?: number;
-}
 
 interface DownloadQueueItem {
     modId: number;

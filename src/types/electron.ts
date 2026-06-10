@@ -290,6 +290,7 @@ export interface CrosshairPreset {
     id: string;
     name: string;
     settings: CrosshairSettings;
+    /** base64 PNG */
     thumbnail: string;
     createdAt: string;
 }

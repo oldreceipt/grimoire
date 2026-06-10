@@ -2,27 +2,10 @@ import Database from 'better-sqlite3';
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
-
-export interface CachedMod {
-    id: number;
-    name: string;
-    section: string;
-    categoryId: number | null;
-    categoryName: string | null;
-    submitterName: string | null;
-    submitterId: number | null;
-    likeCount: number;
-    viewCount: number;
-    downloadCount: number | null;
-    dateAdded: number;
-    dateModified: number;
-    hasFiles: boolean;
-    isNsfw: boolean;
-    thumbnailUrl: string | null;
-    audioUrl: string | null;
-    profileUrl: string;
-    cachedAt: number;
-}
+// CachedMod is single-sourced in src/types/electron.ts; re-exported because
+// syncService and searchService import it from this module.
+import type { CachedMod } from '../../../src/types/electron';
+export type { CachedMod };
 
 export interface SyncState {
     section: string;

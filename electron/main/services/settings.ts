@@ -2,60 +2,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkS
 import { dirname } from 'path';
 import { getSettingsPath } from '../utils/paths';
 
-export interface AppSettings {
-    deadlockPath: string | null;
-    devMode: boolean;
-    devDeadlockPath: string | null;
-    hideNsfwPreviews: boolean;
-    hideOutdatedMods: boolean;       // Hide GameBanana mods flagged as outdated in Browse
-    lockerCardsExpandedByDefault: boolean; // Open Locker list-view hero cards expanded on first load
-    autoDisableSiblingVariants: boolean; // Installing a different file of an already-enabled mod disables the prior variant (not about updates)
-    steamLaunchOptions: string;      // Args written to Steam's localconfig.vdf for Deadlock just before launch
-    activeProfileId: string | null;  // Currently active profile
-    autoSaveProfile: boolean;        // Auto-save when mods change
-    /** Ask for confirmation before "Update" overwrites a profile with the current
-     *  mod set. On by default: Update sits next to Apply and overwriting is easy to
-     *  trigger by accident, with no undo. Turn off to overwrite immediately. */
-    confirmProfileUpdate: boolean;
-    experimentalStats: boolean;
-    experimentalCrosshair: boolean;
-    experimentalSocial: boolean;     // Grimoire Social: Discover page + publish/account UI
-    /** Auto-match unknown local VPKs against GameBanana (CRC-32 + filter
-     *  search). Off by default while the matching path is reworked: the
-     *  current implementation hits GameBanana rate limits hard on libraries
-     *  with many unknown files. When off, the "Fix unknown" UI still opens
-     *  but the search/find buttons and bulk auto-find are hidden, leaving
-     *  only the manual "Make Custom Mod" path. */
-    experimentalUnknownModMatching: boolean;
-    hasCompletedSetup: boolean;      // First-run setup completed
-    /** Mod pairs the user has dismissed in the Conflicts page. New entries use
-     *  stable per-mod identities (GameBanana mod/file ids when available)
-     *  joined sorted with `::`; older local-id pairs are still recognized. */
-    ignoredConflicts: string[];
-    /** When true, the conflict detector returns an empty list — every detected
-     *  pair is hidden without persisting it to ignoredConflicts, so toggling
-     *  back off restores the original conflict view. */
-    ignoreConflictsByDefault: boolean;
-    /** UI accent color (hex, e.g. "#f97316"). Used to theme buttons, links, and
-     *  focus rings throughout the app. */
-    accentColor: string;
-    /** Hero render used as the active sidebar highlight background. */
-    sidebarHeroHighlight?: string | null;
-    /** Order used to render absolute dates (mod/file upload + update dates). */
-    dateFormat: 'MM/DD/YYYY' | 'DD/MM/YYYY';
-    /** Preferred UI language. Null uses the OS/browser language when available. */
-    language?: string | null;
-    /** UI zoom factor (webContents.setZoomFactor). Driven by Ctrl +/-/0 and
-     *  persisted so hi-DPI laptops keep their preferred scale across launches.
-     *  1 = 100%. */
-    zoomFactor?: number;
-    /** Opt-in Discord Rich Presence. When on, the main process shows what the
-     *  user is doing in Grimoire on their Discord profile by talking to their
-     *  local Discord client over an IPC socket. Off by default: it broadcasts
-     *  activity outward (through Discord), so it stays a deliberate choice and
-     *  never sends anything to a Grimoire server. */
-    discordRpcEnabled: boolean;
-}
+// AppSettings is single-sourced in src/types/mod.ts (type-only import:
+// erased at build, so no renderer code is pulled into the main bundle).
+// Re-exported so existing `from './settings'` imports keep working.
+import type { AppSettings } from '../../../src/types/mod';
+export type { AppSettings };
+
 
 const DEFAULT_SETTINGS: AppSettings = {
     deadlockPath: null,
