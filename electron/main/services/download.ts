@@ -583,10 +583,9 @@ async function enableInstalledVpks(
 ): Promise<void> {
     if (installedVpks.length === 0) return;
 
-    const installedSet = new Set(installedVpks);
     const refreshed = await scanMods(deadlockPath);
     for (const vpkFileName of installedVpks) {
-        const newMod = refreshed.find((m) => installedSet.has(m.fileName) && m.fileName === vpkFileName);
+        const newMod = refreshed.find((m) => m.fileName === vpkFileName);
         if (!newMod || newMod.enabled) continue;
         try {
             await enableMod(deadlockPath, newMod.id);
@@ -939,7 +938,14 @@ async function executeDownload(
     }
 
     if (settings.autoEnableDownloads === true && !enabledInstalledVpks) {
-        await enableInstalledVpks(deadlockPath, installedVpks, 'auto-enable-downloads');
+        // The install already succeeded; an enable failure (e.g. scanMods
+        // hitting a transient FS error) must not reject the download promise
+        // and report the whole download as failed.
+        try {
+            await enableInstalledVpks(deadlockPath, installedVpks, 'auto-enable-downloads');
+        } catch (err) {
+            console.warn(`[downloadMod] Failed to auto-enable new downloads:`, err);
+        }
     }
 
     // Notify completion
@@ -1403,7 +1409,13 @@ async function executeOneClickDownload(
     }
 
     if (settings.autoEnableDownloads === true && !enabledInstalledVpks) {
-        await enableInstalledVpks(deadlockPath, installedVpks, 'auto-enable-downloads');
+        // Same as executeDownload: the install already succeeded, so an
+        // enable failure must not reject the download promise.
+        try {
+            await enableInstalledVpks(deadlockPath, installedVpks, 'auto-enable-downloads');
+        } catch (err) {
+            console.warn(`[oneClickInstall] Failed to auto-enable new downloads:`, err);
+        }
     }
 
     mainWindow?.webContents.send('download-complete', { modId, fileId });
