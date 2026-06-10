@@ -157,11 +157,6 @@ export async function exportSoulModel(metaKey: string): Promise<SoulModelInfo> {
   return window.electronAPI.exportSoulModel(metaKey);
 }
 
-/** Delete a soul-container mod's exported model. */
-export async function clearSoulModel(key: string): Promise<void> {
-  return window.electronAPI.clearSoulModel(key);
-}
-
 /** Whether a hero's posed 3D still exists for the given active skin stack (+ mtime, key). */
 export async function getHeroPoseInfo(
   heroName: string,
@@ -476,18 +471,6 @@ export async function openGameFolder(): Promise<void> {
 }
 
 // Diagnostics
-export async function getLogPath(): Promise<string> {
-  return window.electronAPI.diagnostics.getLogPath();
-}
-
-export async function openLogsFolder(): Promise<void> {
-  return window.electronAPI.diagnostics.openLogsFolder();
-}
-
-export async function saveDiagnosticReport(): Promise<{ path: string } | null> {
-  return window.electronAPI.diagnostics.saveReport();
-}
-
 export async function buildDiagnosticReport(
   description: string,
   options?: { includeFullLog?: boolean },

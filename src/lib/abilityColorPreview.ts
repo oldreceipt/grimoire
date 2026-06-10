@@ -99,13 +99,6 @@ export function rainbowCss(rotation: number, satScale: number, brightScale: numb
   return `linear-gradient(135deg, ${stops})`;
 }
 
-/** A flat hue chip (single-color mode). */
-export function hueSwatch(hue: number, saturation: number, brightness: number): string {
-  const s = clamp(Math.round(72 * saturation), 0, 100);
-  const l = clamp(Math.round(52 * brightness), 8, 92);
-  return `hsl(${Math.round(hue)}, ${s}%, ${l}%)`;
-}
-
 /** The `--gradient` spec sent to vpkmerge: a preset name, or `pos:hue:sat,...`. */
 export function gradientSpecOf(preset: string, customStops: GStop[]): string {
   if (preset !== 'custom') return preset;

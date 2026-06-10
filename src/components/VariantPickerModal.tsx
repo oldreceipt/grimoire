@@ -34,6 +34,7 @@ import {
 import type { Mod } from '../types/mod';
 import { ArchivedTag, Button, CheckboxMark, Tag } from './common/ui';
 import { formatRelativeDate, formatAbsoluteDate } from '../lib/dates';
+import { formatBytes } from '../lib/formatBytes';
 
 type DropPosition = 'before' | 'after';
 type VariantSection = 'enabled' | 'disabled';
@@ -70,14 +71,6 @@ interface Props {
     isUpdating?: boolean;
     updateProgress?: { done: number; total: number } | null;
     onClose: () => void;
-}
-
-function formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
 function orderVariantsByIds(variants: Mod[], ids: string[]): Mod[] {

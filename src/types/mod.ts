@@ -589,8 +589,6 @@ export interface AppSettings {
   steamLaunchOptions: string;
   /** Currently active profile. */
   activeProfileId: string | null;
-  /** Auto-save when mods change. */
-  autoSaveProfile: boolean;
   /** Ask for confirmation before "Update" overwrites a profile with the current
    *  mod set. On by default: Update sits next to Apply and overwriting is easy to
    *  trigger by accident, with no undo. Turn off to overwrite immediately. */

@@ -1,20 +1,12 @@
 import { useState } from 'react';
 import { FileArchive, Check, X } from 'lucide-react';
 import type { MultiVpkPickData } from '../types/electron';
+import { formatBytes } from '../lib/formatBytes';
 
 interface Props {
     data: MultiVpkPickData;
     onConfirm: (selected: string[]) => void;
     onCancel: () => void;
-}
-
-function formatBytes(bytes: number): string {
-    if (!Number.isFinite(bytes) || bytes <= 0) return '';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-    const n = bytes / Math.pow(1024, i);
-    const value = i === 0 ? String(Math.round(n)) : n.toFixed(n >= 10 ? 1 : 2).replace(/\.0$/, '');
-    return `${value} ${units[i]}`;
 }
 
 /**
@@ -104,7 +96,7 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                             const isChecked = selected.has(vpk);
                             const label = data.vpkLabels?.[vpk];
                             const size = data.vpkFileSizes?.[vpk];
-                            const sizeLabel = typeof size === 'number' ? formatBytes(size) : '';
+                            const sizeLabel = typeof size === 'number' ? formatBytes(size, '') : '';
                             return (
                                 <label
                                     key={vpk}

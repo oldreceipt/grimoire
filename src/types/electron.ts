@@ -336,7 +336,6 @@ export interface ElectronAPI {
     ) => Promise<{ sourceFileName: string; variants: string[] } | null>;
     getSoulModelInfo: (key: string) => Promise<SoulModelInfo>;
     exportSoulModel: (metaKey: string) => Promise<SoulModelInfo>;
-    clearSoulModel: (key: string) => Promise<void>;
     getHeroPoseInfo: (
         heroName: string,
         skinSources?: HeroPoseSkinSource[]
@@ -545,9 +544,6 @@ export interface ElectronAPI {
 
     // Diagnostics
     diagnostics: {
-        getLogPath: () => Promise<string>;
-        openLogsFolder: () => Promise<void>;
-        saveReport: () => Promise<{ path: string } | null>;
         buildReport: (description: string, options?: { includeFullLog?: boolean }) => Promise<string>;
     };
 

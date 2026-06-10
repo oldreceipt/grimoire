@@ -8,9 +8,8 @@
 // with the zero-telemetry rule in the workspace CLAUDE.md.
 
 import log from 'electron-log';
-import { app, dialog, shell } from 'electron';
+import { app } from 'electron';
 import { promises as fs } from 'fs';
-import { join } from 'path';
 import os from 'os';
 import { getInstallSource } from './updater';
 
@@ -44,14 +43,8 @@ export function initLogger(): void {
     );
 }
 
-export function getLogFilePath(): string {
+function getLogFilePath(): string {
     return log.transports.file.getFile().path;
-}
-
-/** Highlight the log file in the user's file manager. Works on Windows
- *  Explorer, macOS Finder, and most freedesktop-compliant Linux DEs. */
-export function openLogsFolder(): void {
-    shell.showItemInFolder(getLogFilePath());
 }
 
 // Redaction rules applied to every report body and to the saved .txt file.
@@ -142,32 +135,6 @@ export async function buildReportText(
     return parts.join('\n\n');
 }
 
-export interface DiagnosticReport {
-    path: string;
-}
-
-/** Bundle app version, OS info, and the tail of main.log into a single .txt
- *  the user can attach to a bug report. Prompts for save location, defaulting
- *  to the desktop. Returns the saved path, or null if the user cancelled. */
-export async function saveDiagnosticReport(): Promise<DiagnosticReport | null> {
-    const body = await buildReportText('');
-
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
-    const defaultName = `grimoire-diagnostic-${stamp}.txt`;
-    const defaultDir = safeDesktopPath() ?? app.getPath('userData');
-
-    const result = await dialog.showSaveDialog({
-        title: 'Save diagnostic report',
-        defaultPath: join(defaultDir, defaultName),
-        filters: [{ name: 'Text', extensions: ['txt'] }],
-    });
-    if (result.canceled || !result.filePath) return null;
-
-    await fs.writeFile(result.filePath, body, 'utf8');
-    log.info('[diagnostics] saved diagnostic report to', result.filePath);
-    return { path: result.filePath };
-}
-
 async function readFullLog(path: string): Promise<string> {
     try {
         return await fs.readFile(path, 'utf8');
@@ -192,15 +159,5 @@ async function readLogTail(path: string, maxBytes: number): Promise<string> {
         }
     } catch (err) {
         return `<could not read log file: ${err instanceof Error ? err.message : String(err)}>`;
-    }
-}
-
-function safeDesktopPath(): string | null {
-    // app.getPath('desktop') throws if the OS has no resolved desktop dir
-    // (rare on Linux with minimal XDG configs). Fall back gracefully.
-    try {
-        return app.getPath('desktop');
-    } catch {
-        return null;
     }
 }

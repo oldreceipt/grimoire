@@ -24,22 +24,3 @@ export function Skeleton({ className = '', style, rounded = 'md' }: SkeletonProp
     />
   );
 }
-
-interface SkeletonTextProps {
-  lines?: number;
-  className?: string;
-  lineClassName?: string;
-}
-
-export function SkeletonText({ lines = 3, className = '', lineClassName = '' }: SkeletonTextProps) {
-  return (
-    <div className={`space-y-2 ${className}`}>
-      {Array.from({ length: lines }).map((_, i) => (
-        <Skeleton
-          key={i}
-          className={`h-3 ${i === lines - 1 ? 'w-2/3' : 'w-full'} ${lineClassName}`}
-        />
-      ))}
-    </div>
-  );
-}

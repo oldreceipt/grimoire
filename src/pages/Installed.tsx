@@ -79,20 +79,13 @@ import MergedContentsModal from '../components/MergedContentsModal';
 import PriorityEditor from '../components/PriorityEditor';
 import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition, getHeroChipIconPath, HERO_NAMES, HERO_NAMES_SORTED, canonicalHeroName, GLOBAL_MOD_TYPE_ORDER, GLOBAL_MOD_TYPE_LABELS, getEffectiveGlobalType } from '../lib/lockerUtils';
 import { formatRelativeDate, formatAbsoluteDate } from '../lib/dates';
+import { formatBytes } from '../lib/formatBytes';
 import { Button, Tag } from '../components/common/ui';
 import { LockerOverridesModal } from '../components/LockerOverridesModal';
 import { ViewModeToggle, EmptyState, ConfirmModal, SectionHeader, type ViewMode } from '../components/common/PageComponents';
 
 const UNKNOWN_FIND_QUEUE_CONCURRENCY = 1;
 const UNKNOWN_FIND_QUEUE_PAUSE_MS = 35;
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}
 
 function pauseUnknownFindQueue(ms = 0): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));

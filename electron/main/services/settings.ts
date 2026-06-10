@@ -19,7 +19,6 @@ const DEFAULT_SETTINGS: AppSettings = {
     autoEnableDownloads: false,
     steamLaunchOptions: '',
     activeProfileId: null,
-    autoSaveProfile: false,
     confirmProfileUpdate: true,
     experimentalStats: false,
     experimentalCrosshair: false,

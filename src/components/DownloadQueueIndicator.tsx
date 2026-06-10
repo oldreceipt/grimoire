@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Loader2, X, ChevronUp, ChevronDown } from 'lucide-react';
 import type { DownloadQueueItem, DownloadProgressData } from '../types/electron';
+import { formatBytes } from '../lib/formatBytes';
 
 interface DownloadQueueIndicatorProps {
     className?: string;
@@ -15,14 +16,6 @@ interface QueueState {
 interface SpeedSample {
     time: number;
     bytes: number;
-}
-
-function formatBytes(bytes: number): string {
-    if (bytes <= 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-    const n = bytes / Math.pow(1024, i);
-    return `${n < 10 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
 }
 
 function formatSpeed(bytesPerSec: number): string {

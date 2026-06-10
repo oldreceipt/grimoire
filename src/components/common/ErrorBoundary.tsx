@@ -77,11 +77,3 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         return this.props.children;
     }
 }
-
-/**
- * Page-level error boundary with route-aware reset.
- * Automatically resets when the page changes.
- */
-export function PageErrorBoundary({ children }: { children: ReactNode }) {
-    return <ErrorBoundary>{children}</ErrorBoundary>;
-}

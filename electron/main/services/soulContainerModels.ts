@@ -207,11 +207,6 @@ export async function exportSoulModel(
     return getSoulModelInfo(metaKey);
 }
 
-/** Delete a soul-container mod's exported model. */
-export async function clearSoulModel(key: string): Promise<void> {
-    await fs.rm(modelDir(key), { recursive: true, force: true });
-}
-
 /**
  * Register the `grimoire-soul:` scheme handler. URLs look like
  * `grimoire-soul://m/<encoded-metaKey>/model.glb` (the `?v=` cache-buster is
