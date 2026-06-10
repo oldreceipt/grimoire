@@ -88,7 +88,7 @@ import { EmptyState } from '../components/common/PageComponents';
 import ModDetailsModal from '../components/ModDetailsModal';
 import ImportCollectionModal from '../components/ImportCollectionModal';
 import ImportProfileDialog from '../components/profiles/ImportProfileDialog';
-import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition, getHeroChipIconPath } from '../lib/lockerUtils';
+import { inferHeroFromTitle, getHeroRenderPath, getHeroFacePosition, getHeroChipIconPath, findCategoryByName } from '../lib/lockerUtils';
 import { formatAbsoluteDate, formatRelativeDate } from '../lib/dates';
 
 const DEFAULT_PER_PAGE = 36;
@@ -955,22 +955,6 @@ function renderErrorWithLinks(text: string): React.ReactNode {
     }
     return <span key={i}>{part}</span>;
   });
-}
-
-function findCategoryByName(
-  nodes: GameBananaCategoryNode[],
-  name: string
-): GameBananaCategoryNode | null {
-  for (const node of nodes) {
-    if (node.name.toLowerCase() === name.toLowerCase()) {
-      return node;
-    }
-    if (node.children) {
-      const match = findCategoryByName(node.children, name);
-      if (match) return match;
-    }
-  }
-  return null;
 }
 
 export default function Browse() {

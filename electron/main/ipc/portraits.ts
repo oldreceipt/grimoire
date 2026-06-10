@@ -5,7 +5,6 @@ import { applyHeroCard, revertHeroCard, getActiveHeroCard } from '../services/he
 import {
     getSoulModelInfo,
     exportSoulModel,
-    clearSoulModel,
     type SoulModelInfo,
 } from '../services/soulContainerModels';
 import {
@@ -75,13 +74,6 @@ ipcMain.handle(
         const deadlockPath = getActiveDeadlockPath();
         if (!deadlockPath) throw new Error('No Deadlock path configured');
         return exportSoulModel(deadlockPath, metaKey);
-    }
-);
-
-ipcMain.handle(
-    'clear-soul-model',
-    async (_, key: string): Promise<void> => {
-        return clearSoulModel(key);
     }
 );
 

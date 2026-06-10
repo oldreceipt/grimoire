@@ -114,8 +114,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('get-soul-model-info', key),
     exportSoulModel: (metaKey: string) =>
         ipcRenderer.invoke('export-soul-model', metaKey),
-    clearSoulModel: (key: string) =>
-        ipcRenderer.invoke('clear-soul-model', key),
     getHeroPoseInfo: (heroName: string, skinSources?: unknown[]) =>
         ipcRenderer.invoke('get-hero-pose-info', heroName, skinSources),
     exportHeroPose: (heroName: string, skinSources?: unknown[], fallbackSkinMetaKey?: string) =>
@@ -387,9 +385,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Diagnostics
     diagnostics: {
-        getLogPath: () => ipcRenderer.invoke('diagnostics:getLogPath'),
-        openLogsFolder: () => ipcRenderer.invoke('diagnostics:openLogsFolder'),
-        saveReport: () => ipcRenderer.invoke('diagnostics:saveReport'),
         buildReport: (description: string, options?: { includeFullLog?: boolean }) =>
             ipcRenderer.invoke('diagnostics:buildReport', description, options),
     },

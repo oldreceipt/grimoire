@@ -156,10 +156,6 @@ export function getHeroNamePath(name: string): string {
   return getAssetPath(`/locker/names/${heroAssetBaseName(name)}_name.png`);
 }
 
-export function getHeroIconPath(name: string): string {
-  return getAssetPath(`/heroes/icons/${heroIconAssetName(name)}.png`);
-}
-
 export function getHeroChipIconPath(name: string): string {
   return getAssetPath(`/heroes/chip-icons/${heroIconAssetName(name)}.png`);
 }

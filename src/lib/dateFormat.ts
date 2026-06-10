@@ -24,10 +24,6 @@ export function setDateFormat(format: DateFormat | undefined | null): void {
   }
 }
 
-export function getDateFormat(): DateFormat {
-  return currentFormat;
-}
-
 /** Format a Date into the user's chosen day/month/year order. Returns '' for an
  *  invalid date so callers can guard cleanly. */
 export function formatDateParts(date: Date, format: DateFormat = currentFormat): string {
