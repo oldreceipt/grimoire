@@ -24,7 +24,10 @@ import {
   Square,
   Volume2,
   VolumeX,
+  Image,
+  ImageOff,
 } from 'lucide-react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import {
   getConflicts,
   getGameRunningStatus,
@@ -45,6 +48,7 @@ import { useAppStore } from '../stores/appStore';
 import UpdateModal from './UpdateModal';
 
 const COLLAPSED_KEY = 'grimoire:sidebar-collapsed';
+const LAUNCH_BG_HIDDEN_KEY = 'grimoire:launch-bg-hidden';
 const LABEL_TRANSITION_MS = 180;
 const DISCOVER_LAST_SEEN_KEY = 'grimoire:discover:last-seen-created-at';
 const DISCOVER_BADGE_POLL_MS = 2 * 60 * 1000;
@@ -57,6 +61,11 @@ const PREVIEW_VOLUME_BG = getAssetPath('/sidebar/preview-volume-bg.jpg');
 function readCollapsedPreference(): boolean {
   if (typeof window === 'undefined') return false;
   return localStorage.getItem(COLLAPSED_KEY) === '1';
+}
+
+function readLaunchBgHiddenPreference(): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(LAUNCH_BG_HIDDEN_KEY) === '1';
 }
 
 function readDiscoverLastSeen(): number | null {
@@ -204,6 +213,7 @@ export default function Sidebar() {
   // Persisted via localStorage so it survives reloads without round-tripping
   // through the main-process settings file. This is pure UI state.
   const [collapsed, setCollapsed] = useState<boolean>(readCollapsedPreference);
+  const [launchBgHidden, setLaunchBgHidden] = useState<boolean>(readLaunchBgHiddenPreference);
   const [labelsVisible, setLabelsVisible] = useState<boolean>(() => !readCollapsedPreference());
   const [labelMounted, setLabelMounted] = useState<boolean>(() => !readCollapsedPreference());
   const [showPreviewVolume, setShowPreviewVolume] = useState(false);
@@ -574,6 +584,18 @@ export default function Sidebar() {
       window.removeEventListener('resize', measureActiveNavItem);
     };
   }, [activeNavIndex, measureActiveNavItem]);
+
+  const toggleLaunchBg = () => {
+    setLaunchBgHidden((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(LAUNCH_BG_HIDDEN_KEY, next ? '1' : '0');
+      } catch {
+        /* quota / private mode */
+      }
+      return next;
+    });
+  };
 
   const handleLaunchModded = async () => {
     if (launchPending || stopPending) return;
@@ -948,7 +970,9 @@ export default function Sidebar() {
               )}
             </button>
           ) : (
-            <>
+            <ContextMenu.Root>
+              <ContextMenu.Trigger asChild>
+                <span className="contents">
           <button
             onClick={handleLaunchModded}
             disabled={!canLaunch || !!launchPending || stopPending}
@@ -961,7 +985,7 @@ export default function Sidebar() {
             }
             className="group relative flex w-full h-10 items-center overflow-hidden rounded-sm bg-bg-tertiary text-text-primary ring-1 ring-white/10 hover:ring-white/25 text-sm font-semibold tracking-wide transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-white/35 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <LaunchButtonBackdrop src={LAUNCH_MODDED_BG} position="center 45%" />
+            {!launchBgHidden && <LaunchButtonBackdrop src={LAUNCH_MODDED_BG} position="center 45%" />}
             <span className={`relative z-10 ${actionIconClass}`}>
               {launchPending === 'modded' ? (
                 <Loader2 className="w-[18px] h-[18px] animate-spin" />
@@ -986,9 +1010,11 @@ export default function Sidebar() {
                   ? t('sidebar.launch.vanillaStash')
                   : t('sidebar.launch.vanillaDefault')
             }
-            className="group relative flex w-full h-8 items-center overflow-hidden rounded-sm text-text-primary/85 ring-1 ring-white/10 hover:text-text-primary hover:ring-amber-400/35 text-xs font-medium tracking-wide transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-accent/40 disabled:opacity-60 disabled:cursor-not-allowed"
+            className={`group relative flex w-full h-8 items-center overflow-hidden rounded-sm text-text-primary/85 ring-1 ring-white/10 hover:text-text-primary hover:ring-amber-400/35 text-xs font-medium tracking-wide transition-colors duration-200 cursor-pointer focus:outline-none focus-visible:ring-accent/40 disabled:opacity-60 disabled:cursor-not-allowed ${
+              launchBgHidden ? 'bg-bg-tertiary' : ''
+            }`}
           >
-            <LaunchButtonBackdrop src={LAUNCH_VANILLA_BG} position="center 48%" warm />
+            {!launchBgHidden && <LaunchButtonBackdrop src={LAUNCH_VANILLA_BG} position="center 48%" warm />}
             <span className={`relative z-10 ${actionIconClass}`}>
               {launchPending === 'vanilla' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -1002,7 +1028,29 @@ export default function Sidebar() {
               </span>
             )}
           </button>
-            </>
+                </span>
+              </ContextMenu.Trigger>
+              <ContextMenu.Portal>
+                <ContextMenu.Content
+                  collisionPadding={12}
+                  className="z-[80] min-w-52 rounded-lg border border-white/10 bg-bg-secondary/95 p-1.5 text-sm text-text-primary shadow-2xl shadow-black/50 backdrop-blur-md animate-fade-in"
+                >
+                  <ContextMenu.Item
+                    onSelect={toggleLaunchBg}
+                    className="flex h-8 select-none items-center gap-2 rounded-md px-2 outline-none transition-colors cursor-pointer text-text-primary focus:bg-white/10 data-[highlighted]:bg-white/10"
+                  >
+                    {launchBgHidden ? (
+                      <Image className="h-4 w-4 flex-shrink-0" />
+                    ) : (
+                      <ImageOff className="h-4 w-4 flex-shrink-0" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">
+                      {launchBgHidden ? t('sidebar.launch.showArt') : t('sidebar.launch.hideArt')}
+                    </span>
+                  </ContextMenu.Item>
+                </ContextMenu.Content>
+              </ContextMenu.Portal>
+            </ContextMenu.Root>
           )}
         </div>
 

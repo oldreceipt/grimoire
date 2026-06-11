@@ -60,10 +60,11 @@ import {
   FileText,
   Banana,
 } from 'lucide-react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../stores/appStore';
 import { getActiveDeadlockPath } from '../lib/appSettings';
-import { getConflicts, openModsFolder, readImageDataUrl, showOpenDialog, getModDetails, getModFileList, downloadMod, createSnapshot, detectUnknownModFilters, detectUnknownModCacheBulk, cancelUnknownModDetection, onUnknownModDetectionProgress, applyUnknownModMatch, applyUnknownCustomMod, associateUnknownMod, listUnknownModFiles, browseMods, mergeMods, unmergeMod, extractMergeSource, reorderMods as apiReorderMods, setModIgnoreUpdates, getLockerOverview } from '../lib/api';
+import { getConflicts, openModsFolder, readImageDataUrl, showOpenDialog, getModDetails, getModFileList, downloadMod, createSnapshot, detectUnknownModFilters, detectUnknownModCacheBulk, cancelUnknownModDetection, onUnknownModDetectionProgress, applyUnknownModMatch, applyUnknownCustomMod, associateUnknownMod, listUnknownModFiles, browseMods, mergeMods, unmergeMod, extractMergeSource, reorderMods as apiReorderMods, setModIgnoreUpdates, getLockerOverview, revealModInFolder } from '../lib/api';
 import type { UnmergeModResult } from '../lib/api';
 import type { ModConflict } from '../lib/api';
 import type { Mod, GlobalModType, UnknownModDetectionProgress, UnknownModFilterGuess, MergedModSource, AssociateUnknownModArgs } from '../types/mod';
@@ -4808,6 +4809,7 @@ interface ModMediaPreviewProps {
   audioPlayerClassName: string;
   onOpenDetails?: () => void;
   isGroupCard: boolean;
+  onRevealInFolder?: () => void;
 }
 
 function SoundPlaceholder() {
@@ -4846,6 +4848,7 @@ function ModMediaPreview({
   audioPlayerClassName,
   onOpenDetails,
   isGroupCard,
+  onRevealInFolder,
 }: ModMediaPreviewProps) {
   const isSound = mod.sourceSection === 'Sound' && !!mod.audioUrl;
   const canOpen = !!onOpenDetails;
@@ -4874,10 +4877,11 @@ function ModMediaPreview({
       className="w-full h-full"
       imageClassName="origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
       mergedSources={mod.merged?.sources}
+      onRevealInFolder={onRevealInFolder}
     />
   );
   const soundMedia = mod.thumbnailUrl ? image : soundHeroRenderUrl ? (
-    <ImageContextMenu src={soundHeroRenderUrl} alt={soundHeroName ?? mod.name}>
+    <ImageContextMenu src={soundHeroRenderUrl} alt={soundHeroName ?? mod.name} onRevealInFolder={onRevealInFolder}>
       <img
         src={soundHeroRenderUrl}
         alt={soundHeroName ?? mod.name}
@@ -4980,6 +4984,7 @@ interface ModListRowContentProps {
   tagIconClassName: string;
   technicalMetaClasses: string;
   actions: ReactNode;
+  onRevealInFolder?: () => void;
 }
 
 function lockerHeroSourceLabel(source: Mod['lockerHeroSource']): string {
@@ -5118,6 +5123,7 @@ function ModListRowContent({
   tagIconClassName,
   technicalMetaClasses,
   actions,
+  onRevealInFolder,
 }: ModListRowContentProps) {
   const isSound = mod.sourceSection === 'Sound' && !!mod.audioUrl;
   const canOpen = !!onOpenDetails;
@@ -5163,7 +5169,7 @@ function ModListRowContent({
         onDragStart={stopMediaDrag}
       >
         {listHeroRenderUrl ? (
-          <ImageContextMenu src={listHeroRenderUrl} alt={listHeroName ?? mod.name}>
+          <ImageContextMenu src={listHeroRenderUrl} alt={listHeroName ?? mod.name} onRevealInFolder={onRevealInFolder}>
             <img
               src={listHeroRenderUrl}
               alt={listHeroName ?? mod.name}
@@ -5181,6 +5187,7 @@ function ModListRowContent({
             nsfw={mod.nsfw}
             hideNsfw={hideNsfwPreviews}
             className="w-full h-full"
+            onRevealInFolder={onRevealInFolder}
             imageClassName="origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
             mergedSources={mod.merged?.sources}
           />
@@ -5283,6 +5290,14 @@ function ModCard({
 }: ModCardProps) {
   const hasConflicts = conflicts.length > 0;
   const isGroupCard = !!group;
+  // Shared by the card's own context menu and the image context menus on the
+  // thumbnail (which swallow right-clicks before they reach the card).
+  const handleRevealInFolder = () => {
+    revealModInFolder(mod.id).catch((err) => {
+      console.error('[Installed] Failed to reveal mod in folder:', err);
+    });
+  };
+  const revealAction = selectMode ? undefined : handleRevealInFolder;
   const variantStatusLabel = group ? `${group.enabledCount}/${group.variantCount}` : null;
   const enabledTitle = group?.enabledLabels.join(', ') ?? '';
   const variantStatusTitle = group
@@ -5759,6 +5774,11 @@ function ModCard({
     </div>
   );
   return (
+    <ContextMenu.Root>
+      {/* Disabled in select mode so right-click doesn't fight the full-card
+          select overlay. Thumbnail right-clicks never reach here: the image
+          context menu's trigger stops propagation. */}
+      <ContextMenu.Trigger asChild disabled={selectMode}>
     <div
       data-mod-entry-key={entryKey}
       className={`group/card relative rounded-[10px] border transform-gpu transition-[transform,box-shadow,border-color,background-color,opacity] duration-200 ease-out ${isList ? stateClasses : glassStateClasses} ${mergedStackShadow} ${updateAvailable ? 'update-stripes' : ''} ${shellClasses} ${selected ? 'ring-2 ring-accent ring-offset-2 ring-offset-bg-primary' : ''}`}
@@ -5808,6 +5828,7 @@ function ModCard({
             tagIconClassName={tagIconClassName}
             technicalMetaClasses={technicalMetaClasses}
             actions={actions}
+            onRevealInFolder={revealAction}
           />
         ) : (
         <>
@@ -5904,6 +5925,7 @@ function ModCard({
             audioPlayerClassName={audioPlayerClassName}
             onOpenDetails={onOpenDetails}
             isGroupCard={isGroupCard}
+            onRevealInFolder={revealAction}
           />
         );
         })()}
@@ -5980,6 +6002,22 @@ function ModCard({
       </div>
 
     </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content
+          collisionPadding={12}
+          className="z-[80] min-w-52 rounded-lg border border-white/10 bg-bg-secondary/95 p-1.5 text-sm text-text-primary shadow-2xl shadow-black/50 backdrop-blur-md animate-fade-in"
+        >
+          <ContextMenu.Item
+            onSelect={handleRevealInFolder}
+            className="flex h-8 select-none items-center gap-2 rounded-md px-2 outline-none transition-colors cursor-pointer text-text-primary focus:bg-white/10 data-[highlighted]:bg-white/10"
+          >
+            <FolderOpen className="h-4 w-4 flex-shrink-0" />
+            <span className="min-w-0 flex-1 truncate">Reveal in folder</span>
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 

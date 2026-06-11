@@ -70,6 +70,10 @@ export async function deleteMod(modId: string): Promise<void> {
   return window.electronAPI.deleteMod(modId);
 }
 
+export async function revealModInFolder(modId: string): Promise<void> {
+  return window.electronAPI.revealModInFolder(modId);
+}
+
 export async function detectUnknownModFilters(modId: string, requestId?: string): Promise<UnknownModFilterGuess> {
   return window.electronAPI.detectUnknownModFilters(modId, requestId);
 }

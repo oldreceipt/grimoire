@@ -14,6 +14,10 @@ import Autoexec from './pages/Autoexec';
 import Stats from './pages/Stats';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { useSocialStore } from './stores/socialStore';
+import { useAppStore } from './stores/appStore';
+import { getAssetPath } from './lib/assetPath';
+
+const GASSY_SOUND = getAssetPath('/sounds/gassy.mp3');
 
 export default function App() {
   // Swallow stray file drops so Electron doesn't navigate the window to the
@@ -26,6 +30,24 @@ export default function App() {
       window.removeEventListener('dragover', swallow);
       window.removeEventListener('drop', swallow);
     };
+  }, []);
+
+  // Easter egg: typing "gassy" anywhere plays the gassy sound.
+  useEffect(() => {
+    let buffer = '';
+    let audio: HTMLAudioElement | null = null;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+      buffer = (buffer + e.key.toLowerCase()).slice(-5);
+      if (buffer !== 'gassy') return;
+      buffer = '';
+      audio?.pause();
+      audio = new Audio(GASSY_SOUND);
+      audio.volume = useAppStore.getState().soundVolume;
+      void audio.play().catch(() => {});
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   // Pull the persisted social-session state into the renderer once at boot.

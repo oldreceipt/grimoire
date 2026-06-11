@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { promises as fs, existsSync } from 'fs';
 import { extname } from 'path';
 import { loadSettings, saveSettings } from '../services/settings';
@@ -312,6 +312,20 @@ ipcMain.handle('disable-mod', async (_, modId: string): Promise<Mod> => {
     }
     const mod = await disableMod(deadlockPath, modId);
     return enrichMod(mod);
+});
+
+// reveal-mod-in-folder
+ipcMain.handle('reveal-mod-in-folder', async (_, modId: string): Promise<void> => {
+    const deadlockPath = getActiveDeadlockPath();
+    if (!deadlockPath) {
+        throw new Error('No Deadlock path configured');
+    }
+    const mods = await scanMods(deadlockPath);
+    const mod = mods.find((m) => m.id === modId);
+    if (!mod) {
+        throw new Error(`Mod not found: ${modId}`);
+    }
+    shell.showItemInFolder(mod.path);
 });
 
 // delete-mod

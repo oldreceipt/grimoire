@@ -1,17 +1,21 @@
 import { type ReactNode, useMemo, useState } from 'react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { Check, ExternalLink, ImageDown, Link, Loader2, type LucideIcon } from 'lucide-react';
+import { Check, ExternalLink, FolderOpen, ImageDown, Link, Loader2, type LucideIcon } from 'lucide-react';
 
 interface ImageContextMenuProps {
   src: string;
   alt: string;
   copySrc?: string;
+  /** When set, appends a "Reveal mod in folder" item. The image menu swallows
+   *  right-clicks (its trigger stops propagation), so card surfaces that offer
+   *  reveal-in-folder pass it down here too to keep the action reachable. */
+  onRevealInFolder?: () => void;
   children: ReactNode;
 }
 
 type CopyState = 'idle' | 'copying' | 'copied' | 'failed';
 
-export default function ImageContextMenu({ src, alt, copySrc, children }: ImageContextMenuProps) {
+export default function ImageContextMenu({ src, alt, copySrc, onRevealInFolder, children }: ImageContextMenuProps) {
   const [imageCopyState, setImageCopyState] = useState<CopyState>('idle');
   const [urlCopyState, setUrlCopyState] = useState<CopyState>('idle');
   const source = useMemo(() => resolveImageSource(copySrc ?? src), [copySrc, src]);
@@ -140,6 +144,14 @@ export default function ImageContextMenu({ src, alt, copySrc, children }: ImageC
               <ContextMenu.Separator className="my-1 h-px bg-white/10" />
               <MenuItem icon={ExternalLink} onSelect={openImage}>
                 Open image
+              </MenuItem>
+            </>
+          )}
+          {onRevealInFolder && (
+            <>
+              <ContextMenu.Separator className="my-1 h-px bg-white/10" />
+              <MenuItem icon={FolderOpen} onSelect={onRevealInFolder}>
+                Reveal mod in folder
               </MenuItem>
             </>
           )}

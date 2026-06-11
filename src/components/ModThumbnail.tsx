@@ -23,6 +23,8 @@ interface ModThumbnailProps {
    *  is still used when the user uploaded an override thumbnail (we treat
    *  any non-empty `src` as the explicit choice). */
   mergedSources?: MergedModSource[];
+  /** Forwarded to the image context menu as a "Reveal mod in folder" item. */
+  onRevealInFolder?: () => void;
 }
 
 export default function ModThumbnail({
@@ -37,6 +39,7 @@ export default function ModThumbnail({
   fallback,
   heroPortrait,
   mergedSources,
+  onRevealInFolder,
 }: ModThumbnailProps) {
   const shouldBlur = nsfw && hideNsfw;
   // Hero portrait wins over the uploader's thumbnail. NSFW blur is suppressed
@@ -54,6 +57,7 @@ export default function ModThumbnail({
         alt={alt}
         className={className}
         shouldBlur={shouldBlur}
+        onRevealInFolder={onRevealInFolder}
       />
     );
   }
@@ -94,7 +98,7 @@ export default function ModThumbnail({
   if (resolvedBlur) return thumbnail;
 
   return (
-    <ImageContextMenu src={resolvedSrc} alt={alt}>
+    <ImageContextMenu src={resolvedSrc} alt={alt} onRevealInFolder={onRevealInFolder}>
       {thumbnail}
     </ImageContextMenu>
   );
@@ -105,6 +109,7 @@ interface MergedCollageProps {
   alt: string;
   className: string;
   shouldBlur?: boolean;
+  onRevealInFolder?: () => void;
 }
 
 /**
@@ -113,7 +118,7 @@ interface MergedCollageProps {
  * cells. Grid shape is picked to keep cells roughly square on a wide card;
  * with more than 16 thumbnails the last cell becomes a "+N more" tile.
  */
-function MergedCollage({ sources, alt, className, shouldBlur }: MergedCollageProps) {
+function MergedCollage({ sources, alt, className, shouldBlur, onRevealInFolder }: MergedCollageProps) {
   const { cells, cols } = buildCollage(sources);
   return (
     <div className={`relative overflow-hidden bg-bg-tertiary ${className}`}>
@@ -134,7 +139,7 @@ function MergedCollage({ sources, alt, className, shouldBlur }: MergedCollagePro
                   className="block w-full h-full object-cover blur-xl scale-110"
                 />
               ) : (
-                <ImageContextMenu src={cell.url} alt={alt}>
+                <ImageContextMenu src={cell.url} alt={alt} onRevealInFolder={onRevealInFolder}>
                   <img
                     src={cell.url}
                     alt=""

@@ -48,6 +48,7 @@ export default function Servers() {
 
   const [query, setQuery] = useState('');
   const [region, setRegion] = useState<string>('all');
+  const [mapFilter, setMapFilter] = useState<string>('all');
   const [hideFull, setHideFull] = useState(false);
   const [connectTarget, setConnectTarget] = useState<DeadworksServer | null>(null);
 
@@ -89,14 +90,21 @@ export default function Servers() {
     return ['all', ...[...set].sort()];
   }, [servers]);
 
+  const maps = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of servers) if (s.map) set.add(s.map);
+    return ['all', ...[...set].sort()];
+  }, [servers]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return servers
       .filter((s) => (region === 'all' ? true : s.region === region))
+      .filter((s) => (mapFilter === 'all' ? true : s.map === mapFilter))
       .filter((s) => (hideFull ? s.player_count < s.max_players : true))
       .filter((s) => (q ? s.name.toLowerCase().includes(q) || s.map.toLowerCase().includes(q) : true))
       .sort((a, b) => b.player_count - a.player_count || a.name.localeCompare(b.name));
-  }, [servers, query, region, hideFull]);
+  }, [servers, query, region, mapFilter, hideFull]);
 
   return (
     <div className="space-y-5 p-6">
@@ -158,6 +166,23 @@ export default function Servers() {
           </div>
         )}
 
+        {maps.length > 1 && (
+          <div className="flex items-center gap-1.5 rounded-sm border border-border bg-bg-tertiary px-2 py-1.5">
+            <MapPin size={14} className="text-text-secondary" />
+            <select
+              value={mapFilter}
+              onChange={(e) => setMapFilter(e.target.value)}
+              className="bg-transparent text-sm text-text-primary focus:outline-none"
+            >
+              {maps.map((m) => (
+                <option key={m} value={m} className="bg-bg-secondary">
+                  {m === 'all' ? 'All maps' : m}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <Button variant={hideFull ? 'primary' : 'secondary'} size="sm" onClick={() => setHideFull((v) => !v)}>
           Has space
         </Button>
@@ -182,7 +207,7 @@ export default function Servers() {
           description={
             servers.length === 0
               ? 'No Deadworks servers are currently registered. Check back later, or host one (server hosting requires Windows).'
-              : 'Try clearing the search or region filter.'
+              : 'Try clearing the search, region, or map filter.'
           }
         />
       ) : (

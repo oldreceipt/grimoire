@@ -51,7 +51,9 @@
       "moddedDefault": "Launch Deadlock with mods active",
       "vanillaStash": "A vanilla session is already active. Restore mods first.",
       "vanillaDefault": "Temporarily stash mods, launch Deadlock via Steam, then auto-restore after the game starts",
-      "stopTitle": "Stop the running Deadlock process"
+      "stopTitle": "Stop the running Deadlock process",
+      "hideArt": "Hide background art",
+      "showArt": "Show background art"
     },
     "vanilla": {
       "stashed": "Vanilla: {{count}} stashed",
