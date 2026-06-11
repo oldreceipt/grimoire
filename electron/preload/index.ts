@@ -56,6 +56,8 @@ import type {
 
 // Expose the API to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
+    platform: process.platform,
+
     // Settings
     detectDeadlock: () => ipcRenderer.invoke('detect-deadlock'),
     validateDeadlockPath: (path: string) => ipcRenderer.invoke('validate-deadlock-path', path),

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, session, protocol } from 'electron';
+import { app, BrowserWindow, shell, session, protocol, nativeTheme } from 'electron';
 import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
@@ -19,6 +19,11 @@ protocol.registerSchemesAsPrivileged([
         privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
     },
 ]);
+
+// The app is dark-only, so pin Chromium and the OS chrome to dark regardless
+// of the system theme. On Windows this stops the native frame/menus rendering
+// light, and it makes prefers-color-scheme report dark in the renderer.
+nativeTheme.themeSource = 'dark';
 
 // Initialize the file logger before anything else so console.* calls in IPC
 // and service modules (imported below) flow into the rolling log file from
@@ -134,8 +139,23 @@ function createWindow(): void {
         minHeight: 600,
         title: 'Grimoire',
         show: false, // Don't show until ready to prevent white flash
-        backgroundColor: '#1e1e2e', // Dark background matching app theme
+        backgroundColor: '#0f0f0f', // Dark background matching app theme
         autoHideMenuBar: true,
+        // On Windows the native frame draws a light title bar that clashes
+        // with the dark UI. Hide it and let the OS paint only the
+        // min/max/close controls (the overlay) in app colors; the renderer
+        // supplies the drag region and title via WindowsTitleBar. Linux
+        // keeps its window-manager frame.
+        ...(process.platform === 'win32'
+            ? {
+                  titleBarStyle: 'hidden' as const,
+                  titleBarOverlay: {
+                      color: '#0f0f0f',
+                      symbolColor: '#a1a1aa',
+                      height: 36,
+                  },
+              }
+            : {}),
         webPreferences: {
             preload: join(__dirname, '../preload/index.cjs'),
             contextIsolation: true,

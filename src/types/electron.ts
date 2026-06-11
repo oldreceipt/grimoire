@@ -298,6 +298,11 @@ export interface ReleaseNoteInfo {
 }
 
 export interface ElectronAPI {
+    // Host platform ('win32', 'linux', ...), captured in the preload. The
+    // renderer uses it to decide whether to draw the custom Windows title
+    // bar strip (the native frame is hidden on Windows only).
+    platform: string;
+
     // Settings
     detectDeadlock: () => Promise<string | null>;
     validateDeadlockPath: (path: string) => Promise<boolean>;
