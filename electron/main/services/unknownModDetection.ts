@@ -133,6 +133,10 @@ const CANDIDATE_PAGE_SIZE = 50;
 const MAX_LIVE_SEARCH_PAGES = 8;
 const LOCAL_FINGERPRINT_CACHE_MAX = 128;
 const CACHE_FINGERPRINT_CONCURRENCY = 8;
+// Concurrent archive probes within one results page. Probes hit CDN download
+// URLs directly (not the rate-limited GameBanana API), but each one can issue
+// several sequential range requests, so keep this modest.
+const PROBE_CONCURRENCY = 4;
 const CATEGORIES = {
     skins: 33295,
     modelReplacement: 33154,
@@ -243,6 +247,35 @@ const localFingerprintCache = new Map<string, {
     fingerprint: LocalVpkFingerprint;
 }>();
 
+/**
+ * Run `fn` over `items` with at most `limit` in flight. Per-item errors must
+ * be handled inside `fn`; anything `fn` throws (deliberately: the abort error
+ * from throwIfAborted) rejects the whole call, abandoning queued items.
+ */
+async function mapWithConcurrency<T>(
+    items: T[],
+    limit: number,
+    fn: (item: T) => Promise<void>
+): Promise<void> {
+    let nextIndex = 0;
+    const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (nextIndex < items.length) {
+            const item = items[nextIndex++];
+            await fn(item);
+        }
+    });
+    await Promise.all(runners);
+}
+
+/**
+ * A probe failure that says nothing about the archive itself (rate limiting,
+ * CDN hiccup). Stamping these `failed` would freeze the file behind the
+ * failed-retry window; leaving the row pending lets the next run re-probe.
+ */
+function isTransientProbeError(err: unknown): boolean {
+    return /Archive range request failed: (?:429|5\d\d)\b/.test(errorMessage(err));
+}
+
 export async function detectUnknownModFilters(
     modId: string,
     fileName: string,
@@ -348,7 +381,14 @@ export async function detectUnknownModFilters(
                     });
                 discoveredFiles += files.length;
 
-                for (const file of files) {
+                // Probe this page's archives concurrently. Counters and
+                // bestMatch are only mutated synchronously after each await,
+                // so they stay consistent across interleaved probes. A match
+                // does NOT cancel in-flight probes: the page finishes in the
+                // caching-remaining phase, exactly like the sequential loop
+                // did, so the CRC cache still warms. User cancel propagates
+                // out of throwIfAborted/the fetches and abandons queued files.
+                const probeFile = async (file: (typeof files)[number]): Promise<void> => {
                     throwIfAborted(options.signal);
                     if (!shouldProbeArchive(file)) {
                         checkedFiles++;
@@ -363,7 +403,7 @@ export async function detectUnknownModFilters(
                             currentFileName: file.fileName,
                             result: bestMatch ? { ...base, crcMatch: bestMatch } : undefined,
                         });
-                        continue;
+                        return;
                     }
 
                     emit({
@@ -424,13 +464,17 @@ export async function detectUnknownModFilters(
                         }
                     } catch (err) {
                         throwIfAborted(options.signal);
-                        updateUnknownCrcFileStatus(file.fileId, {
-                            status: 'failed',
-                            archiveType: null,
-                            bytesFetched: 0,
-                            error: errorMessage(err),
-                        });
-                        console.warn(`[UnknownCrc] Failed ${file.section}/${file.modId} file ${file.fileId} (${file.fileName}): ${errorMessage(err)}`);
+                        if (isTransientProbeError(err)) {
+                            console.warn(`[UnknownCrc] Transient failure for ${file.section}/${file.modId} file ${file.fileId} (${file.fileName}), leaving pending: ${errorMessage(err)}`);
+                        } else {
+                            updateUnknownCrcFileStatus(file.fileId, {
+                                status: 'failed',
+                                archiveType: null,
+                                bytesFetched: 0,
+                                error: errorMessage(err),
+                            });
+                            console.warn(`[UnknownCrc] Failed ${file.section}/${file.modId} file ${file.fileId} (${file.fileName}): ${errorMessage(err)}`);
+                        }
                     } finally {
                         checkedFiles++;
                         emit({
@@ -445,7 +489,9 @@ export async function detectUnknownModFilters(
                             result: bestMatch ? { ...base, crcMatch: bestMatch } : undefined,
                         });
                     }
-                }
+                };
+
+                await mapWithConcurrency(files, PROBE_CONCURRENCY, probeFile);
 
                 page++;
             }
