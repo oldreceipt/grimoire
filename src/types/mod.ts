@@ -771,4 +771,9 @@ export interface AppSettings {
    *  to the official Deadworks registry (api.deadworks.net) and can be repointed
    *  via settings.json at any deadworks-shaped relay (e.g. a future grimoire-relay). */
   deadworksRelayUrl?: string;
+  /** OptimizationLock performance config: apply Sqooky's community fps preset
+   *  onto gameinfo.gi from a Settings card. Applied-state lives in a sidecar
+   *  file next to gameinfo.gi (main-process owned), not in settings, so a
+   *  renderer settings save can never clobber it. */
+  experimentalPerformanceConfig?: boolean;
 }

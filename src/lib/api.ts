@@ -498,6 +498,18 @@ export async function fixGameinfo(): Promise<{ configured: boolean; message: str
   return window.electronAPI.fixGameinfo();
 }
 
+export async function getPerformanceConfigStatus(): Promise<PerformanceConfigStatus> {
+  return window.electronAPI.getPerformanceConfigStatus();
+}
+
+export async function applyPerformanceConfig(): Promise<PerformanceConfigStatus> {
+  return window.electronAPI.applyPerformanceConfig();
+}
+
+export async function removePerformanceConfig(): Promise<PerformanceConfigStatus> {
+  return window.electronAPI.removePerformanceConfig();
+}
+
 export async function openModsFolder(): Promise<void> {
   return window.electronAPI.openModsFolder();
 }
@@ -583,7 +595,7 @@ export function conflictPairKey(a: string, b: string): string {
 // Profile wire types are single-sourced in types/electron.ts; re-exported
 // here to preserve this module's existing import surface.
 export type { Profile, ProfileMod, ProfileCrosshairSettings } from '../types/electron';
-import type { Profile, ProfileCrosshairSettings } from '../types/electron';
+import type { Profile, ProfileCrosshairSettings, PerformanceConfigStatus } from '../types/electron';
 
 export async function getProfiles(): Promise<Profile[]> {
   return window.electronAPI.getProfiles();

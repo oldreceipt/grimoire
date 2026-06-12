@@ -83,6 +83,7 @@ import './ipc/locker';
 import './ipc/previewCache';
 import './ipc/discord';
 import './ipc/servers';
+import './ipc/performanceConfig';
 
 import { initUpdater, checkForUpdates, getInstallSource } from './services/updater';
 import { runStartupRecovery } from './ipc/launch';

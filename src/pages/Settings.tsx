@@ -23,6 +23,7 @@ import { PageHeader, ConfirmModal } from '../components/common/PageComponents';
 import { ACCENT_PRESETS, DEFAULT_ACCENT_COLOR, applyAccentColor } from '../lib/accentColor';
 import { DEFAULT_SIDEBAR_HERO, HERO_NAMES_SORTED, getHeroChipIconPath } from '../lib/lockerUtils';
 import SocialAccountSection from '../components/social/SocialAccountSection';
+import PerformanceConfigCard from '../components/performance/PerformanceConfigCard';
 
 // GitHub Releases is the source of truth for changelogs. When we have local
 // release notes (an update is pending) we show them in-app; otherwise we link
@@ -1263,8 +1264,19 @@ export default function Settings() {
               label="Deadworks Servers"
               description="Browse and join Deadworks community dedicated servers from a Servers tab. Required map/addon content is downloaded automatically before connecting."
             />
+
+            <div className="h-px bg-white/5" />
+
+            <Toggle
+              checked={settings?.experimentalPerformanceConfig ?? false}
+              onChange={(checked) => settings && saveSettings({ ...settings, experimentalPerformanceConfig: checked })}
+              label="Performance Config"
+              description="One-click fps boost using Sqooky's community preset. Mods keep working; removable any time."
+            />
           </div>
         </Card>
+
+        {settings?.experimentalPerformanceConfig && <PerformanceConfigCard />}
 
         {/* Support */}
         <Card title="Support" icon={LifeBuoy} className="lg:col-span-2">

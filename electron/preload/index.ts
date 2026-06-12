@@ -238,6 +238,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cleanupAddons: () => ipcRenderer.invoke('cleanup-addons'),
     getGameinfoStatus: () => ipcRenderer.invoke('get-gameinfo-status'),
     fixGameinfo: () => ipcRenderer.invoke('fix-gameinfo'),
+    getPerformanceConfigStatus: () => ipcRenderer.invoke('get-performance-config-status'),
+    applyPerformanceConfig: () => ipcRenderer.invoke('apply-performance-config'),
+    removePerformanceConfig: () => ipcRenderer.invoke('remove-performance-config'),
     openModsFolder: () => ipcRenderer.invoke('open-mods-folder'),
     openGameFolder: () => ipcRenderer.invoke('open-game-folder'),
 
