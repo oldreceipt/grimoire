@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef, useLayoutEffect, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -43,7 +43,7 @@ import {
 } from '../lib/api';
 
 import { getAssetPath } from '../lib/assetPath';
-import { DEFAULT_SIDEBAR_HERO, getHeroFacePosition, getHeroRenderPath } from '../lib/lockerUtils';
+import { DEFAULT_SIDEBAR_HERO, getSidebarHeroImageStyle, getHeroRenderPath } from '../lib/lockerUtils';
 import { useAppStore } from '../stores/appStore';
 import UpdateModal from './UpdateModal';
 
@@ -117,10 +117,10 @@ function GrimoireTitleIcon() {
 
 function SidebarActiveBackdrop({
   heroSrc,
-  heroPositionX,
+  heroImageStyle,
 }: {
   heroSrc: string | null;
-  heroPositionX: number;
+  heroImageStyle: CSSProperties;
 }) {
   if (heroSrc) {
     return (
@@ -129,7 +129,7 @@ function SidebarActiveBackdrop({
           src={heroSrc}
           alt=""
           className="sidebar-active-backdrop__image h-full w-full object-cover opacity-75"
-          style={{ objectPosition: `${heroPositionX}% 18%` }}
+          style={heroImageStyle}
         />
         <span className="absolute inset-0 bg-gradient-to-r from-bg-primary/90 via-bg-primary/55 to-bg-primary/20" />
         <span className="absolute inset-0 bg-black/20" />
@@ -304,9 +304,7 @@ export default function Sidebar() {
   const sidebarHeroHighlightSrc = sidebarHeroHighlight
     ? getHeroRenderPath(sidebarHeroHighlight)
     : null;
-  const sidebarHeroHighlightX = sidebarHeroHighlight
-    ? getHeroFacePosition(sidebarHeroHighlight)
-    : 55;
+  const sidebarHeroImageStyle = getSidebarHeroImageStyle(sidebarHeroHighlight);
   const settingsActive = location.pathname.startsWith('/settings');
   const discoverActive = location.pathname.startsWith('/discover');
 
@@ -745,7 +743,7 @@ export default function Sidebar() {
             >
               <SidebarActiveBackdrop
                 heroSrc={sidebarHeroHighlightSrc}
-                heroPositionX={sidebarHeroHighlightX}
+                heroImageStyle={sidebarHeroImageStyle}
               />
             </div>
           )}
@@ -1108,7 +1106,7 @@ export default function Sidebar() {
           {settingsActive && (
             <SidebarActiveBackdrop
               heroSrc={sidebarHeroHighlightSrc}
-              heroPositionX={sidebarHeroHighlightX}
+              heroImageStyle={sidebarHeroImageStyle}
             />
           )}
           <span className={`relative z-10 ${actionIconClass}`}>

@@ -3486,7 +3486,7 @@ function ReadableBrowseModCard({
   const hasAudioPreview = Boolean(audioPreview);
   const inferredHero = inferHeroFromTitle(mod.name);
   const heroRenderUrl = isSoundSection && inferredHero ? getHeroRenderPath(inferredHero) : undefined;
-  const heroFacePos = inferredHero ? getHeroFacePosition(inferredHero) : 55;
+  const heroFacePosX = getHeroFacePosition(inferredHero).x;
   const shouldHideNsfw = Boolean(mod.nsfw && hideNsfwPreviews);
   const readableCardWidth = cardWidth ?? getReadableCardTargetWidth(cardSize);
   const readableDensity = getReadableDensity(readableCardWidth);
@@ -3539,7 +3539,7 @@ function ReadableBrowseModCard({
             loading="lazy"
             decoding="async"
             className="browse-card-media-zoom h-full w-full object-cover scale-105 blur-lg saturate-75"
-            style={{ objectPosition: `${heroFacePos}% 20%` }}
+            style={{ objectPosition: `${heroFacePosX}% 20%` }}
           />
         ) : (
           <ImageContextMenu src={heroRenderUrl} alt={inferredHero ?? mod.name}>
@@ -3549,7 +3549,7 @@ function ReadableBrowseModCard({
               loading="lazy"
               decoding="async"
               className="browse-card-media-zoom h-full w-full object-cover"
-              style={{ objectPosition: `${heroFacePos}% 20%` }}
+              style={{ objectPosition: `${heroFacePosX}% 20%` }}
             />
           </ImageContextMenu>
         )
@@ -3818,7 +3818,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
   // Used to swap in the locker hero portrait as the card backdrop.
   const inferredHero = isSoundSection ? inferHeroFromTitle(mod.name) : null;
   const heroRenderUrl = inferredHero ? getHeroRenderPath(inferredHero) : undefined;
-  const heroFacePos = inferredHero ? getHeroFacePosition(inferredHero) : 55;
+  const heroFacePosX = getHeroFacePosition(inferredHero).x;
   const [audioControlsActive, setAudioControlsActive] = useState(false);
 
   // List view keeps original layout
@@ -3858,7 +3858,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
                   loading="lazy"
                   decoding="async"
                   className="browse-card-media-zoom w-full h-full object-cover"
-                  style={{ objectPosition: `${heroFacePos}% 25%` }}
+                  style={{ objectPosition: `${heroFacePosX}% 25%` }}
                 />
               </ImageContextMenu>
             ) : thumbnail ? (
@@ -4035,7 +4035,7 @@ function ModCard({ mod, installed, installedDisabled, downloading, queuePosition
                   loading="lazy"
                   decoding="async"
                   className="browse-card-media-zoom w-full h-full object-cover"
-                  style={{ objectPosition: `${heroFacePos}% 20%` }}
+                  style={{ objectPosition: `${heroFacePosX}% 20%` }}
                 />
               </ImageContextMenu>
             ) : thumbnail ? (

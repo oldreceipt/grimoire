@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { GameBananaCategoryNode } from '../types/gamebanana';
 import type { GlobalModType, Mod } from '../types/mod';
 import { getAssetPath } from './assetPath';
@@ -37,47 +38,80 @@ export function readStoredFavorites(): number[] {
 }
 
 /**
- * Per-hero portrait X positioning (percentage) for gallery cards based on face location.
- * The value represents where the face is located horizontally in the image.
- * Default is 55% which works for most heroes.
+ * Per-hero portrait positioning for hero-render backdrops, based on where the
+ * face sits in the image.
+ *
+ * x is the object-position crop percent shared by the gallery-style surfaces
+ * (Locker, Browse, Installed), each of which pairs it with its own hardcoded
+ * y. y and shiftX are SIDEBAR-ONLY, calibrated against the sidebar active card
+ * via tools/hero-position-calibrator.html: the sidebar card is so wide that
+ * object-cover leaves no horizontal slack (x does nothing there), so shiftX
+ * slides the whole image by a percentage of the card width (negative = left,
+ * positive = right) and may deliberately push the art past the edge, leaving
+ * blank card background. Default is { x: 55, y: 18 } with no shift.
  */
-export const HERO_FACE_POSITION: Record<string, number> = {
-  Abrams: 0,
-  Bebop: 81,
-  Billy: 73,
-  Calico: 80,
-  Doorman: 40,
-  Drifter: 93,
-  Dynamo: 68,
-  'Grey Talon': 77,
-  Haze: 78,
-  Holliday: 26,
-  Infernus: 100,
-  Ivy: 72,
-  Kelvin: 47,
-  'Lady Geist': 87,
-  Lash: 54,
-  McGinnis: 22,
-  Mina: 54,
-  Mirage: 65,
-  'Mo & Krill': 100,
-  Paige: 42,
-  Paradox: 59,
-  Pocket: 61,
-  Seven: 57,
-  Shiv: 68,
-  Sinclair: 61,
-  Victor: 45,
-  Vindicta: 83,
-  Viscous: 72,
-  Vyper: 48,
-  Warden: 55,
-  Wraith: 56,
-  Yamato: 56,
+export type HeroFacePosition = { x: number; y: number; shiftX?: number };
+
+export const HERO_FACE_POSITION: Record<string, HeroFacePosition> = {
+  Abrams: { x: 0, y: 12, shiftX: 24 },
+  Apollo: { x: 55, y: 12, shiftX: 16 },
+  Bebop: { x: 81, y: 1.5, shiftX: 5 },
+  Billy: { x: 73, y: 18, shiftX: 6.5 },
+  Calico: { x: 80, y: 19, shiftX: 11.5 },
+  Celeste: { x: 55, y: 9.5, shiftX: 16.5 },
+  Doorman: { x: 40, y: 19, shiftX: 35.5 },
+  Drifter: { x: 93, y: 18, shiftX: 20.5 },
+  Dynamo: { x: 68, y: 13.5, shiftX: 19.5 },
+  Graves: { x: 55, y: 21.5, shiftX: 26 },
+  'Grey Talon': { x: 77, y: 12, shiftX: 20 },
+  Haze: { x: 50, y: 9, shiftX: 22 },
+  Holliday: { x: 26, y: 17, shiftX: 29 },
+  Infernus: { x: 100, y: 8.5, shiftX: 5.5 },
+  Ivy: { x: 72, y: 24, shiftX: 9.5 },
+  Kelvin: { x: 47, y: 16, shiftX: 16.5 },
+  'Lady Geist': { x: 87, y: 14.5, shiftX: 15.5 },
+  Lash: { x: 54, y: 10.5, shiftX: 21.5 },
+  McGinnis: { x: 22, y: 17, shiftX: 35 },
+  Mina: { x: 54, y: 16.5, shiftX: 14 },
+  Mirage: { x: 65, y: 16.5, shiftX: 23.5 },
+  'Mo & Krill': { x: 100, y: 25.5, shiftX: 3.5 },
+  Paige: { x: 42, y: 18, shiftX: 31.5 },
+  Paradox: { x: 59, y: 18, shiftX: 3.5 },
+  Pocket: { x: 61, y: 12.5, shiftX: 10.5 },
+  Rem: { x: 55, y: 25, shiftX: 29 },
+  Seven: { x: 57, y: 12.5, shiftX: 18.5 },
+  Shiv: { x: 68, y: 7.5, shiftX: 0.5 },
+  Silver: { x: 55, y: 21, shiftX: 21.5 },
+  Sinclair: { x: 61, y: 12, shiftX: 17.5 },
+  Venator: { x: 55, y: 10, shiftX: 1 },
+  Victor: { x: 45, y: 9.5, shiftX: 28 },
+  Vindicta: { x: 83, y: 3.5, shiftX: 8.5 },
+  Viscous: { x: 72, y: 9, shiftX: 14.5 },
+  Vyper: { x: 48, y: 22.5, shiftX: 22 },
+  Warden: { x: 55, y: 15.5, shiftX: 24 },
+  Wraith: { x: 56, y: 20, shiftX: 32.5 },
+  Yamato: { x: 56, y: 11.5, shiftX: 29.5 },
 };
 
-export function getHeroFacePosition(name: string): number {
-  return HERO_FACE_POSITION[name] ?? 55;
+const DEFAULT_FACE_POSITION: Required<HeroFacePosition> = { x: 55, y: 18, shiftX: 0 };
+
+export function getHeroFacePosition(name: string | null | undefined): Required<HeroFacePosition> {
+  const position = name ? HERO_FACE_POSITION[name] : undefined;
+  return position ? { shiftX: 0, ...position } : DEFAULT_FACE_POSITION;
+}
+
+/**
+ * Inline style for the SIDEBAR active-card hero backdrop: the object-position
+ * crop plus the shiftX horizontal slide (a margin so it stays a percentage of
+ * the card width). It can push the image past the card edge on purpose,
+ * leaving blank card background. Other surfaces intentionally do not use this:
+ * they pair the x crop percent with their own hardcoded y.
+ */
+export function getSidebarHeroImageStyle(name: string | null | undefined): CSSProperties {
+  const { x, y, shiftX } = getHeroFacePosition(name);
+  const style: CSSProperties = { objectPosition: `${x}% ${y}%` };
+  if (shiftX) style.marginLeft = `${shiftX}%`;
+  return style;
 }
 
 /**

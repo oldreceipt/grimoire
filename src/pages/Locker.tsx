@@ -1319,7 +1319,7 @@ function HeroGalleryCard({
   const renderLocal = getHeroRenderPath(hero.name);
   const wikiUrl = getHeroWikiUrl(hero.name);
   const namePath = getHeroNamePath(hero.name);
-  const facePositionX = getHeroFacePosition(hero.name);
+  const facePositionX = getHeroFacePosition(hero.name).x;
   const [fallbackStep, setFallbackStep] = useState(0);
   const [nameFailed, setNameFailed] = useState(false);
   const [, setImageCacheVersion] = useState(0);
@@ -1504,7 +1504,7 @@ function HeroCard({
 }: HeroCardProps) {
   const localUrl = getHeroRenderPath(hero.name);
   const wikiUrl = getHeroWikiUrl(hero.name);
-  const facePositionX = getHeroFacePosition(hero.name);
+  const facePositionX = getHeroFacePosition(hero.name).x;
   // Background art fallback chain mirrors the gallery card: local render ->
   // wiki render -> GameBanana icon -> none (solid panel).
   const [bgFallbackStep, setBgFallbackStep] = useState(0);

@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Grimoire - Sidebar Hero Position Calibrator</title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --card: #1a1a1a;
+    --input: #242424;
+    --accent: #f97316;
+    --text: #ffffff;
+    --muted: #a1a1aa;
+    --border: #2d2d2d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+    display: grid;
+    grid-template-columns: 230px 1fr 340px;
+    height: 100vh;
+    overflow: hidden;
+  }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 10px; }
+
+  /* ----- hero list ----- */
+  #heroList {
+    overflow-y: auto;
+    border-right: 1px solid var(--border);
+    padding: 8px;
+  }
+  .hero-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 8px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: none;
+    color: var(--text);
+    cursor: pointer;
+    text-align: left;
+    font-size: 13px;
+  }
+  .hero-row:hover { background: var(--input); }
+  .hero-row.active { border-color: rgba(249, 115, 22, 0.5); background: rgba(249, 115, 22, 0.12); }
+  .hero-row .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+  .hero-row.done .dot { background: #22c55e; }
+  .hero-row.touched:not(.done) .dot { background: var(--accent); }
+
+  /* ----- center stage ----- */
+  #stage {
+    overflow-y: auto;
+    padding: 24px 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .preview-block { display: flex; flex-direction: column; gap: 8px; }
+  .preview-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .preview-rail {
+    background: var(--bg);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 14px;
+    display: inline-flex;
+    gap: 18px;
+    align-items: flex-start;
+    width: fit-content;
+  }
+
+  /* Faithful replica of the sidebar active nav card:
+     expanded sidebar 14rem with p-2 nav padding -> 208px wide, h-10 -> 40px. */
+  .nav-card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 2px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+    width: 208px;
+    height: 40px;
+    cursor: grab;
+    user-select: none;
+  }
+  .nav-card:active { cursor: grabbing; }
+  .nav-card.collapsed { width: 48px; }
+  .nav-card .backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.75;
+    pointer-events: none;
+  }
+  .nav-card .grad {
+    position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(to right,
+      rgba(15, 15, 15, 0.9) 0%,
+      rgba(15, 15, 15, 0.55) 50%,
+      rgba(15, 15, 15, 0.2) 100%);
+  }
+  .nav-card .shade { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.2); pointer-events: none; }
+  .nav-card .fg {
+    position: absolute; inset: 0;
+    display: flex; align-items: center;
+    font-size: 14px; font-weight: 600;
+    pointer-events: none;
+  }
+  .nav-card .icon-slot {
+    width: 46px; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .nav-card.collapsed .icon-slot { width: 100%; }
+  .nav-card svg { width: 20px; height: 20px; stroke: rgba(255, 255, 255, 0.9); }
+  .zoom2 { transform: scale(2); transform-origin: top left; }
+  .zoom2-wrap { width: 420px; height: 84px; }
+
+  /* ----- minimap ----- */
+  #minimapWrap { position: relative; width: fit-content; cursor: crosshair; overflow: hidden; border-radius: 3px;
+    padding: 36px; background: repeating-conic-gradient(#161616 0% 25%, #101010 0% 50%) 0 0 / 24px 24px; }
+  #minimap { display: block; max-height: 320px; max-width: 420px; border: 1px solid var(--border); border-radius: 3px; }
+  #cropRect {
+    position: absolute;
+    border: 1.5px solid var(--accent);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+  }
+
+  /* ----- controls panel ----- */
+  #panel {
+    border-left: 1px solid var(--border);
+    padding: 18px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .ctl { display: flex; flex-direction: column; gap: 6px; }
+  .ctl label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
+  .ctl label output { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .btn {
+    background: var(--input);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 3px;
+    padding: 7px 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #0f0f0f; font-weight: 600; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn-row .btn { flex: 1; }
+  #exportBox {
+    width: 100%;
+    height: 220px;
+    background: var(--input);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    padding: 8px;
+    white-space: pre;
+  }
+  .hint { color: var(--muted); font-size: 11px; line-height: 1.5; }
+  kbd {
+    background: var(--input); border: 1px solid var(--border); border-radius: 3px;
+    padding: 0 4px; font-size: 10px; font-family: inherit;
+  }
+  #heroTitle { font-size: 18px; font-weight: 700; margin: 0; }
+  #progress { color: var(--muted); font-size: 12px; }
+  .flash { outline: 2px solid #22c55e !important; transition: outline 0.1s; }
+</style>
+</head>
+<body>
+
+<div id="heroList"></div>
+
+<div id="stage">
+  <div>
+    <p id="heroTitle"></p>
+    <p id="progress"></p>
+  </div>
+
+  <div class="preview-block">
+    <div class="preview-label">Sidebar active card (1x, drag image to position)</div>
+    <div class="preview-rail">
+      <div class="nav-card" id="card1x">
+        <img class="backdrop" />
+        <span class="grad"></span>
+        <span class="shade"></span>
+        <span class="fg">
+          <span class="icon-slot">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/>
+            </svg>
+          </span>
+          <span class="label">Installed</span>
+        </span>
+      </div>
+      <div class="nav-card collapsed" id="cardCollapsed">
+        <img class="backdrop" />
+        <span class="grad"></span>
+        <span class="shade"></span>
+        <span class="fg">
+          <span class="icon-slot">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/>
+            </svg>
+          </span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div class="preview-block">
+    <div class="preview-label">2x zoom</div>
+    <div class="preview-rail zoom2-wrap">
+      <div class="zoom2">
+        <div class="nav-card" id="card2x">
+          <img class="backdrop" />
+          <span class="grad"></span>
+          <span class="shade"></span>
+          <span class="fg">
+            <span class="icon-slot">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/>
+              </svg>
+            </span>
+            <span class="label">Installed</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="preview-block">
+    <div class="preview-label">Full render with crop region (click to center crop there)</div>
+    <div id="minimapWrap">
+      <img id="minimap" />
+      <div id="cropRect"></div>
+    </div>
+  </div>
+</div>
+
+<div id="panel">
+  <h2>Position</h2>
+  <div class="ctl">
+    <label>Shift X (% of card width; blank edges allowed) <output id="xOut"></output></label>
+    <input type="range" id="xSlider" min="-150" max="150" step="1" />
+  </div>
+  <div class="ctl">
+    <label>Y (object-position) <output id="yOut"></output></label>
+    <input type="range" id="ySlider" min="-100" max="200" step="1" />
+  </div>
+
+  <div class="btn-row">
+    <button class="btn" id="resetBtn">Reset hero</button>
+    <button class="btn" id="doneBtn">Done, next</button>
+  </div>
+  <div class="btn-row">
+    <button class="btn" id="prevBtn">&larr; Prev</button>
+    <button class="btn" id="nextBtn">Next &rarr;</button>
+  </div>
+
+  <div class="hint">
+    Arrows slide the image (hold <kbd>Shift</kbd> for 5): <kbd>&larr;</kbd><kbd>&rarr;</kbd> = Shift X, <kbd>&uarr;</kbd><kbd>&darr;</kbd> = Y.
+    <kbd>Enter</kbd> marks done and advances. <kbd>PgUp</kbd>/<kbd>PgDn</kbd> switch hero.
+    Drag the card image or click the full render. Everything autosaves to localStorage.
+  </div>
+
+  <h2>Export</h2>
+  <textarea id="exportBox" readonly spellcheck="false"></textarea>
+  <div class="btn-row">
+    <button class="btn primary" id="copyBtn">Copy HERO_FACE_POSITION map</button>
+  </div>
+  <div class="btn-row">
+    <button class="btn" id="clearBtn">Clear all saved values</button>
+  </div>
+</div>
+
+<script>
+// Seed X (object-position crop percent; only matters on portrait surfaces like
+// the Locker gallery, passed through untouched) = HERO_FACE_POSITION in
+// src/lib/lockerUtils.ts. Seed Y = 18, seed Shift X = 0.
+// Shift X is the horizontal control for this wide card: object-cover leaves no
+// horizontal slack here, so X percent does nothing; Shift X slides the whole
+// image by a percent of the card width (margin-left), blank edges allowed.
+const SEED = {
+  'Abrams': 0, 'Apollo': 55, 'Bebop': 81, 'Billy': 73, 'Calico': 80, 'Celeste': 55, 'Doorman': 40,
+  'Drifter': 93, 'Dynamo': 68, 'Graves': 55, 'Grey Talon': 77, 'Haze': 78, 'Holliday': 26,
+  'Infernus': 100, 'Ivy': 72, 'Kelvin': 47, 'Lady Geist': 87, 'Lash': 54,
+  'McGinnis': 22, 'Mina': 54, 'Mirage': 65, 'Mo & Krill': 100, 'Paige': 42,
+  'Paradox': 59, 'Pocket': 61, 'Rem': 55, 'Seven': 57, 'Shiv': 68, 'Silver': 55, 'Sinclair': 61, 'Venator': 55,
+  'Victor': 45, 'Vindicta': 83, 'Viscous': 72, 'Vyper': 48, 'Warden': 55,
+  'Wraith': 56, 'Yamato': 56,
+};
+const DEFAULT_Y = 18;
+const HEROES = Object.keys(SEED);
+const STORE_KEY = 'grimoireHeroPosCalibration';
+
+// mirrors heroAssetBaseName + getHeroRenderPath
+const renderPath = (name) => '../public/locker/heroes/' + name.trim().replace(/\s+/g, '_') + '_Render.png';
+
+let state = loadState();
+let current = state.lastHero && HEROES.includes(state.lastHero) ? state.lastHero : HEROES[0];
+
+function loadState() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+    return { heroes: raw.heroes || {}, lastHero: raw.lastHero || null };
+  } catch { return { heroes: {}, lastHero: null }; }
+}
+function saveState() {
+  state.lastHero = current;
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+}
+function entry(name) {
+  if (!state.heroes[name]) {
+    state.heroes[name] = { x: SEED[name], y: DEFAULT_Y, shiftX: 0, done: false, touched: false };
+  }
+  if (typeof state.heroes[name].shiftX !== 'number') state.heroes[name].shiftX = 0;
+  return state.heroes[name];
+}
+
+// ---- DOM refs ----
+const xSlider = document.getElementById('xSlider');
+const ySlider = document.getElementById('ySlider');
+const xOut = document.getElementById('xOut');
+const yOut = document.getElementById('yOut');
+const heroListEl = document.getElementById('heroList');
+const minimap = document.getElementById('minimap');
+const cropRect = document.getElementById('cropRect');
+const cards = ['card1x', 'cardCollapsed', 'card2x'].map((id) => document.getElementById(id));
+const exportBox = document.getElementById('exportBox');
+
+function buildList() {
+  heroListEl.innerHTML = '';
+  for (const name of HEROES) {
+    const e = entry(name);
+    const btn = document.createElement('button');
+    btn.className = 'hero-row' + (name === current ? ' active' : '') +
+      (e.done ? ' done' : '') + (e.touched ? ' touched' : '');
+    btn.innerHTML = '<span class="dot"></span><span>' + name + '</span>';
+    btn.onclick = () => { current = name; render(); };
+    heroListEl.appendChild(btn);
+  }
+}
+
+function applyPosition() {
+  const e = entry(current);
+  xOut.value = e.shiftX + '%';
+  yOut.value = e.y + '%';
+  xSlider.value = e.shiftX;
+  ySlider.value = e.y;
+  for (const card of cards) {
+    const img = card.querySelector('.backdrop');
+    img.style.objectPosition = e.x + '% ' + e.y + '%';
+    img.style.marginLeft = e.shiftX + '%';
+  }
+  updateCropRect();
+  updateExport();
+  saveState();
+}
+
+function render() {
+  const e = entry(current);
+  document.getElementById('heroTitle').textContent = current;
+  const doneCount = HEROES.filter((h) => entry(h).done).length;
+  document.getElementById('progress').textContent =
+    doneCount + ' / ' + HEROES.length + ' done' + (e.done ? ' (this one is done)' : '');
+  const src = renderPath(current);
+  for (const card of cards) card.querySelector('.backdrop').src = src;
+  minimap.src = src;
+  buildList();
+  applyPosition();
+  const active = heroListEl.querySelector('.hero-row.active');
+  if (active) active.scrollIntoView({ block: 'nearest' });
+}
+
+// Out-of-range values are intentional: a big shift pushes the image past the
+// card edge, leaving blank card background. Generous clamp keeps numbers sane.
+function setPos(shiftX, y, markTouched = true) {
+  const e = entry(current);
+  e.shiftX = Math.round(Math.max(-300, Math.min(300, shiftX)) * 2) / 2;
+  e.y = Math.round(Math.max(-300, Math.min(400, y)) * 2) / 2;
+  if (markTouched) e.touched = true;
+  applyPosition();
+  const row = heroListEl.querySelectorAll('.hero-row')[HEROES.indexOf(current)];
+  if (row && e.touched) row.classList.add('touched');
+}
+
+// ---- crop minimap (expanded card geometry: 208x40, object-fit cover) ----
+const CARD_W = 208, CARD_H = 40;
+function coverGeometry(iw, ih) {
+  const scale = Math.max(CARD_W / iw, CARD_H / ih);
+  return { visW: CARD_W / scale, visH: CARD_H / scale };
+}
+function updateCropRect() {
+  const iw = minimap.naturalWidth, ih = minimap.naturalHeight;
+  if (!iw || !ih || !minimap.clientWidth) { cropRect.style.display = 'none'; return; }
+  cropRect.style.display = 'block';
+  const e = entry(current);
+  const { visW, visH } = coverGeometry(iw, ih);
+  // Visible window in image coords: crop slack panning (x/y percent) plus the
+  // pixel slide (shiftX percent of card width -> image coords via the scale).
+  const scale = CARD_W / visW;
+  const shiftImg = (e.shiftX / 100) * CARD_W / scale;
+  const left = (iw - visW) * e.x / 100 - shiftImg;
+  const top = (ih - visH) * e.y / 100;
+  const k = minimap.clientWidth / iw;
+  cropRect.style.left = minimap.offsetLeft + left * k + 'px';
+  cropRect.style.top = minimap.offsetTop + top * k + 'px';
+  cropRect.style.width = visW * k + 'px';
+  cropRect.style.height = visH * k + 'px';
+}
+minimap.addEventListener('load', updateCropRect);
+window.addEventListener('resize', updateCropRect);
+
+document.getElementById('minimapWrap').addEventListener('pointerdown', (ev) => {
+  const apply = (e2) => {
+    const iw = minimap.naturalWidth, ih = minimap.naturalHeight;
+    if (!iw) return;
+    const rect = minimap.getBoundingClientRect();
+    const k = iw / rect.width;
+    const px = (e2.clientX - rect.left) * k;
+    const py = (e2.clientY - rect.top) * k;
+    const e = entry(current);
+    const { visW, visH } = coverGeometry(iw, ih);
+    const scale = CARD_W / visW;
+    // Center the window on the click: window left = crop-slack term - shift.
+    const wantLeft = px - visW / 2;
+    const shiftImg = (iw - visW) * e.x / 100 - wantLeft;
+    const shiftX = shiftImg * scale / CARD_W * 100;
+    const y = (ih - visH) !== 0 ? (py - visH / 2) / (ih - visH) * 100 : 50;
+    setPos(shiftX, y);
+  };
+  apply(ev);
+  const move = (e2) => apply(e2);
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+});
+
+// ---- drag on the cards ----
+for (const card of cards) {
+  const zoom = card.id === 'card2x' ? 2 : 1;
+  card.addEventListener('pointerdown', (ev) => {
+    ev.preventDefault();
+    const img = card.querySelector('.backdrop');
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    if (!iw) return;
+    const cw = card.clientWidth, ch = card.clientHeight;
+    const scale = Math.max(cw / iw, ch / ih);
+    const overY = ih * scale - ch;
+    const start = { px: ev.clientX, py: ev.clientY, shiftX: entry(current).shiftX, y: entry(current).y };
+    const move = (e2) => {
+      const dx = (e2.clientX - start.px) / zoom;
+      const dy = (e2.clientY - start.py) / zoom;
+      setPos(
+        start.shiftX + dx / cw * 100,
+        overY > 0 ? start.y - dy / overY * 100 : start.y
+      );
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+}
+
+// ---- sliders / keyboard / nav ----
+xSlider.addEventListener('input', () => setPos(+xSlider.value, entry(current).y));
+ySlider.addEventListener('input', () => setPos(entry(current).x, +ySlider.value));
+
+function step(delta) { return delta * (window.__shift ? 5 : 1); }
+window.addEventListener('keydown', (ev) => {
+  if (ev.target.tagName === 'TEXTAREA') return;
+  window.__shift = ev.shiftKey;
+  const e = entry(current);
+  const s = ev.shiftKey ? 5 : 1;
+  // Arrows move the IMAGE in that direction. Y percent pans the crop window,
+  // so image-down = y-down in value terms only when slack is negative; with
+  // object-cover slack the image moves down as y decreases.
+  switch (ev.key) {
+    case 'ArrowLeft': setPos(e.shiftX - s, e.y); ev.preventDefault(); break;
+    case 'ArrowRight': setPos(e.shiftX + s, e.y); ev.preventDefault(); break;
+    case 'ArrowUp': setPos(e.shiftX, e.y + s); ev.preventDefault(); break;
+    case 'ArrowDown': setPos(e.shiftX, e.y - s); ev.preventDefault(); break;
+    case 'Enter': markDoneAndNext(); ev.preventDefault(); break;
+    case 'PageUp': go(-1); ev.preventDefault(); break;
+    case 'PageDown': go(1); ev.preventDefault(); break;
+  }
+});
+
+function go(dir) {
+  const i = HEROES.indexOf(current);
+  current = HEROES[(i + dir + HEROES.length) % HEROES.length];
+  render();
+}
+function markDoneAndNext() {
+  entry(current).done = true;
+  // jump to the next not-done hero, or just the next one
+  const i = HEROES.indexOf(current);
+  for (let k = 1; k <= HEROES.length; k++) {
+    const cand = HEROES[(i + k) % HEROES.length];
+    if (!entry(cand).done) { current = cand; render(); return; }
+  }
+  render();
+}
+
+document.getElementById('prevBtn').onclick = () => go(-1);
+document.getElementById('nextBtn').onclick = () => go(1);
+document.getElementById('doneBtn').onclick = markDoneAndNext;
+document.getElementById('resetBtn').onclick = () => {
+  state.heroes[current] = { x: SEED[current], y: DEFAULT_Y, shiftX: 0, done: false, touched: false };
+  render();
+};
+document.getElementById('clearBtn').onclick = () => {
+  if (confirm('Wipe all saved calibration values?')) {
+    state = { heroes: {}, lastHero: current };
+    localStorage.removeItem(STORE_KEY);
+    render();
+  }
+};
+
+// ---- export ----
+function fmt(n) { return Number.isInteger(n) ? String(n) : n.toFixed(1); }
+function key(name) { return /^[A-Za-z]+$/.test(name) ? name : "'" + name + "'"; }
+// Matches the HERO_FACE_POSITION shape in src/lib/lockerUtils.ts: paste the
+// body straight over the existing map.
+function combinedSnippet() {
+  const lines = HEROES.map((h) => {
+    const e = entry(h);
+    const shift = e.shiftX ? ', shiftX: ' + fmt(e.shiftX) : '';
+    return '  ' + key(h) + ': { x: ' + fmt(e.x) + ', y: ' + fmt(e.y) + shift + ' },';
+  });
+  return 'export const HERO_FACE_POSITION: Record<string, HeroFacePosition> = {\n' +
+    lines.join('\n') + '\n};';
+}
+function updateExport() { exportBox.value = combinedSnippet(); }
+
+function copy(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.classList.add('flash');
+    setTimeout(() => btn.classList.remove('flash'), 400);
+  });
+}
+document.getElementById('copyBtn').onclick = (ev) => copy(combinedSnippet(), ev.target);
+
+render();
+</script>
+</body>
+</html>

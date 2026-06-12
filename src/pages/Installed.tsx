@@ -4965,7 +4965,7 @@ function ModMediaPreview({
     ? mod.lockerHero ?? inferHeroFromTitle(mod.name)
     : null;
   const soundHeroRenderUrl = soundHeroName ? getHeroRenderPath(soundHeroName) : null;
-  const soundHeroFacePos = soundHeroName ? getHeroFacePosition(soundHeroName) : 50;
+  const soundHeroFacePosX = soundHeroName ? getHeroFacePosition(soundHeroName).x : 50;
   const image = (
     <ModThumbnail
       src={mod.thumbnailUrl}
@@ -4985,7 +4985,7 @@ function ModMediaPreview({
         alt={soundHeroName ?? mod.name}
         draggable={false}
         className="block h-full w-full object-cover origin-center transform-gpu will-change-transform transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
-        style={{ objectPosition: `${soundHeroFacePos}% 25%` }}
+        style={{ objectPosition: `${soundHeroFacePosX}% 25%` }}
       />
     </ImageContextMenu>
   ) : (
@@ -5229,7 +5229,7 @@ function ModListRowContent({
     ? mod.lockerHero ?? inferHeroFromTitle(mod.name)
     : null;
   const listHeroRenderUrl = listHeroName ? getHeroRenderPath(listHeroName) : null;
-  const listHeroFacePos = listHeroName ? getHeroFacePosition(listHeroName) : 50;
+  const listHeroFacePosX = listHeroName ? getHeroFacePosition(listHeroName).x : 50;
 
   return (
     <>
@@ -5273,7 +5273,7 @@ function ModListRowContent({
               alt={listHeroName ?? mod.name}
               draggable={false}
               className="block h-full w-full object-cover origin-center transition-transform duration-200 group-enabled:group-hover:scale-[1.03]"
-              style={{ objectPosition: `${listHeroFacePos}% 25%` }}
+              style={{ objectPosition: `${listHeroFacePosX}% 25%` }}
             />
           </ImageContextMenu>
         ) : isSound && !mod.thumbnailUrl ? (
