@@ -57,6 +57,19 @@ export function loadSettings(): AppSettings {
 }
 
 /**
+ * The Deadlock path IPC handlers should act on: the dev dummy path when dev
+ * mode is active, otherwise the user's configured install. Single-sourced
+ * here; IPC modules import it instead of keeping local copies.
+ */
+export function getActiveDeadlockPath(): string | null {
+    const settings = loadSettings();
+    if (settings.devMode && settings.devDeadlockPath) {
+        return settings.devDeadlockPath;
+    }
+    return settings.deadlockPath;
+}
+
+/**
  * Save settings to disk atomically (P1 fix #8)
  * Uses write-to-temp-then-rename pattern to prevent corruption on crash
  */

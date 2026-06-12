@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings } from '../services/settings';
+import { getActiveDeadlockPath } from '../services/settings';
 import {
     fetchSections,
     fetchCategoryTreeCached,
@@ -30,17 +30,6 @@ import type {
     GetCategoriesArgs,
 } from '../../../src/types/electron';
 import { updateModNsfw } from '../services/modDatabase';
-
-/**
- * Get the active deadlock path from settings
- */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
 
 // browse-mods
 ipcMain.handle(

@@ -1,6 +1,6 @@
 import { ipcMain, dialog, shell, clipboard, nativeImage } from 'electron';
 import { getMainWindow } from '../index';
-import { loadSettings } from '../services/settings';
+import { getActiveDeadlockPath } from '../services/settings';
 import {
     getGameinfoStatus,
     fixGameinfo,
@@ -37,17 +37,6 @@ async function loadClipboardImage(source: string): Promise<Electron.NativeImage>
     }
 
     throw new Error(`Unsupported image source: ${url.protocol}`);
-}
-
-/**
- * Get the active deadlock path from settings
- */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
 }
 
 // show-open-dialog

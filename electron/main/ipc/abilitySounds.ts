@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings } from '../services/settings';
+import { getActiveDeadlockPath } from '../services/settings';
 import { getHeroAbilitySlots } from '../services/abilitySounds';
 import { applyHeroSound, revertHeroSound, getActiveHeroSounds } from '../services/heroSounds';
 import type {
@@ -11,14 +11,6 @@ import type {
 } from '../../../src/types/mod';
 
 /** Active Deadlock install path (dev override wins, same as ipc/portraits.ts). */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
-
 // Reference data for the per-ability sound picker: the 4 ability slots (name +
 // icon) for a hero. Per-mod classifications ride on the Mod object via
 // enrichMod, so no per-mod IPC is needed here.

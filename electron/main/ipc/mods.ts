@@ -1,7 +1,7 @@
 import { ipcMain, shell } from 'electron';
 import { promises as fs, existsSync } from 'fs';
 import { extname } from 'path';
-import { loadSettings, saveSettings } from '../services/settings';
+import { loadSettings, saveSettings, getActiveDeadlockPath } from '../services/settings';
 import {
     scanMods,
     enableMod,
@@ -39,17 +39,6 @@ const unknownDetectionControllers = new Map<string, AbortController>();
 interface UnknownCacheBulkRequest {
     modId: string;
     requestId?: string;
-}
-
-/**
- * Get the active deadlock path from settings
- */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
 }
 
 /**

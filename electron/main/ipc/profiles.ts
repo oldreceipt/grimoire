@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings, saveSettings } from '../services/settings';
+import { loadSettings, saveSettings, getActiveDeadlockPath } from '../services/settings';
 import {
     loadProfiles,
     createProfile,
@@ -22,17 +22,6 @@ import type {
     PortableProfile,
     PortableResolvedMod,
 } from '../../../src/types/portableProfile';
-
-/**
- * Get the active deadlock path from settings
- */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
 
 // get-profiles
 ipcMain.handle('get-profiles', (): Profile[] => {

@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings } from '../services/settings';
+import { getActiveDeadlockPath } from '../services/settings';
 import {
     applyTrippySkin,
     getActiveTrippySkin,
@@ -17,14 +17,6 @@ import type {
 } from '../../../src/types/mod';
 
 /** Active Deadlock install path (dev override wins, same as ipc/abilityColors.ts). */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
-
 // Trippy procedural effects (services/trippyEffects.ts + the trippy mode in
 // services/heroColors.ts). The preview sprite is pure pattern generation, so it
 // needs no Deadlock path: the Effects panel can show live swatches before a

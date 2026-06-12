@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings } from '../services/settings';
+import { getActiveDeadlockPath } from '../services/settings';
 import {
     launchModded,
     launchVanilla,
@@ -14,14 +14,6 @@ import {
 import { readLaunchOptions, isSteamRunning } from '../services/launchOptions';
 import { healLockerVpks } from '../services/lockerVpk';
 import { getMainWindow } from '../index';
-
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
 
 function emitRestore(result: RestoreResult): void {
     const win = getMainWindow();

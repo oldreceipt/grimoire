@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings } from '../services/settings';
+import { getActiveDeadlockPath } from '../services/settings';
 import { listAppliedCards, clearAllHeroCards, getAppliedCardThumbnails } from '../services/heroCards';
 import { listAppliedSounds, clearAllHeroSounds } from '../services/heroSounds';
 import { clearAllHeroColors, listAppliedColors } from '../services/heroColors';
@@ -7,14 +7,6 @@ import { clearAllTrippySkins, listAppliedTrippySkins } from '../services/trippyE
 import type { LockerCardThumbnail, LockerClearScope, LockerOverview } from '../../../src/types/mod';
 
 /** Active Deadlock install path (dev override wins, same as the other locker IPC). */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
-
 // Cross-cutting Locker IPC: a summary of everything the Locker is currently
 // overriding (cards + ability sounds + ability colors), plus a bulk clear.
 // Drives the Installed-tab "Locker Overrides" popup (toolbar Wand2 icon).

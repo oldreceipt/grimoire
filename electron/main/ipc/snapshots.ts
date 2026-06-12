@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings } from '../services/settings';
+import { getActiveDeadlockPath } from '../services/settings';
 import {
     writeSnapshot,
     listSnapshots,
@@ -8,14 +8,6 @@ import {
     type SnapshotSummary,
     type SnapshotTrigger,
 } from '../services/snapshots';
-
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
 
 // snapshot-create — capture the current installed mod set as a recovery
 // snapshot. Used automatically by the update path (trigger = "pre-update").

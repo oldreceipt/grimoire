@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings } from '../services/settings';
+import { loadSettings, getActiveDeadlockPath } from '../services/settings';
 import { getMainWindow } from '../index';
 import {
     fetchServers,
@@ -19,12 +19,6 @@ import type {
 // at the official Deadworks registry so the browser is populated out of the box.
 // Any deadworks-shaped relay works here, including our own grimoire-relay.
 const DEFAULT_RELAY_URL = 'https://api.deadworks.net';
-
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) return settings.devDeadlockPath;
-    return settings.deadlockPath;
-}
 
 function getRelayUrl(): string {
     const configured = loadSettings().deadworksRelayUrl?.trim();

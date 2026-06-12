@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings } from '../services/settings';
+import { getActiveDeadlockPath } from '../services/settings';
 import {
     applyHeroColor,
     applyHeroPrism,
@@ -15,14 +15,6 @@ import type {
 } from '../../../src/types/mod';
 
 /** Active Deadlock install path (dev override wins, same as ipc/abilitySounds.ts). */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
-
 // Per-hero ability-COLOR recolor (services/heroColors.ts). Mirrors the
 // apply/revert/get trio in ipc/abilitySounds.ts: recolor a hero's ability VFX to
 // one hue, revert it, and read back the active hue. Plus a sync support check so

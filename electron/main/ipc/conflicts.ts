@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { loadSettings, saveSettings } from '../services/settings';
+import { loadSettings, saveSettings, getActiveDeadlockPath } from '../services/settings';
 import {
     detectConflicts,
     conflictPairKey,
@@ -8,17 +8,6 @@ import {
     type ModConflict,
 } from '../services/conflicts';
 import { scanMods } from '../services/mods';
-
-/**
- * Get the active deadlock path from settings
- */
-function getActiveDeadlockPath(): string | null {
-    const settings = loadSettings();
-    if (settings.devMode && settings.devDeadlockPath) {
-        return settings.devDeadlockPath;
-    }
-    return settings.deadlockPath;
-}
 
 // get-conflicts
 ipcMain.handle('get-conflicts', async (): Promise<ModConflict[]> => {
