@@ -105,6 +105,15 @@ export interface GameinfoStatus {
     candidates: string[];
 }
 
+/** State of the OptimizationLock performance preset in gameinfo.gi.
+ *  'wiped' means it was applied before but a game update reset the file. */
+export interface PerformanceConfigStatus {
+    state: 'not-applied' | 'applied' | 'wiped' | 'error';
+    appliedVersion: string | null;
+    bundledVersion: string;
+    message: string;
+}
+
 export interface OpenDialogOptions {
     directory?: boolean;
     title?: string;
@@ -454,6 +463,9 @@ export interface ElectronAPI {
     cleanupAddons: () => Promise<CleanupResult>;
     getGameinfoStatus: () => Promise<GameinfoStatus>;
     fixGameinfo: () => Promise<GameinfoStatus>;
+    getPerformanceConfigStatus: () => Promise<PerformanceConfigStatus>;
+    applyPerformanceConfig: () => Promise<PerformanceConfigStatus>;
+    removePerformanceConfig: () => Promise<PerformanceConfigStatus>;
     openModsFolder: () => Promise<void>;
     openGameFolder: () => Promise<void>;
 
