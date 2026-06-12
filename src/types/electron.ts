@@ -276,17 +276,41 @@ export interface CachedMod {
     cachedAt: number;
 }
 
+/**
+ * Full crosshair model, matching the current in-game convar surface
+ * (citadel_crosshair_*). Pip and dot outlines are (border width, gap,
+ * opacity) triples sharing one outline color; the old single `pipBorder`
+ * bool convar no longer exists in the game.
+ */
 export interface CrosshairSettings {
     pipGap: number;
+    /** Keep the gap fixed in game; when false the gap blooms with weapon spread. */
+    pipGapStatic: boolean;
     pipHeight: number;
     pipWidth: number;
     pipOpacity: number;
-    pipBorder: boolean;
+    /** Outline stroke width in px; 0 disables the pip outline. */
+    pipOutlineBorder: number;
+    pipOutlineGap: number;
+    pipOutlineOpacity: number;
     dotOpacity: number;
+    /** Dot diameter in px (1080p reference). */
+    dotSize: number;
+    dotOutlineBorder: number;
+    dotOutlineGap: number;
     dotOutlineOpacity: number;
     colorR: number;
     colorG: number;
     colorB: number;
+    outlineColorR: number;
+    outlineColorG: number;
+    outlineColorB: number;
+    disableHeroSpecificCrosshairs: boolean;
+    /** Legacy pre-outline-system flag. Derived from pipOutlineBorder/Opacity
+     *  by normalizeCrosshairSettings and kept on the wire so older Grimoire
+     *  builds importing shared profiles still render a border. Never edited
+     *  directly. */
+    pipBorder: boolean;
 }
 
 export interface CrosshairPreset {
@@ -570,6 +594,9 @@ export interface ElectronAPI {
     clearCrosshairAutoexec: (gamePath: string) => Promise<{ success: boolean }>;
     getAutoexecStatus: (gamePath: string) => Promise<{ exists: boolean; path: string | null; hasCrosshairSettings: boolean }>;
     createAutoexec: (gamePath: string) => Promise<{ success: boolean; path: string }>;
+    /** Read the player's live in-game crosshair from machine_convars.vcfg.
+     *  settings is null when the file is missing or has no crosshair convars. */
+    importCrosshairFromGame: (gamePath: string) => Promise<{ found: boolean; settings: CrosshairSettings | null }>;
     getAutoexecCommands: (gamePath: string) => Promise<{ commands: string[]; exists: boolean }>;
     saveAutoexecCommands: (gamePath: string, commands: string[]) => Promise<{ success: boolean; path: string }>;
 
@@ -746,18 +773,10 @@ export interface ProfileMod {
     sha256?: string;
 }
 
-export interface ProfileCrosshairSettings {
-    pipGap: number;
-    pipHeight: number;
-    pipWidth: number;
-    pipOpacity: number;
-    pipBorder: boolean;
-    dotOpacity: number;
-    dotOutlineOpacity: number;
-    colorR: number;
-    colorG: number;
-    colorB: number;
-}
+/** Profiles embed the same crosshair model the Crosshair tab edits. Saved
+ *  profiles from older builds carry the legacy 10-field shape; normalize
+ *  with normalizeCrosshairSettings before use. */
+export type ProfileCrosshairSettings = CrosshairSettings;
 
 export interface Profile {
     id: string;

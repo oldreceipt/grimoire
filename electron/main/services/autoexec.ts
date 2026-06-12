@@ -39,16 +39,23 @@ export function parseAutoexec(content: string): AutoexecData {
             continue;
         }
 
-        if (section === 'header' && !line.includes('Mod Manager') && !line.trim().startsWith('citadel_crosshair_')) {
-            header.push(line);
+        if (section === 'header') {
+            // Old-style crosshair commands (written without section markers by
+            // pre-1.18 applyPreset) are rescued into the crosshair section so a
+            // rewrite upgrades them instead of silently deleting them.
+            if (line.trim().startsWith('citadel_crosshair_') || line.trim().startsWith('// Preset:')) {
+                crosshair.push(line);
+            } else if (!line.includes('Mod Manager')) {
+                header.push(line);
+            }
         } else if (section === 'crosshair') {
             crosshair.push(line);
         } else if (section === 'commands') {
             if (line.trim()) commands.push(line.trim());
         } else if (section === 'other') {
-            // Check if it's an old-style crosshair command (before sections were added)
-            if (!line.trim().startsWith('citadel_crosshair_') &&
-                !line.includes('Crosshair settings from Deadlock Mod Manager') &&
+            if (line.trim().startsWith('citadel_crosshair_')) {
+                crosshair.push(line);
+            } else if (!line.includes('Crosshair settings from Deadlock Mod Manager') &&
                 !line.includes('// Preset:')) {
                 other.push(line);
             }
@@ -64,12 +71,12 @@ export function parseAutoexec(content: string): AutoexecData {
 }
 
 // Helper to build autoexec content from sections
-export function buildAutoexec(header: string, crosshairContent: string | null, commands: string[]): string {
+export function buildAutoexec(data: AutoexecData): string {
     const parts: string[] = [];
 
     // Header (user's manual content)
-    if (header) {
-        parts.push(header);
+    if (data.header) {
+        parts.push(data.header);
     } else {
         parts.push('// Deadlock autoexec.cfg');
         parts.push('// Managed by Deadlock Mod Manager');
@@ -77,19 +84,26 @@ export function buildAutoexec(header: string, crosshairContent: string | null, c
     }
 
     // Commands section
-    if (commands.length > 0) {
+    if (data.commands.length > 0) {
         parts.push('');
         parts.push(COMMANDS_START);
-        parts.push(...commands);
+        parts.push(...data.commands);
         parts.push(COMMANDS_END);
     }
 
     // Crosshair section
-    if (crosshairContent) {
+    if (data.crosshair) {
         parts.push('');
         parts.push(CROSSHAIR_START);
-        parts.push(crosshairContent);
+        parts.push(data.crosshair);
         parts.push(CROSSHAIR_END);
+    }
+
+    // User content that lived after the managed sections. Dropping this used
+    // to silently destroy manual edits on every managed rewrite.
+    if (data.other) {
+        parts.push('');
+        parts.push(data.other);
     }
 
     return parts.join('\n') + '\n';
@@ -121,7 +135,7 @@ export function writeAutoexec(gamePath: string, data: AutoexecData): void {
         fs.mkdirSync(cfgDir, { recursive: true });
     }
 
-    const content = buildAutoexec(data.header, data.crosshair, data.commands);
+    const content = buildAutoexec(data);
 
     try {
         fs.writeFileSync(tempPath, content);

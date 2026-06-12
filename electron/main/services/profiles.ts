@@ -5,6 +5,7 @@ import { scanMods, enableMod, disableMod, reorderMods } from './mods';
 import { getModMetadata } from './metadata';
 import { isLockerManaged, pinLockerVpksToFront } from './lockerVpk';
 import { readAutoexec, writeAutoexec } from './autoexec';
+import { generateCrosshairCommands, normalizeCrosshairSettings } from '../../../src/lib/crosshair';
 
 // The Profile wire types are single-sourced in src/types/electron.ts
 // (docstrings included); re-exported because portableProfile.ts and the
@@ -99,7 +100,7 @@ export async function createProfile(deadlockPath: string, name: string, crosshai
         id: generateProfileId(),
         name,
         mods: enabledMods.map(mod => toProfileMod(mod, true)),
-        crosshair: crosshairSettings,
+        crosshair: crosshairSettings ? normalizeCrosshairSettings(crosshairSettings) : undefined,
         autoexecCommands: autoexecData.commands,
         createdAt: now,
         updatedAt: now,
@@ -204,29 +205,13 @@ export async function updateProfile(deadlockPath: string, profileId: string, cro
         mods: enabledMods.map(mod => toProfileMod(mod, true)),
         // If crosshairSettings is passed, use it. If undefined/null, remove crosshair from profile.
         // This allows the frontend to explicitly control whether crosshair is included based on feature toggle.
-        crosshair: crosshairSettings,
+        crosshair: crosshairSettings ? normalizeCrosshairSettings(crosshairSettings) : undefined,
         autoexecCommands: autoexecData.commands,
         updatedAt: new Date().toISOString(),
     };
 
     saveProfiles(profiles);
     return profiles[index];
-}
-
-function generateCrosshairCommands(settings: ProfileCrosshairSettings): string {
-    const commands = [
-        `citadel_crosshair_pip_gap ${settings.pipGap}`,
-        `citadel_crosshair_pip_height ${settings.pipHeight}`,
-        `citadel_crosshair_pip_width ${settings.pipWidth}`,
-        `citadel_crosshair_pip_opacity ${settings.pipOpacity.toFixed(2)}`,
-        `citadel_crosshair_pip_border ${settings.pipBorder}`,
-        `citadel_crosshair_dot_opacity ${settings.dotOpacity.toFixed(2)}`,
-        `citadel_crosshair_dot_outline_opacity ${settings.dotOutlineOpacity.toFixed(2)}`,
-        `citadel_crosshair_color_r ${settings.colorR}`,
-        `citadel_crosshair_color_g ${settings.colorG}`,
-        `citadel_crosshair_color_b ${settings.colorB}`,
-    ];
-    return commands.join('\n');
 }
 
 /** Outcome of resolving one ProfileMod against the current scan. The `via`

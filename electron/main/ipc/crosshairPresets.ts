@@ -4,6 +4,12 @@ import * as path from 'path';
 // Wire types are single-sourced in src/types/electron.ts; re-exported to
 // keep this module's surface unchanged.
 import type { CrosshairSettings, CrosshairPreset } from '../../../src/types/electron';
+import {
+    generateCrosshairCommands,
+    normalizeCrosshairSettings,
+    parseMachineConvarsCrosshair,
+} from '../../../src/lib/crosshair';
+import { readAutoexec, writeAutoexec, getAutoexecPath } from '../services/autoexec';
 export type { CrosshairSettings, CrosshairPreset };
 
 interface PresetsData {
@@ -17,7 +23,16 @@ function loadPresetsData(): PresetsData {
     try {
         if (fs.existsSync(PRESETS_FILE)) {
             const data = fs.readFileSync(PRESETS_FILE, 'utf-8');
-            return JSON.parse(data);
+            const parsed = JSON.parse(data) as PresetsData;
+            // Migrate legacy presets (pre outline system) to the full settings
+            // shape so the renderer only ever sees current-model settings.
+            return {
+                presets: (parsed.presets || []).map(p => ({
+                    ...p,
+                    settings: normalizeCrosshairSettings(p.settings),
+                })),
+                activePresetId: parsed.activePresetId ?? null,
+            };
         }
     } catch (error) {
         console.error('[CrosshairPresets] Error loading presets:', error);
@@ -38,22 +53,6 @@ function generateId(): string {
     return `preset_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
-function generateCommands(settings: CrosshairSettings): string {
-    const commands = [
-        `citadel_crosshair_pip_gap ${settings.pipGap}`,
-        `citadel_crosshair_pip_height ${settings.pipHeight}`,
-        `citadel_crosshair_pip_width ${settings.pipWidth}`,
-        `citadel_crosshair_pip_opacity ${settings.pipOpacity.toFixed(2)}`,
-        `citadel_crosshair_pip_border ${settings.pipBorder}`,
-        `citadel_crosshair_dot_opacity ${settings.dotOpacity.toFixed(2)}`,
-        `citadel_crosshair_dot_outline_opacity ${settings.dotOutlineOpacity.toFixed(2)}`,
-        `citadel_crosshair_color_r ${settings.colorR}`,
-        `citadel_crosshair_color_g ${settings.colorG}`,
-        `citadel_crosshair_color_b ${settings.colorB}`,
-    ];
-    return commands.join('\n');
-}
-
 // Get all presets
 ipcMain.handle('crosshair:getPresets', async () => {
     const data = loadPresetsData();
@@ -66,7 +65,7 @@ ipcMain.handle('crosshair:savePreset', async (_event, name: string, settings: Cr
     const preset: CrosshairPreset = {
         id: generateId(),
         name,
-        settings,
+        settings: normalizeCrosshairSettings(settings),
         thumbnail,
         createdAt: new Date().toISOString(),
     };
@@ -86,7 +85,9 @@ ipcMain.handle('crosshair:deletePreset', async (_event, id: string) => {
     return true;
 });
 
-// Apply preset to autoexec.cfg
+// Apply preset to autoexec.cfg (always via the shared marker-section format;
+// the old marker-less format written here pre-1.18 was silently dropped by
+// every other autoexec writer)
 ipcMain.handle('crosshair:applyPreset', async (_event, presetId: string, gamePath: string) => {
     const data = loadPresetsData();
     const preset = data.presets.find(p => p.id === presetId);
@@ -99,48 +100,18 @@ ipcMain.handle('crosshair:applyPreset', async (_event, presetId: string, gamePat
         throw new Error('Game path not configured');
     }
 
-    // Path to autoexec.cfg
-    const cfgDir = path.join(gamePath, 'game', 'citadel', 'cfg');
-    const autoexecPath = path.join(cfgDir, 'autoexec.cfg');
-
-    // Ensure cfg directory exists
-    if (!fs.existsSync(cfgDir)) {
-        fs.mkdirSync(cfgDir, { recursive: true });
-    }
-
-    // Generate crosshair commands
-    const crosshairCommands = generateCommands(preset.settings);
-
-    // Read existing autoexec or create new
-    let existingContent = '';
-    if (fs.existsSync(autoexecPath)) {
-        existingContent = fs.readFileSync(autoexecPath, 'utf-8');
-    }
-
-    // Remove any existing crosshair commands
-    const lines = existingContent.split('\n').filter(line =>
-        !line.trim().startsWith('citadel_crosshair_')
-    );
-
-    // Add header comment and new crosshair commands
-    const crosshairSection = [
-        '',
-        '// Crosshair settings from Deadlock Mod Manager',
+    const autoexec = readAutoexec(gamePath);
+    autoexec.crosshair = [
         `// Preset: ${preset.name}`,
-        crosshairCommands,
-        '',
+        generateCrosshairCommands(preset.settings),
     ].join('\n');
-
-    // Combine: existing (without crosshair) + new crosshair section
-    const newContent = lines.join('\n').trim() + crosshairSection;
-
-    fs.writeFileSync(autoexecPath, newContent);
+    writeAutoexec(gamePath, autoexec);
 
     // Update active preset
     data.activePresetId = presetId;
     savePresetsData(data);
 
-    return { success: true, path: autoexecPath };
+    return { success: true, path: getAutoexecPath(gamePath) };
 });
 
 // Clear autoexec crosshair settings
@@ -149,17 +120,10 @@ ipcMain.handle('crosshair:clearAutoexec', async (_event, gamePath: string) => {
         throw new Error('Game path not configured');
     }
 
-    const autoexecPath = path.join(gamePath, 'game', 'citadel', 'cfg', 'autoexec.cfg');
-
-    if (fs.existsSync(autoexecPath)) {
-        const content = fs.readFileSync(autoexecPath, 'utf-8');
-        // Remove crosshair lines and comments
-        const lines = content.split('\n').filter(line =>
-            !line.trim().startsWith('citadel_crosshair_') &&
-            !line.includes('Crosshair settings from Deadlock Mod Manager') &&
-            !line.includes('// Preset:')
-        );
-        fs.writeFileSync(autoexecPath, lines.join('\n'));
+    if (fs.existsSync(getAutoexecPath(gamePath))) {
+        const autoexec = readAutoexec(gamePath);
+        autoexec.crosshair = null;
+        writeAutoexec(gamePath, autoexec);
     }
 
     const data = loadPresetsData();
@@ -175,7 +139,7 @@ ipcMain.handle('crosshair:getAutoexecStatus', async (_event, gamePath: string) =
         return { exists: false, path: null, hasLaunchOption: false };
     }
 
-    const autoexecPath = path.join(gamePath, 'game', 'citadel', 'cfg', 'autoexec.cfg');
+    const autoexecPath = getAutoexecPath(gamePath);
     const exists = fs.existsSync(autoexecPath);
 
     let hasCrosshairSettings = false;
@@ -197,8 +161,8 @@ ipcMain.handle('crosshair:createAutoexec', async (_event, gamePath: string) => {
         throw new Error('Game path not configured');
     }
 
-    const cfgDir = path.join(gamePath, 'game', 'citadel', 'cfg');
-    const autoexecPath = path.join(cfgDir, 'autoexec.cfg');
+    const autoexecPath = getAutoexecPath(gamePath);
+    const cfgDir = path.dirname(autoexecPath);
 
     // Ensure cfg directory exists
     if (!fs.existsSync(cfgDir)) {
@@ -208,10 +172,10 @@ ipcMain.handle('crosshair:createAutoexec', async (_event, gamePath: string) => {
     // Create with a header comment
     const content = `// Deadlock autoexec.cfg
 // Created by Deadlock Mod Manager
-// 
+//
 // This file is executed when you start the game.
 // Add your custom commands below.
-// 
+//
 // TIP: Make sure to add "+exec autoexec" to your Steam launch options:
 // Right-click Deadlock in Steam > Properties > Launch Options > add: +exec autoexec
 
@@ -222,92 +186,29 @@ ipcMain.handle('crosshair:createAutoexec', async (_event, gamePath: string) => {
     return { success: true, path: autoexecPath };
 });
 
-// Section markers for autoexec
-const CROSSHAIR_START = '// === CROSSHAIR SETTINGS (Mod Manager) ===';
-const CROSSHAIR_END = '// === END CROSSHAIR ===';
-const COMMANDS_START = '// === AUTOEXEC COMMANDS (Mod Manager) ===';
-const COMMANDS_END = '// === END COMMANDS ===';
+// Import the player's live in-game crosshair from machine_convars.vcfg (the
+// KV file where the game persists settings changed in its own UI)
+ipcMain.handle('crosshair:importFromGame', async (_event, gamePath: string) => {
+    if (!gamePath) {
+        return { found: false, settings: null };
+    }
 
-// Helper to parse autoexec into sections
-function parseAutoexec(content: string): { header: string; crosshair: string; commands: string[]; other: string } {
-    const lines = content.split('\n');
-    const header: string[] = [];
-    const crosshair: string[] = [];
-    const commands: string[] = [];
-    const other: string[] = [];
+    const vcfgPath = path.join(gamePath, 'game', 'citadel', 'cfg', 'machine_convars.vcfg');
+    if (!fs.existsSync(vcfgPath)) {
+        return { found: false, settings: null };
+    }
 
-    let section: 'header' | 'crosshair' | 'commands' | 'other' = 'header';
-
-    for (const line of lines) {
-        if (line.includes(CROSSHAIR_START)) {
-            section = 'crosshair';
-            continue;
-        } else if (line.includes(CROSSHAIR_END)) {
-            section = 'other';
-            continue;
-        } else if (line.includes(COMMANDS_START)) {
-            section = 'commands';
-            continue;
-        } else if (line.includes(COMMANDS_END)) {
-            section = 'other';
-            continue;
+    try {
+        const partial = parseMachineConvarsCrosshair(fs.readFileSync(vcfgPath, 'utf-8'));
+        if (Object.keys(partial).length === 0) {
+            return { found: false, settings: null };
         }
-
-        if (section === 'header' && !line.includes('Mod Manager') && !line.trim().startsWith('citadel_crosshair_')) {
-            header.push(line);
-        } else if (section === 'crosshair') {
-            crosshair.push(line);
-        } else if (section === 'commands') {
-            if (line.trim()) commands.push(line.trim());
-        } else if (section === 'other') {
-            // Check if it's an old-style crosshair command (before sections were added)
-            if (!line.trim().startsWith('citadel_crosshair_') &&
-                !line.includes('Crosshair settings from Deadlock Mod Manager') &&
-                !line.includes('// Preset:')) {
-                other.push(line);
-            }
-        }
+        return { found: true, settings: normalizeCrosshairSettings(partial) };
+    } catch (error) {
+        console.error('[CrosshairPresets] Error reading machine_convars.vcfg:', error);
+        return { found: false, settings: null };
     }
-
-    return {
-        header: header.join('\n').trim(),
-        crosshair: crosshair.join('\n').trim(),
-        commands,
-        other: other.join('\n').trim(),
-    };
-}
-
-// Helper to build autoexec content from sections
-function buildAutoexec(header: string, crosshairContent: string | null, commands: string[]): string {
-    const parts: string[] = [];
-
-    // Header (user's manual content)
-    if (header) {
-        parts.push(header);
-    } else {
-        parts.push('// Deadlock autoexec.cfg');
-        parts.push('// Managed by Deadlock Mod Manager');
-        parts.push('// Add +exec autoexec to Steam launch options');
-    }
-
-    // Commands section
-    if (commands.length > 0) {
-        parts.push('');
-        parts.push(COMMANDS_START);
-        parts.push(...commands);
-        parts.push(COMMANDS_END);
-    }
-
-    // Crosshair section
-    if (crosshairContent) {
-        parts.push('');
-        parts.push(CROSSHAIR_START);
-        parts.push(crosshairContent);
-        parts.push(CROSSHAIR_END);
-    }
-
-    return parts.join('\n') + '\n';
-}
+});
 
 // Get autoexec commands (non-crosshair)
 ipcMain.handle('autoexec:getCommands', async (_event, gamePath: string) => {
@@ -315,46 +216,24 @@ ipcMain.handle('autoexec:getCommands', async (_event, gamePath: string) => {
         return { commands: [], exists: false };
     }
 
-    const autoexecPath = path.join(gamePath, 'game', 'citadel', 'cfg', 'autoexec.cfg');
-
-    if (!fs.existsSync(autoexecPath)) {
+    if (!fs.existsSync(getAutoexecPath(gamePath))) {
         return { commands: [], exists: false };
     }
 
-    const content = fs.readFileSync(autoexecPath, 'utf-8');
-    const parsed = parseAutoexec(content);
-
-    return { commands: parsed.commands, exists: true };
+    const autoexec = readAutoexec(gamePath);
+    return { commands: autoexec.commands, exists: true };
 });
 
-// Save autoexec commands (preserves crosshair section)
+// Save autoexec commands (preserves the crosshair section and any manual
+// content before/after the managed sections)
 ipcMain.handle('autoexec:saveCommands', async (_event, gamePath: string, commands: string[]) => {
     if (!gamePath) {
         throw new Error('Game path not configured');
     }
 
-    const cfgDir = path.join(gamePath, 'game', 'citadel', 'cfg');
-    const autoexecPath = path.join(cfgDir, 'autoexec.cfg');
+    const autoexec = readAutoexec(gamePath);
+    autoexec.commands = commands;
+    writeAutoexec(gamePath, autoexec);
 
-    // Ensure cfg directory exists
-    if (!fs.existsSync(cfgDir)) {
-        fs.mkdirSync(cfgDir, { recursive: true });
-    }
-
-    // Parse existing content to preserve crosshair settings
-    let crosshairContent: string | null = null;
-    let header = '';
-
-    if (fs.existsSync(autoexecPath)) {
-        const content = fs.readFileSync(autoexecPath, 'utf-8');
-        const parsed = parseAutoexec(content);
-        crosshairContent = parsed.crosshair || null;
-        header = parsed.header;
-    }
-
-    // Build new content
-    const newContent = buildAutoexec(header, crosshairContent, commands);
-    fs.writeFileSync(autoexecPath, newContent);
-
-    return { success: true, path: autoexecPath };
+    return { success: true, path: getAutoexecPath(gamePath) };
 });

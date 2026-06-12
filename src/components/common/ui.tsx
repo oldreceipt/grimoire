@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Check, type LucideIcon } from 'lucide-react';
 
 interface CardProps {
@@ -168,6 +168,50 @@ interface SliderProps {
     showValue?: boolean;
     className?: string;
     formatValue?: (val: number) => string;
+    /** Render the value badge as a typed number input (commit on blur/Enter,
+     *  clamped to min/max) for exact entry alongside the slider. */
+    editable?: boolean;
+}
+
+function SliderValueInput({ value, min, max, step, onChange }: {
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    onChange: (value: number) => void;
+}) {
+    const [text, setText] = useState(String(value));
+    useEffect(() => { setText(String(value)); }, [value]);
+
+    const commit = () => {
+        const n = parseFloat(text);
+        if (Number.isFinite(n)) {
+            const clamped = Math.min(max, Math.max(min, n));
+            onChange(clamped);
+            setText(String(clamped));
+        } else {
+            setText(String(value));
+        }
+    };
+
+    return (
+        <input
+            type="number"
+            value={text}
+            min={min}
+            max={max}
+            step={step}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                    commit();
+                    e.currentTarget.blur();
+                }
+            }}
+            className="w-16 text-right text-xs font-mono text-text-primary bg-bg-tertiary px-1.5 py-0.5 rounded-sm border border-transparent focus:border-accent focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+    );
 }
 
 export function Slider({
@@ -179,19 +223,24 @@ export function Slider({
     label,
     showValue = true,
     className = '',
-    formatValue
+    formatValue,
+    editable = false
 }: SliderProps) {
-    const percentage = ((value - min) / (max - min)) * 100;
+    // Clamp so out-of-range values (e.g. imported from external config) can't
+    // push the thumb outside the track.
+    const percentage = Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
 
     return (
         <div className={`space-y-2 ${className}`}>
             <div className="flex justify-between items-center">
                 {label && <label className="text-sm font-medium text-text-secondary">{label}</label>}
-                {showValue && (
+                {showValue && (editable ? (
+                    <SliderValueInput value={value} min={min} max={max} step={step} onChange={onChange} />
+                ) : (
                     <span className="text-xs font-mono text-text-primary bg-bg-tertiary px-1.5 py-0.5 rounded-sm">
                         {formatValue ? formatValue(value) : value}
                     </span>
-                )}
+                ))}
             </div>
             <div className="relative h-6 flex items-center group">
                 <div className="absolute w-full h-1.5 bg-bg-tertiary rounded-full overflow-hidden">

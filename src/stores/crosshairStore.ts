@@ -1,30 +1,12 @@
 import { create } from 'zustand';
+import type { CrosshairSettings, CrosshairPreset } from '../types/electron';
+import {
+    CROSSHAIR_DEFAULTS,
+    generateCrosshairCommands,
+    normalizeCrosshairSettings,
+} from '../lib/crosshair';
 
-export interface CrosshairSettings {
-    // Pip settings
-    pipGap: number;
-    pipHeight: number;
-    pipWidth: number;
-    pipOpacity: number;
-    pipBorder: boolean;
-
-    // Dot settings
-    dotOpacity: number;
-    dotOutlineOpacity: number;
-
-    // Color settings (RGB 0-255)
-    colorR: number;
-    colorG: number;
-    colorB: number;
-}
-
-export interface CrosshairPreset {
-    id: string;
-    name: string;
-    settings: CrosshairSettings;
-    thumbnail: string;
-    createdAt: string;
-}
+export type { CrosshairSettings, CrosshairPreset };
 
 interface CrosshairStore extends CrosshairSettings {
     // Presets
@@ -32,23 +14,38 @@ interface CrosshairStore extends CrosshairSettings {
     activePresetId: string | null;
     isLoading: boolean;
 
-    // Setters
+    // Pip setters
     setPipGap: (value: number) => void;
+    setPipGapStatic: (value: boolean) => void;
     setPipHeight: (value: number) => void;
     setPipWidth: (value: number) => void;
     setPipOpacity: (value: number) => void;
-    setPipBorder: (value: boolean) => void;
+    setPipOutlineBorder: (value: number) => void;
+    setPipOutlineGap: (value: number) => void;
+    setPipOutlineOpacity: (value: number) => void;
+
+    // Dot setters
     setDotOpacity: (value: number) => void;
+    setDotSize: (value: number) => void;
+    setDotOutlineBorder: (value: number) => void;
+    setDotOutlineGap: (value: number) => void;
     setDotOutlineOpacity: (value: number) => void;
+
+    // Color setters
     setColorR: (value: number) => void;
     setColorG: (value: number) => void;
     setColorB: (value: number) => void;
     setColor: (r: number, g: number, b: number) => void;
+    setOutlineColor: (r: number, g: number, b: number) => void;
+
+    // Behavior setters
+    setDisableHeroSpecificCrosshairs: (value: boolean) => void;
 
     // Actions
     reset: () => void;
     generateCommands: () => string;
     getSettings: () => CrosshairSettings;
+    importFromGame: (gamePath: string) => Promise<boolean>;
 
     // Preset actions
     loadPresets: () => Promise<void>;
@@ -59,34 +56,27 @@ interface CrosshairStore extends CrosshairSettings {
     clearAutoexec: (gamePath: string) => Promise<void>;
 }
 
-const defaultSettings: CrosshairSettings = {
-    pipGap: 5,
-    pipHeight: 10,
-    pipWidth: 2,
-    pipOpacity: 1,
-    pipBorder: true,
-    dotOpacity: 0,
-    dotOutlineOpacity: 0,
-    colorR: 0,
-    colorG: 255,
-    colorB: 0,
-};
-
 export const useCrosshairStore = create<CrosshairStore>((set, get) => ({
-    ...defaultSettings,
+    ...CROSSHAIR_DEFAULTS,
     presets: [],
     activePresetId: null,
     isLoading: false,
 
     // Pip setters
     setPipGap: (value) => set({ pipGap: value }),
+    setPipGapStatic: (value) => set({ pipGapStatic: value }),
     setPipHeight: (value) => set({ pipHeight: value }),
     setPipWidth: (value) => set({ pipWidth: value }),
     setPipOpacity: (value) => set({ pipOpacity: value }),
-    setPipBorder: (value) => set({ pipBorder: value }),
+    setPipOutlineBorder: (value) => set({ pipOutlineBorder: value }),
+    setPipOutlineGap: (value) => set({ pipOutlineGap: value }),
+    setPipOutlineOpacity: (value) => set({ pipOutlineOpacity: value }),
 
     // Dot setters
     setDotOpacity: (value) => set({ dotOpacity: value }),
+    setDotSize: (value) => set({ dotSize: value }),
+    setDotOutlineBorder: (value) => set({ dotOutlineBorder: value }),
+    setDotOutlineGap: (value) => set({ dotOutlineGap: value }),
     setDotOutlineOpacity: (value) => set({ dotOutlineOpacity: value }),
 
     // Color setters
@@ -94,43 +84,28 @@ export const useCrosshairStore = create<CrosshairStore>((set, get) => ({
     setColorG: (value) => set({ colorG: value }),
     setColorB: (value) => set({ colorB: value }),
     setColor: (r, g, b) => set({ colorR: r, colorG: g, colorB: b }),
+    setOutlineColor: (r, g, b) => set({ outlineColorR: r, outlineColorG: g, outlineColorB: b }),
+
+    // Behavior setters
+    setDisableHeroSpecificCrosshairs: (value) => set({ disableHeroSpecificCrosshairs: value }),
 
     // Reset to defaults
-    reset: () => set(defaultSettings),
+    reset: () => set(CROSSHAIR_DEFAULTS),
 
-    // Get current settings
-    getSettings: () => {
-        const state = get();
-        return {
-            pipGap: state.pipGap,
-            pipHeight: state.pipHeight,
-            pipWidth: state.pipWidth,
-            pipOpacity: state.pipOpacity,
-            pipBorder: state.pipBorder,
-            dotOpacity: state.dotOpacity,
-            dotOutlineOpacity: state.dotOutlineOpacity,
-            colorR: state.colorR,
-            colorG: state.colorG,
-            colorB: state.colorB,
-        };
-    },
+    // Get current settings (normalized, with the legacy pipBorder flag derived)
+    getSettings: () => normalizeCrosshairSettings(get()),
 
     // Generate console commands
-    generateCommands: () => {
-        const state = get();
-        const commands = [
-            `citadel_crosshair_pip_gap ${state.pipGap}`,
-            `citadel_crosshair_pip_height ${state.pipHeight}`,
-            `citadel_crosshair_pip_width ${state.pipWidth}`,
-            `citadel_crosshair_pip_opacity ${state.pipOpacity.toFixed(2)}`,
-            `citadel_crosshair_pip_border ${state.pipBorder}`,
-            `citadel_crosshair_dot_opacity ${state.dotOpacity.toFixed(2)}`,
-            `citadel_crosshair_dot_outline_opacity ${state.dotOutlineOpacity.toFixed(2)}`,
-            `citadel_crosshair_color_r ${state.colorR}`,
-            `citadel_crosshair_color_g ${state.colorG}`,
-            `citadel_crosshair_color_b ${state.colorB}`,
-        ];
-        return commands.join('; ');
+    generateCommands: () => generateCrosshairCommands(get()),
+
+    // Pull the player's live in-game crosshair from machine_convars.vcfg
+    importFromGame: async (gamePath) => {
+        const result = await window.electronAPI.importCrosshairFromGame(gamePath);
+        if (result.settings) {
+            set(result.settings);
+            return true;
+        }
+        return false;
     },
 
     // Load presets from backend
@@ -169,9 +144,10 @@ export const useCrosshairStore = create<CrosshairStore>((set, get) => ({
         set({ activePresetId: id });
     },
 
-    // Load settings from a preset into the editor
+    // Load settings from a preset into the editor (normalize so legacy
+    // presets saved before the outline system fill in the new fields)
     loadSettingsFromPreset: (preset) => {
-        set(preset.settings);
+        set(normalizeCrosshairSettings(preset.settings));
     },
 
     // Clear crosshair from autoexec
