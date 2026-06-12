@@ -5,6 +5,7 @@ import { scanMods } from './mods';
 import { getModMetadata } from './metadata';
 import { isLockerManaged } from './lockerVpk';
 import { fetchModDetails } from './gamebanana';
+import { normalizeCrosshairSettings } from '../../../src/lib/crosshair';
 import type {
     PortableProfile,
     PortableModEntry,
@@ -553,7 +554,11 @@ export async function createProfileFromPortable(
         id: generateProfileId(),
         name: portable.profile.name,
         mods: profileMods,
-        crosshair: portable.extensions?.grimoire?.crosshair,
+        // Older exports carry the legacy 10-field shape; fill the outline/dot
+        // fields with defaults so the stored profile is always current-model.
+        crosshair: portable.extensions?.grimoire?.crosshair
+            ? normalizeCrosshairSettings(portable.extensions.grimoire.crosshair)
+            : undefined,
         autoexecCommands: portable.extensions?.grimoire?.autoexecCommands,
         createdAt: now,
         updatedAt: now,

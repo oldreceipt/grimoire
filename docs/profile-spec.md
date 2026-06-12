@@ -189,10 +189,10 @@ Rules:
 
 | Field | Type | Notes |
 |---|---|---|
-| `crosshair` | object | Citadel crosshair settings (10 numeric / boolean fields). Source 2 console variables. |
+| `crosshair` | object | Citadel crosshair settings. Source 2 console variables. |
 | `autoexecCommands` | string[] | Console command lines to write to `autoexec.cfg`. Importers MUST show these to the user before applying. |
 
-The full crosshair shape is defined in Grimoire's `ProfileCrosshairSettings` interface.
+The full crosshair shape is defined in Grimoire's `PortableCrosshairSettings` interface (`src/types/portableProfile.ts`). The original 10 fields (`pipGap`, `pipHeight`, `pipWidth`, `pipOpacity`, `pipBorder`, `dotOpacity`, `dotOutlineOpacity`, `colorR/G/B`) are always present. Grimoire 1.18 added optional fields for the game's outline system (`pipGapStatic`, `pipOutlineBorder/Gap/Opacity`, `dotSize`, `dotOutlineBorder/Gap`, `outlineColorR/G/B`, `disableHeroSpecificCrosshairs`); exporters keep writing `pipBorder` (derived from `pipOutlineBorder > 0`) so older importers stay compatible, and importers fill missing optional fields with defaults.
 
 ## Security notes for implementers
 

@@ -1,13 +1,31 @@
 import { useState, useEffect, useRef } from 'react';
-import { Copy, Check, RotateCcw, Save, Trash2, Play, Pin, XCircle } from 'lucide-react';
+import { Copy, Check, RotateCcw, Save, Trash2, Play, Pin, XCircle, Download } from 'lucide-react';
 import { useCrosshairStore } from '../stores/crosshairStore';
 import CrosshairPreview from '../components/crosshair/CrosshairPreview';
+import { renderCrosshairThumbnail } from '../components/crosshair/drawCrosshair';
 import { getSettings } from '../lib/api';
 import { Card, Slider, Toggle, Button } from '../components/common/ui';
 
+// The in-game crosshair is authored in 1080p-reference px and scaled by
+// screen height, so the preview multiplies by (resolution / 1080).
+const RESOLUTIONS = [
+    { label: '1080p', height: 1080 },
+    { label: '1440p', height: 1440 },
+    { label: '4K', height: 2160 },
+];
+
+function detectResolutionHeight(): number {
+    const h = window.screen.height * (window.devicePixelRatio || 1);
+    if (h >= 2160) return 2160;
+    if (h >= 1440) return 1440;
+    return 1080;
+}
+
 export default function Crosshair() {
     const [copied, setCopied] = useState(false);
-    const [previewScale, setPreviewScale] = useState(1.3); // 1.3 matches 1440p in-game
+    const [imported, setImported] = useState(false);
+    const [resolution, setResolution] = useState(detectResolutionHeight);
+    const [previewZoom, setPreviewZoom] = useState(1);
     const [presetName, setPresetName] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const [showSaveInput, setShowSaveInput] = useState(false);
@@ -17,27 +35,47 @@ export default function Crosshair() {
 
     const {
         pipGap,
+        pipGapStatic,
         pipHeight,
         pipWidth,
         pipOpacity,
-        pipBorder,
+        pipOutlineBorder,
+        pipOutlineGap,
+        pipOutlineOpacity,
         dotOpacity,
+        dotSize,
+        dotOutlineBorder,
+        dotOutlineGap,
         dotOutlineOpacity,
         colorR,
         colorG,
         colorB,
+        outlineColorR,
+        outlineColorG,
+        outlineColorB,
+        disableHeroSpecificCrosshairs,
         setPipGap,
+        setPipGapStatic,
         setPipHeight,
         setPipWidth,
         setPipOpacity,
-        setPipBorder,
+        setPipOutlineBorder,
+        setPipOutlineGap,
+        setPipOutlineOpacity,
         setDotOpacity,
+        setDotSize,
+        setDotOutlineBorder,
+        setDotOutlineGap,
         setDotOutlineOpacity,
         setColorR,
         setColorG,
         setColorB,
+        setOutlineColor,
+        setDisableHeroSpecificCrosshairs,
         reset,
         generateCommands,
+        getSettings: getCrosshairSettings,
+        importFromGame,
         presets,
         activePresetId,
         loadPresets,
@@ -55,6 +93,21 @@ export default function Crosshair() {
         // Load always on top state
         window.electronAPI.getAlwaysOnTop().then(setAlwaysOnTop);
     }, [loadPresets]);
+
+    // Wheel-to-zoom over the preview. Attached natively with passive: false
+    // because React's root-delegated onWheel is passive, so preventDefault()
+    // there is a no-op and the wheel would zoom AND scroll the column.
+    useEffect(() => {
+        const el = previewRef.current;
+        if (!el) return;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.1 : 0.1;
+            setPreviewZoom((prev) => Math.min(3, Math.max(0.5, prev + delta)));
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => el.removeEventListener('wheel', onWheel);
+    }, []);
 
     const handleAlwaysOnTop = async (enabled: boolean) => {
         const result = await window.electronAPI.setAlwaysOnTop(enabled);
@@ -91,47 +144,37 @@ export default function Crosshair() {
         }
     };
 
-    const generateThumbnail = (): string => {
-        // Create thumbnail using same formula as CrosshairPreview
-        // Scale proportionally: preview is 400px, thumbnail viewBox is 100
-        const baseGap = 9;
-        const gapMultiplier = 2.5;
-        const scale = 1.3;
-        const scaleFactor = 100 / 400; // Match proportions of 400px preview
+    const handleOutlineColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const rgb = hexToRgb(e.target.value);
+        if (rgb) {
+            setOutlineColor(rgb.r, rgb.g, rgb.b);
+        }
+    };
 
-        const lineGap = (baseGap + pipGap * gapMultiplier) * scale * scaleFactor;
-        const lineWidth = pipWidth * scale * scaleFactor;
-        const lineHeight = pipHeight * scale * scaleFactor;
-        const halfGap = lineGap / 2;
-        const center = 50;
-
-        // Use rgba like CrosshairPreview does
-        const pipColor = `rgba(${colorR}, ${colorG}, ${colorB}, ${pipOpacity})`;
-        const dotFillColor = `rgba(${colorR}, ${colorG}, ${colorB}, ${dotOpacity})`;
-
-        const svg = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
-                <rect width="100" height="100" fill="#555"/>
-                <!-- Top pip - centered at (center, center - halfGap) -->
-                <rect x="${center - lineWidth / 2}" y="${center - halfGap - lineHeight / 2}" width="${lineWidth}" height="${lineHeight}" fill="${pipColor}"${pipBorder ? ' stroke="black" stroke-width="0.25"' : ''}/>
-                <!-- Bottom pip - centered at (center, center + halfGap) -->
-                <rect x="${center - lineWidth / 2}" y="${center + halfGap - lineHeight / 2}" width="${lineWidth}" height="${lineHeight}" fill="${pipColor}"${pipBorder ? ' stroke="black" stroke-width="0.25"' : ''}/>
-                <!-- Left pip - centered at (center - halfGap, center) -->
-                <rect x="${center - halfGap - lineHeight / 2}" y="${center - lineWidth / 2}" width="${lineHeight}" height="${lineWidth}" fill="${pipColor}"${pipBorder ? ' stroke="black" stroke-width="0.25"' : ''}/>
-                <!-- Right pip - centered at (center + halfGap, center) -->
-                <rect x="${center + halfGap - lineHeight / 2}" y="${center - lineWidth / 2}" width="${lineHeight}" height="${lineWidth}" fill="${pipColor}"${pipBorder ? ' stroke="black" stroke-width="0.25"' : ''}/>
-                ${dotOpacity > 0 ? `<circle cx="${center}" cy="${center}" r="${2 * scale * scaleFactor}" fill="${dotFillColor}"/>` : ''}
-                ${dotOutlineOpacity > 0 ? `<circle cx="${center}" cy="${center}" r="${7 * scale * scaleFactor / 2}" fill="rgba(0,0,0,${dotOutlineOpacity})"/>` : ''}
-            </svg>
-        `;
-        return `data:image/svg+xml;base64,${btoa(svg)}`;
+    const handleImportFromGame = async () => {
+        if (!gamePath) {
+            alert('Please configure your Deadlock game path in Settings first.');
+            return;
+        }
+        try {
+            const found = await importFromGame(gamePath);
+            if (found) {
+                setImported(true);
+                setTimeout(() => setImported(false), 2000);
+            } else {
+                alert('No crosshair settings found in the game config. Change any crosshair setting in-game once, then try again.');
+            }
+        } catch (error) {
+            console.error('Failed to import crosshair from game:', error);
+            alert('Failed to read the game config. Check the game path in Settings.');
+        }
     };
 
     const handleSavePreset = async () => {
         if (!presetName.trim()) return;
         setIsSaving(true);
         try {
-            const thumbnail = generateThumbnail();
+            const thumbnail = renderCrosshairThumbnail(getCrosshairSettings());
             await savePreset(presetName.trim(), thumbnail);
             setPresetName('');
             setShowSaveInput(false);
@@ -185,24 +228,49 @@ export default function Crosshair() {
     };
 
     return (
-        <div className="p-6 space-y-6">
-            <div className="flex flex-col lg:flex-row gap-6">
+        <div className="p-6 lg:h-full">
+            {/* On lg+ the page fills the viewport and each column scrolls
+                independently, so the preview stays reachable while the long
+                settings list scrolls. Below lg the page scrolls as one. */}
+            <div className="flex flex-col lg:flex-row gap-6 lg:h-full">
                 {/* Left Panel - Settings */}
-                <div className="w-full lg:w-1/3 flex flex-col gap-6">
+                <div className="w-full lg:w-1/3 flex flex-col gap-6 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                     <Card title="Crosshair Shape">
                         <div className="space-y-6">
-                            <Slider label="Gap" value={pipGap} min={-10} max={50} onChange={setPipGap} />
-                            <Slider label="Height" value={pipHeight} min={0} max={50} onChange={setPipHeight} />
-                            <Slider label="Width" value={pipWidth} min={0} max={10} step={0.5} onChange={setPipWidth} />
-                            <Slider label="Opacity" value={pipOpacity} min={0} max={1} step={0.05} onChange={setPipOpacity} />
-                            <Toggle label="Outline Border" checked={pipBorder} onChange={setPipBorder} />
+                            <Slider editable label="Gap" value={pipGap} min={-10} max={50} onChange={setPipGap} />
+                            <Slider editable label="Height" value={pipHeight} min={0} max={50} onChange={setPipHeight} />
+                            <Slider editable label="Width" value={pipWidth} min={0} max={10} step={0.5} onChange={setPipWidth} />
+                            <Slider editable label="Opacity" value={pipOpacity} min={0} max={1} step={0.05} onChange={setPipOpacity} />
+                            <Slider editable label="Outline Width" value={pipOutlineBorder} min={0} max={5} onChange={setPipOutlineBorder} />
+                            <Slider editable label="Outline Gap" value={pipOutlineGap} min={0} max={10} step={0.5} onChange={setPipOutlineGap} />
+                            <Slider editable label="Outline Opacity" value={pipOutlineOpacity} min={0} max={1} step={0.05} onChange={setPipOutlineOpacity} />
                         </div>
                     </Card>
 
                     <Card title="Center Dot">
                         <div className="space-y-6">
-                            <Slider label="Opacity" value={dotOpacity} min={0} max={1} step={0.05} onChange={setDotOpacity} />
-                            <Slider label="Outline Opacity" value={dotOutlineOpacity} min={0} max={1} step={0.05} onChange={setDotOutlineOpacity} />
+                            <Slider editable label="Size" value={dotSize} min={0} max={20} step={0.5} onChange={setDotSize} />
+                            <Slider editable label="Opacity" value={dotOpacity} min={0} max={1} step={0.05} onChange={setDotOpacity} />
+                            <Slider editable label="Outline Width" value={dotOutlineBorder} min={0} max={5} onChange={setDotOutlineBorder} />
+                            <Slider editable label="Outline Gap" value={dotOutlineGap} min={0} max={10} step={0.5} onChange={setDotOutlineGap} />
+                            <Slider editable label="Outline Opacity" value={dotOutlineOpacity} min={0} max={1} step={0.05} onChange={setDotOutlineOpacity} />
+                        </div>
+                    </Card>
+
+                    <Card title="In-Game Behavior">
+                        <div className="space-y-4">
+                            <Toggle
+                                label="Static Gap"
+                                description="Keep the gap fixed. When off, the in-game gap expands with weapon spread (not simulated in the preview)."
+                                checked={pipGapStatic}
+                                onChange={setPipGapStatic}
+                            />
+                            <Toggle
+                                label="Disable Hero Crosshairs"
+                                description="Some heroes override the crosshair with their own. Turn this on so your custom crosshair always wins."
+                                checked={disableHeroSpecificCrosshairs}
+                                onChange={setDisableHeroSpecificCrosshairs}
+                            />
                         </div>
                     </Card>
 
@@ -238,21 +306,42 @@ export default function Crosshair() {
                                     />
                                 ))}
                             </div>
-                            <Slider label="Red" value={colorR} min={0} max={255} onChange={setColorR} className="accent-red-500" />
-                            <Slider label="Green" value={colorG} min={0} max={255} onChange={setColorG} className="accent-green-500" />
-                            <Slider label="Blue" value={colorB} min={0} max={255} onChange={setColorB} className="accent-blue-500" />
+                            <Slider editable label="Red" value={colorR} min={0} max={255} onChange={setColorR} className="accent-red-500" />
+                            <Slider editable label="Green" value={colorG} min={0} max={255} onChange={setColorG} className="accent-green-500" />
+                            <Slider editable label="Blue" value={colorB} min={0} max={255} onChange={setColorB} className="accent-blue-500" />
+                            <div className="flex items-center gap-4 p-3 bg-black/20 rounded-lg">
+                                <input
+                                    type="color"
+                                    value={rgbToHex(outlineColorR, outlineColorG, outlineColorB)}
+                                    onChange={handleOutlineColorChange}
+                                    className="w-8 h-8 rounded cursor-pointer bg-transparent border-none"
+                                />
+                                <div className="text-xs text-text-secondary">
+                                    Outline color
+                                    <span className="ml-2 font-mono">RGB({outlineColorR}, {outlineColorG}, {outlineColorB})</span>
+                                </div>
+                            </div>
                         </div>
                     </Card>
                 </div>
 
                 {/* Right Panel - Preview & Actions */}
-                <div className="flex-1 flex flex-col gap-6 min-w-0">
+                <div className="flex-1 flex flex-col gap-6 min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
                     {/* Top Actions Bar */}
                     <div className="flex flex-col sm:flex-row gap-4">
                         <Card className="flex-1" contentClassName="p-3">
                             <div className="flex items-center justify-between gap-3 h-full">
                                 <div className="flex items-center gap-2">
                                     <Button variant="secondary" onClick={reset} icon={RotateCcw} size="sm">Reset</Button>
+                                    <Button
+                                        variant={imported ? 'success' : 'secondary'}
+                                        onClick={handleImportFromGame}
+                                        icon={imported ? Check : Download}
+                                        size="sm"
+                                        title="Load your current in-game crosshair settings into the editor"
+                                    >
+                                        {imported ? 'Imported' : 'Import from Game'}
+                                    </Button>
                                     <Button
                                         variant={copied ? 'success' : 'primary'}
                                         onClick={handleCopy}
@@ -306,12 +395,22 @@ export default function Crosshair() {
                     {/* Preview Area */}
                     <Card className="relative w-full" contentClassName="p-0">
                         <div className="absolute top-4 right-4 z-10 flex items-center gap-3 bg-black/40 backdrop-blur-md rounded-full px-3 py-1.5 border border-white/5">
-                            <span className="text-xs text-text-secondary">Scale:</span>
+                            <select
+                                value={resolution}
+                                onChange={(e) => setResolution(parseInt(e.target.value, 10))}
+                                title="Render the preview at this display resolution's in-game size"
+                                className="bg-transparent text-xs text-text-secondary focus:outline-none cursor-pointer [&>option]:bg-bg-tertiary"
+                            >
+                                {RESOLUTIONS.map((r) => (
+                                    <option key={r.height} value={r.height}>{r.label}</option>
+                                ))}
+                            </select>
+                            <span className="text-xs text-text-secondary">Zoom:</span>
                             <div className="relative w-20 h-4 flex items-center">
                                 <div className="absolute w-full h-1 bg-bg-tertiary rounded-full overflow-hidden">
                                     <div
                                         className="h-full bg-accent"
-                                        style={{ width: `${((previewScale - 0.5) / 2.5) * 100}%` }}
+                                        style={{ width: `${((previewZoom - 0.5) / 2.5) * 100}%` }}
                                     />
                                 </div>
                                 <input
@@ -319,33 +418,28 @@ export default function Crosshair() {
                                     min={0.5}
                                     max={3}
                                     step={0.1}
-                                    value={previewScale}
-                                    onChange={(e) => setPreviewScale(parseFloat(e.target.value))}
+                                    value={previewZoom}
+                                    onChange={(e) => setPreviewZoom(parseFloat(e.target.value))}
                                     className="absolute w-full h-full opacity-0 cursor-pointer"
                                 />
                                 <div
                                     className="absolute h-3 w-3 bg-white rounded-full shadow-lg border border-accent pointer-events-none"
-                                    style={{ left: `calc(${((previewScale - 0.5) / 2.5) * 100}% - 6px)` }}
+                                    style={{ left: `calc(${((previewZoom - 0.5) / 2.5) * 100}% - 6px)` }}
                                 />
                             </div>
-                            <span className="font-mono text-xs w-8">{previewScale.toFixed(1)}x</span>
+                            <span className="font-mono text-xs w-8">{previewZoom.toFixed(1)}x</span>
                         </div>
 
                         <div
                             className="flex items-center justify-center bg-gradient-to-br from-bg-tertiary/50 to-bg-secondary/50 rounded-xl aspect-video lg:h-[420px] w-full overflow-hidden"
                             ref={previewRef}
-                            onWheel={(e) => {
-                                e.preventDefault();
-                                const delta = e.deltaY > 0 ? -0.1 : 0.1;
-                                setPreviewScale((prev) => Math.min(3, Math.max(0.5, prev + delta)));
-                            }}
                         >
-                            <CrosshairPreview size={400} scale={previewScale} />
+                            <CrosshairPreview size={400} scale={(resolution / 1080) * previewZoom} />
                         </div>
 
                         {/* Pin Window Control */}
                         <div className="p-4 border-t border-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                            <p className="text-[10px] text-text-secondary italic">Using verified formula from deadlock-crosshair project</p>
+                            <p className="text-[10px] text-text-secondary italic">Preview approximates the in-game crosshair at the selected resolution. Dynamic spread bloom is not simulated.</p>
                             <Button
                                 variant={alwaysOnTop ? 'primary' : 'secondary'}
                                 size="sm"
@@ -383,7 +477,7 @@ export default function Crosshair() {
                                             }`}
                                     >
                                         <div className="w-full h-full flex items-center justify-center">
-                                            <CrosshairPreview size={80} scale={1.3} settings={preset.settings} transparent />
+                                            <CrosshairPreview size={80} scale={1440 / 1080} settings={preset.settings} transparent />
                                         </div>
 
                                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 p-2">

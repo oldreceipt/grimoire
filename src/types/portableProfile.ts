@@ -60,6 +60,8 @@ export interface PortableModEntry {
 }
 
 export interface PortableCrosshairSettings {
+  // v1 fields: always present, so exports stay readable by older Grimoire
+  // builds (pipBorder is derived from the outline fields on export).
   pipGap: number;
   pipHeight: number;
   pipWidth: number;
@@ -70,6 +72,19 @@ export interface PortableCrosshairSettings {
   colorR: number;
   colorG: number;
   colorB: number;
+  // Additive fields (outline system, dot size). Optional: older exports omit
+  // them and importers fill defaults via normalizeCrosshairSettings.
+  pipGapStatic?: boolean;
+  pipOutlineBorder?: number;
+  pipOutlineGap?: number;
+  pipOutlineOpacity?: number;
+  dotSize?: number;
+  dotOutlineBorder?: number;
+  dotOutlineGap?: number;
+  outlineColorR?: number;
+  outlineColorG?: number;
+  outlineColorB?: number;
+  disableHeroSpecificCrosshairs?: boolean;
 }
 
 export interface GrimoireExtension {
