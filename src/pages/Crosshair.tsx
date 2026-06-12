@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Copy, Check, RotateCcw, Save, Trash2, Play, Pin, XCircle, Download } from 'lucide-react';
 import { useCrosshairStore } from '../stores/crosshairStore';
 import CrosshairPreview from '../components/crosshair/CrosshairPreview';
@@ -30,7 +30,6 @@ export default function Crosshair() {
     const [isSaving, setIsSaving] = useState(false);
     const [showSaveInput, setShowSaveInput] = useState(false);
     const [gamePath, setGamePath] = useState<string | null>(null);
-    const previewRef = useRef<HTMLDivElement>(null);
     const [alwaysOnTop, setAlwaysOnTop] = useState(false);
 
     const {
@@ -93,21 +92,6 @@ export default function Crosshair() {
         // Load always on top state
         window.electronAPI.getAlwaysOnTop().then(setAlwaysOnTop);
     }, [loadPresets]);
-
-    // Wheel-to-zoom over the preview. Attached natively with passive: false
-    // because React's root-delegated onWheel is passive, so preventDefault()
-    // there is a no-op and the wheel would zoom AND scroll the column.
-    useEffect(() => {
-        const el = previewRef.current;
-        if (!el) return;
-        const onWheel = (e: WheelEvent) => {
-            e.preventDefault();
-            const delta = e.deltaY > 0 ? -0.1 : 0.1;
-            setPreviewZoom((prev) => Math.min(3, Math.max(0.5, prev + delta)));
-        };
-        el.addEventListener('wheel', onWheel, { passive: false });
-        return () => el.removeEventListener('wheel', onWheel);
-    }, []);
 
     const handleAlwaysOnTop = async (enabled: boolean) => {
         const result = await window.electronAPI.setAlwaysOnTop(enabled);
@@ -228,13 +212,15 @@ export default function Crosshair() {
     };
 
     return (
-        <div className="p-6 lg:h-full">
+        <div className="p-6 lg:p-0 lg:h-full">
             {/* On lg+ the page fills the viewport and each column scrolls
                 independently, so the preview stays reachable while the long
-                settings list scrolls. Below lg the page scrolls as one. */}
-            <div className="flex flex-col lg:flex-row gap-6 lg:h-full">
+                settings list scrolls. The columns carry the page padding so
+                they tile the full area: no dead zones where the wheel does
+                nothing. Below lg the page scrolls as one. */}
+            <div className="flex flex-col lg:flex-row gap-6 lg:gap-0 lg:h-full">
                 {/* Left Panel - Settings */}
-                <div className="w-full lg:w-1/3 flex flex-col gap-6 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+                <div className="w-full lg:w-1/3 flex flex-col gap-6 lg:min-h-0 lg:overflow-y-auto lg:p-6">
                     <Card title="Crosshair Shape">
                         <div className="space-y-6">
                             <Slider editable label="Gap" value={pipGap} min={-10} max={50} onChange={setPipGap} />
@@ -326,7 +312,7 @@ export default function Crosshair() {
                 </div>
 
                 {/* Right Panel - Preview & Actions */}
-                <div className="flex-1 flex flex-col gap-6 min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
+                <div className="flex-1 flex flex-col gap-6 min-w-0 lg:min-h-0 lg:overflow-y-auto lg:p-6 lg:pl-0">
                     {/* Top Actions Bar */}
                     <div className="flex flex-col sm:flex-row gap-4">
                         <Card className="flex-1" contentClassName="p-3">
@@ -430,10 +416,7 @@ export default function Crosshair() {
                             <span className="font-mono text-xs w-8">{previewZoom.toFixed(1)}x</span>
                         </div>
 
-                        <div
-                            className="flex items-center justify-center bg-gradient-to-br from-bg-tertiary/50 to-bg-secondary/50 rounded-xl aspect-video lg:h-[420px] w-full overflow-hidden"
-                            ref={previewRef}
-                        >
+                        <div className="flex items-center justify-center bg-gradient-to-br from-bg-tertiary/50 to-bg-secondary/50 rounded-xl aspect-video lg:h-[420px] w-full overflow-hidden">
                             <CrosshairPreview size={400} scale={(resolution / 1080) * previewZoom} />
                         </div>
 
