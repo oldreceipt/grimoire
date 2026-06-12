@@ -220,20 +220,28 @@ export function LockerHeroView({
           same look as if the portrait extended that far. */}
       <div className="hidden lg:block absolute inset-0 bg-bg-primary animate-hero-zoom-in overflow-hidden">
         {view3d ? (
-          <Suspense
-            fallback={
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Loader2 className="h-6 w-6 animate-spin text-white/80" />
-              </div>
-            }
-          >
-            <HeroPoseViewer
-              key={`${hero.name}:${activeSkinSourceKey}:${fallbackPoseSkinMetaKey ?? ''}`}
-              heroName={hero.name}
-              skinSources={activeSkinSources}
-              fallbackSkinMetaKey={fallbackPoseSkinMetaKey}
-            />
-          </Suspense>
+          /* Confine the viewer (model, spinner, and failure text alike) to the
+             strip right of the rail + selection column (300+480 at lg,
+             340+540 at xl). The viewer centers its content, so giving it the
+             full backdrop puts the model at the overlay's center: behind the
+             selection column and heavy glass on anything narrower than an
+             ultrawide, which reads as "3D shows nothing". */
+          <div className="absolute inset-y-0 right-0 left-[780px] xl:left-[880px]">
+            <Suspense
+              fallback={
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-white/80" />
+                </div>
+              }
+            >
+              <HeroPoseViewer
+                key={`${hero.name}:${activeSkinSourceKey}:${fallbackPoseSkinMetaKey ?? ''}`}
+                heroName={hero.name}
+                skinSources={activeSkinSources}
+                fallbackSkinMetaKey={fallbackPoseSkinMetaKey}
+              />
+            </Suspense>
+          </div>
         ) : renderSrc ? (
           <img
             src={renderSrc}

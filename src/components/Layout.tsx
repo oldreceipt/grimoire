@@ -16,7 +16,6 @@ import { useAppStore } from '../stores/appStore';
 import type { OneClickSuspiciousFilesData, MultiVpkPickData } from '../types/electron';
 import MultiVpkPickerModal from './MultiVpkPickerModal';
 import DiscordPresence from './DiscordPresence';
-import WindowsTitleBar from './WindowsTitleBar';
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -194,8 +193,6 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen flex-col">
-      {/* Windows-only drag strip; renders nothing on other platforms. */}
-      <WindowsTitleBar />
       <div className="flex min-h-0 flex-1">
       {/* Headless: drives opt-in Discord Rich Presence from the active route. */}
       <DiscordPresence />

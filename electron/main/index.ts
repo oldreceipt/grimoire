@@ -146,21 +146,11 @@ function createWindow(): void {
         show: false, // Don't show until ready to prevent white flash
         backgroundColor: '#0f0f0f', // Dark background matching app theme
         autoHideMenuBar: true,
-        // On Windows the native frame draws a light title bar that clashes
-        // with the dark UI. Hide it and let the OS paint only the
-        // min/max/close controls (the overlay) in app colors; the renderer
-        // supplies the drag region and title via WindowsTitleBar. Linux
-        // keeps its window-manager frame.
-        ...(process.platform === 'win32'
-            ? {
-                  titleBarStyle: 'hidden' as const,
-                  titleBarOverlay: {
-                      color: '#0f0f0f',
-                      symbolColor: '#a1a1aa',
-                      height: 36,
-                  },
-              }
-            : {}),
+        // Standard native frame on every platform. themeSource is forced to
+        // 'dark' above, so Windows draws its title bar dark; the previous
+        // hidden-titleBar + overlay approach put the OS window controls on
+        // top of the renderer, where they collided with in-app controls and
+        // page-level overlays.
         webPreferences: {
             preload: join(__dirname, '../preload/index.cjs'),
             contextIsolation: true,

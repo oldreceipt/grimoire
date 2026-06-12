@@ -3,7 +3,7 @@
 /* Z-index scale. New surfaces pick from this ladder instead of inventing
    values (no more z-[9999]):
      z-30  page-level overlays inside the content area (Locker hero/global panels)
-     z-40  sticky chrome (sidebar, titlebar)
+     z-40  sticky chrome (sidebar)
      z-50  modals (Modal component) and full-screen dialogs
      z-60  surfaces that stack above a modal: toasts, ModDetailsModal
      z-80  context menus and popovers (always top) */
