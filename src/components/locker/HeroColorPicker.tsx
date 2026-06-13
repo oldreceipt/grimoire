@@ -8,10 +8,12 @@ import {
   RotateCcw,
   Sparkles,
   Blend,
+  Waves,
 } from 'lucide-react';
 import {
   applyHeroColor,
   applyHeroPrism,
+  applyTrippyVfx,
   previewHeroColor,
   revertHeroColor,
   getActiveHeroColor,
@@ -28,7 +30,14 @@ import {
   type GStop,
 } from '../../lib/abilityColorPreview';
 import { TRIPPY_ANIMATION_LABELS as ANIMATION_LABELS, TRIPPY_STYLE_LABELS } from '../../lib/trippy';
-import type { TrippyVfxChoice } from '../../types/mod';
+import TrippyPatternPicker from './TrippyPatternPicker';
+import {
+  TRIPPY_ANIMATION_STYLES,
+  type TrippyVfxChoice,
+  type TrippyStyleName,
+  type TrippyAnimationStyle,
+  type TrippyVfxTargets,
+} from '../../types/mod';
 
 interface HeroColorPickerProps {
   heroName: string;
@@ -84,7 +93,22 @@ function approxSwatch(hue: number, saturation: number, brightness: number): stri
 
 const pct = (scale: number): number => Math.round(scale * 100);
 
-type ColorMode = 'hue' | 'prism' | 'gradient';
+type ColorMode = 'hue' | 'prism' | 'gradient' | 'trippy';
+
+/** Defaults for a fresh Trippy abilities pick: an animated cycle so the effect
+ *  visibly moves in game out of the box (the showiest of the animation styles). */
+const TRIPPY_DEFAULTS: TrippyVfxChoice = {
+  style: 'confetti',
+  intensity: 1,
+  phase: 0,
+  animationStyle: 'cycle',
+  animationIntensity: 1,
+  targets: 'all',
+};
+
+/** Quantize to the 2 decimals the main process keys its trippy caches by, so the
+ *  dirty check compares like with like. */
+const q = (x: number): number => Math.round(x * 100) / 100;
 
 /**
  * The Abilities surface of the Effects panel: repaint a hero's ability VFX
@@ -118,6 +142,16 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
   // Gradient mode: the chosen preset name (or 'custom') and the custom editor stops.
   const [gradientPreset, setGradientPreset] = useState<string>(GRADIENT_PRESETS[0].name);
   const [customStops, setCustomStops] = useState<GStop[]>(DEFAULT_CUSTOM_STOPS);
+  // Trippy mode: a procedural pattern paint over the same slot (style + strength
+  // + phase, plus how the particles animate at runtime and which sets to touch).
+  const [trippyStyle, setTrippyStyle] = useState<TrippyStyleName>(TRIPPY_DEFAULTS.style);
+  const [trippyIntensity, setTrippyIntensity] = useState(TRIPPY_DEFAULTS.intensity);
+  const [trippyPhase, setTrippyPhase] = useState(TRIPPY_DEFAULTS.phase);
+  const [trippyAnimStyle, setTrippyAnimStyle] = useState<TrippyAnimationStyle>(
+    TRIPPY_DEFAULTS.animationStyle,
+  );
+  const [trippyAnimIntensity, setTrippyAnimIntensity] = useState(TRIPPY_DEFAULTS.animationIntensity);
+  const [trippyTargets, setTrippyTargets] = useState<TrippyVfxTargets>(TRIPPY_DEFAULTS.targets);
   // What's applied in-game: the mode (null = nothing; 'trippy' is read-only
   // here), its animated flag, gradient, and the trippy params when applicable.
   const [activeMode, setActiveMode] = useState<ColorMode | 'trippy' | null>(null);
@@ -148,6 +182,12 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
     setAnimated(false);
     setGradientPreset(GRADIENT_PRESETS[0].name);
     setCustomStops(DEFAULT_CUSTOM_STOPS);
+    setTrippyStyle(TRIPPY_DEFAULTS.style);
+    setTrippyIntensity(TRIPPY_DEFAULTS.intensity);
+    setTrippyPhase(TRIPPY_DEFAULTS.phase);
+    setTrippyAnimStyle(TRIPPY_DEFAULTS.animationStyle);
+    setTrippyAnimIntensity(TRIPPY_DEFAULTS.animationIntensity);
+    setTrippyTargets(TRIPPY_DEFAULTS.targets);
     Promise.all([
       getActiveHeroColor(heroName),
       getGameRunningStatus().catch(() => ({ running: false })),
@@ -173,6 +213,16 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
             setGradientPreset(parsed.preset);
             setCustomStops(parsed.stops);
           }
+        } else if (active && activeM === 'trippy') {
+          // Trippy holds the slot: reflect its params so the picker reads back.
+          setMode('trippy');
+          const t = active.trippy ?? TRIPPY_DEFAULTS;
+          setTrippyStyle(t.style);
+          setTrippyIntensity(t.intensity);
+          setTrippyPhase(t.phase);
+          setTrippyAnimStyle(t.animationStyle);
+          setTrippyAnimIntensity(t.animationIntensity);
+          setTrippyTargets(t.targets);
         } else if (active) {
           setHue(active.hue);
           setSaturation(active.saturation);
@@ -242,7 +292,33 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
     setBusy(true);
     setActionError(null);
     try {
-      if (mode === 'prism' || mode === 'gradient') {
+      if (mode === 'trippy') {
+        const result = await applyTrippyVfx(heroName, {
+          style: trippyStyle,
+          intensity: trippyIntensity,
+          phase: trippyPhase,
+          animationStyle: trippyAnimStyle,
+          animationIntensity: trippyAnimIntensity,
+          targets: trippyTargets,
+        });
+        if (!mounted.current) return;
+        setActiveMode('trippy');
+        setActiveTrippy(result);
+        // Trippy owns the slot now: any prior hue/prism/gradient is gone.
+        setActiveHue(null);
+        setActiveSaturation(null);
+        setActiveBrightness(null);
+        setActiveAnimated(false);
+        setActiveGradient(null);
+        // Mirror the normalized bake back into the sliders so the dirty check
+        // settles to "Applied" instead of staying armed on rounding.
+        setTrippyStyle(result.style);
+        setTrippyIntensity(result.intensity);
+        setTrippyPhase(result.phase);
+        setTrippyAnimStyle(result.animationStyle);
+        setTrippyAnimIntensity(result.animationIntensity);
+        setTrippyTargets(result.targets);
+      } else if (mode === 'prism' || mode === 'gradient') {
         const grad = mode === 'gradient' ? gradientSpecOf(gradientPreset, customStops) : null;
         const result = await applyHeroPrism(heroName, hue, saturation, brightness, animated, grad);
         if (!mounted.current) return;
@@ -311,15 +387,26 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
     activeHue !== hue ||
     activeSaturation !== saturation ||
     activeBrightness !== brightness;
+  const trippyDirty =
+    activeMode !== 'trippy' ||
+    !activeTrippy ||
+    activeTrippy.style !== trippyStyle ||
+    activeTrippy.intensity !== q(trippyIntensity) ||
+    activeTrippy.phase !== q(trippyPhase) ||
+    activeTrippy.animationStyle !== trippyAnimStyle ||
+    activeTrippy.animationIntensity !== q(trippyAnimIntensity) ||
+    activeTrippy.targets !== trippyTargets;
   const dirty =
-    mode === 'gradient'
-      ? activeMode !== 'gradient' || activeGradient !== gradientSpec || spectrumDirty
-      : mode === 'prism'
-        ? activeMode !== 'prism' || spectrumDirty
-        : activeMode !== 'hue' ||
-          activeHue !== hue ||
-          activeSaturation !== saturation ||
-          activeBrightness !== brightness;
+    mode === 'trippy'
+      ? trippyDirty
+      : mode === 'gradient'
+        ? activeMode !== 'gradient' || activeGradient !== gradientSpec || spectrumDirty
+        : mode === 'prism'
+          ? activeMode !== 'prism' || spectrumDirty
+          : activeMode !== 'hue' ||
+            activeHue !== hue ||
+            activeSaturation !== saturation ||
+            activeBrightness !== brightness;
 
   const appliedLabel = !applied
     ? null
@@ -335,6 +422,13 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
 
   const modeBtn = (selected: boolean) =>
     `flex items-center gap-1.5 rounded px-2.5 py-1 font-medium transition-colors disabled:cursor-not-allowed ${
+      selected
+        ? 'border border-accent/40 bg-accent/10 text-text-primary'
+        : 'border border-transparent text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
+    }`;
+
+  const segBtn = (selected: boolean) =>
+    `rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
       selected
         ? 'border border-accent/40 bg-accent/10 text-text-primary'
         : 'border border-transparent text-text-secondary hover:bg-bg-tertiary hover:text-text-primary'
@@ -361,7 +455,7 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
     <div className="space-y-3">
       <p className="text-xs text-text-secondary">
         Repaint {heroName}&apos;s ability effects (particles, projectiles, and the ult body). Pick
-        a single color, a rainbow, or a gradient: one pick is active at a time.
+        a single color, a rainbow, a gradient, or a trippy pattern: one pick is active at a time.
       </p>
 
       {/* Mode toggle: three looks over the same one-per-hero slot. */}
@@ -390,8 +484,17 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
         >
           <Blend className="h-3.5 w-3.5" /> Gradient
         </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => setMode('trippy')}
+          className={modeBtn(mode === 'trippy')}
+        >
+          <Waves className="h-3.5 w-3.5" /> Trippy
+        </button>
       </div>
 
+      {mode !== 'trippy' && (
       <>
           {/* Live recolored preview + current target */}
           <div className="flex items-center gap-3">
@@ -636,6 +739,95 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
             </div>
           )}
       </>
+      )}
+
+      {mode === 'trippy' && (
+        <div className="space-y-3">
+          <TrippyPatternPicker
+            style={trippyStyle}
+            intensity={trippyIntensity}
+            phase={trippyPhase}
+            loopScroll={trippyAnimStyle === 'off' ? 0 : trippyAnimIntensity}
+            busy={busy}
+            summary={
+              <>
+                {TRIPPY_STYLE_LABELS[trippyStyle]}
+                <span className="text-text-secondary">
+                  {' '}
+                  · {pct(trippyIntensity)}% · {ANIMATION_LABELS[trippyAnimStyle]}
+                </span>
+              </>
+            }
+            status={!applied ? 'No recolor applied' : !dirty ? 'Applied' : appliedLabel}
+            onStyle={setTrippyStyle}
+            onIntensity={setTrippyIntensity}
+            onPhase={setTrippyPhase}
+          />
+
+          {/* How the particles move at runtime. 'off' bakes a still paint. */}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium text-text-secondary">Animation</span>
+            <div className="inline-flex rounded-md border border-border p-0.5 text-xs">
+              {TRIPPY_ANIMATION_STYLES.map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setTrippyAnimStyle(a)}
+                  className={segBtn(trippyAnimStyle === a)}
+                >
+                  {ANIMATION_LABELS[a]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Animation strength (how strongly the motion reads); off when static. */}
+          {trippyAnimStyle !== 'off' && (
+            <label className="block space-y-1">
+              <span className="text-[11px] font-medium text-text-secondary">
+                Animation strength{' '}
+                <span className="tabular-nums text-text-secondary/70">{pct(trippyAnimIntensity)}%</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={300}
+                step={10}
+                value={pct(trippyAnimIntensity)}
+                disabled={busy}
+                onChange={(e) => setTrippyAnimIntensity(Number(e.target.value) / 100)}
+                className="h-3 w-full cursor-pointer appearance-none rounded-full bg-bg-tertiary disabled:cursor-not-allowed"
+              />
+            </label>
+          )}
+
+          {/* Which effect sets the paint touches. */}
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium text-text-secondary">Paint</span>
+            <div className="inline-flex rounded-md border border-border p-0.5 text-xs">
+              {(['all', 'abilities', 'weapons'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setTrippyTargets(t)}
+                  className={segBtn(trippyTargets === t)}
+                >
+                  {t === 'all' ? 'All VFX' : t === 'abilities' ? 'Abilities' : 'Weapons'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <p className="text-[11px] text-text-secondary/80">
+            Trippy paints {heroName}&apos;s ability particles with a flowing procedural pattern. The
+            pattern strength and phase are above; Animation sets how the particles move in game
+            (Off bakes a still paint). This shares the one-per-hero slot, so it replaces any color,
+            rainbow, or gradient.
+          </p>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex items-center gap-2 pt-1">
@@ -652,7 +844,9 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
               ? 'Apply Rainbow'
               : mode === 'gradient'
                 ? 'Apply Gradient'
-                : 'Apply Color'}
+                : mode === 'trippy'
+                  ? 'Apply Trippy'
+                  : 'Apply Color'}
         </button>
         {applied && (
           <button
