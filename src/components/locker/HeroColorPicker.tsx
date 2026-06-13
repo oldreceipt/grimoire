@@ -814,7 +814,7 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
                   onClick={() => setTrippyTargets(t)}
                   className={segBtn(trippyTargets === t)}
                 >
-                  {t === 'all' ? 'All VFX' : t === 'abilities' ? 'Abilities' : 'Weapons'}
+                  {t === 'all' ? 'All VFX' : t === 'abilities' ? 'Abilities' : 'Gun FX'}
                 </button>
               ))}
             </div>
@@ -823,8 +823,9 @@ export default function HeroColorPicker({ heroName, onAppliedChange }: HeroColor
           <p className="text-[11px] text-text-secondary/80">
             Trippy paints {heroName}&apos;s ability particles with a flowing procedural pattern. The
             pattern strength and phase are above; Animation sets how the particles move in game
-            (Off bakes a still paint). This shares the one-per-hero slot, so it replaces any color,
-            rainbow, or gradient.
+            (Off bakes a still paint). Gun FX targets the weapon&apos;s effect particles (muzzle,
+            tracers, impacts), not its skin (that&apos;s the Body + Gun tab). This shares the
+            one-per-hero slot, so it replaces any color, rainbow, or gradient.
           </p>
         </div>
       )}
