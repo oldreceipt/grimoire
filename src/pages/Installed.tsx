@@ -59,6 +59,7 @@ import {
   Folder,
   FileText,
   Banana,
+  HelpCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { MenuContent, MenuItem, MenuRoot, MenuTrigger } from '../components/common/menu';
@@ -640,6 +641,35 @@ export default function Installed() {
     setCardSizeMultiplierState(clampedMultiplier);
     localStorage.setItem(INSTALLED_CARD_SIZE_MULTIPLIER_KEY, String(clampedMultiplier));
   }, []);
+  // Style + card-size live behind a single dropdown so they don't eat a row of
+  // toolbar width. Same relative/click-outside pattern as the filter popover.
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const viewMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!viewMenuOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (viewMenuRef.current && !viewMenuRef.current.contains(event.target as Node)) {
+        setViewMenuOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setViewMenuOpen(false);
+    };
+    window.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [viewMenuOpen]);
+  // Fix unknown can be dismissed by right-clicking it; right-clicking the small
+  // stub it leaves behind brings it back. Persisted so the choice sticks.
+  const [fixUnknownHidden, setFixUnknownHidden] = useState(
+    () => localStorage.getItem('installedFixUnknownHidden') === '1',
+  );
+  useEffect(() => {
+    localStorage.setItem('installedFixUnknownHidden', fixUnknownHidden ? '1' : '0');
+  }, [fixUnknownHidden]);
   const cardSizeGridStyle = useMemo(
     () => getCardSizeGridStyle(cardSizeMultiplier),
     [cardSizeMultiplier]
@@ -2831,17 +2861,35 @@ export default function Installed() {
             : `Update all (${updatesAvailable.size})`}
         </Button>
       )}
-      {unknownMods.length > 0 && (
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => openBulkUnknownFix(unknownMods)}
-          icon={Wrench}
-          title="Find GameBanana matches or add custom metadata for unknown local mods"
-        >
-          Fix unknown ({unknownMods.length})
-        </Button>
-      )}
+      {unknownMods.length > 0 &&
+        (fixUnknownHidden ? (
+          <button
+            type="button"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setFixUnknownHidden(false);
+            }}
+            aria-label={`Restore the Fix unknown button (${unknownMods.length} unknown)`}
+            title="Fix unknown is hidden. Right-click to bring it back."
+            className="inline-flex h-6 w-6 items-center justify-center rounded-sm text-text-secondary/40 transition-colors hover:text-text-secondary cursor-pointer"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => openBulkUnknownFix(unknownMods)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setFixUnknownHidden(true);
+            }}
+            icon={HelpCircle}
+            title="Find GameBanana matches or add custom metadata for unknown local mods. Right-click to hide this button."
+          >
+            Fix unknown ({unknownMods.length})
+          </Button>
+        ))}
     </div>
   ) : null;
   const topStatusActions = hasStatusButtons || viewIsReorderable ? (
@@ -2852,11 +2900,10 @@ export default function Installed() {
           variant="secondary"
           onClick={fixOrder}
           icon={Wrench}
-          className="!px-3 !text-xs"
-          title="Renumber enabled mods 1, 2, 3, ... to tidy priority slots"
-        >
-          Fix Order
-        </Button>
+          className="!px-2.5"
+          aria-label="Fix order"
+          title="Fix order: renumber enabled mods 1, 2, 3, ... to tidy priority slots"
+        />
       )}
     </div>
   ) : null;
@@ -2889,6 +2936,10 @@ export default function Installed() {
             )}
           </div>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            {/* Contextual status + reorder actions ride the same row as the
+                view controls (wrapping together when cramped) instead of
+                claiming a second strip below the search. */}
+            {topStatusActions}
             {/* Sort + filter: load order / recent / name, GameBanana vs local
                 import, and mod-type buckets. The badge counts active
                 adjustments; while any are on, the list is read-only (no drag
@@ -3121,46 +3172,71 @@ export default function Installed() {
               )}
             </div>
 
-            {/* Card-size slider: only meaningful in grid layout, so it's
-                disabled (and dimmed) while List is active rather than hidden,
-                keeping the toolbar from reflowing as you switch. Dropped below
-                lg so the toolbar keeps to one row in narrow windows. */}
-            <div
-              className={`order-last hidden items-center gap-2 rounded-sm border border-border bg-bg-secondary px-2 py-1.5 transition-opacity lg:flex ${
-                layout === 'list' ? 'opacity-40' : ''
-              }`}
-              title="Card size (drag to the small end for compact cards)"
-            >
-              <Grid3x3 className="h-4 w-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
-              <input
-                type="range"
-                min={CARD_SIZE_MULTIPLIER_MIN}
-                max={CARD_SIZE_MULTIPLIER_MAX}
-                step={CARD_SIZE_MULTIPLIER_STEP}
-                value={cardSizeMultiplier}
-                disabled={layout === 'list'}
-                onChange={(e) => setCardSizeMultiplier(Number(e.currentTarget.value))}
-                aria-label="Card size"
-                aria-valuetext={`${cardSizeMultiplier.toFixed(2)}x card size`}
-                className="h-1.5 w-24 cursor-pointer accent-accent disabled:cursor-default"
+            {/* Style (grid vs list) + card size collapsed into one dropdown so
+                they don't claim a stretch of toolbar width. Card size is only
+                meaningful in grid, so it's disabled (and dimmed) while List is
+                active rather than hidden, keeping the popover from reflowing. */}
+            <div className="relative order-last" ref={viewMenuRef}>
+              <Button
+                variant="secondary"
+                onClick={() => setViewMenuOpen((v) => !v)}
+                icon={layout === 'list' ? List : LayoutGrid}
+                className="!px-2.5"
+                aria-label="View options"
+                aria-expanded={viewMenuOpen}
+                title="Style and card size"
               />
-              <LayoutGrid className="h-5 w-5 flex-shrink-0 text-text-secondary" aria-hidden="true" />
-            </div>
+              {viewMenuOpen && (
+                <div className="absolute right-0 top-full z-40 mt-2 w-64 rounded-lg border border-border bg-bg-secondary p-3 text-sm shadow-xl shadow-black/40">
+                  <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
+                    Style
+                  </div>
+                  <ViewModeToggle
+                    className="w-full"
+                    value={layout}
+                    options={[
+                      { value: 'grid', label: 'Grid view', icon: LayoutGrid },
+                      { value: 'list', label: 'List view', icon: List },
+                    ]}
+                    onChange={(mode) => setLayout(mode === 'list' ? 'list' : 'grid')}
+                  />
 
-            <ViewModeToggle
-              className="order-last"
-              value={layout}
-              options={[
-                { value: 'grid', label: 'Grid view', icon: LayoutGrid },
-                { value: 'list', label: 'List view', icon: List },
-              ]}
-              onChange={(mode) => setLayout(mode === 'list' ? 'list' : 'grid')}
-            />
+                  <div className="mt-3 border-t border-border pt-3">
+                    <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-secondary">
+                      Card size
+                    </div>
+                    <div
+                      className={`flex items-center gap-2 transition-opacity ${
+                        layout === 'list' ? 'opacity-40' : ''
+                      }`}
+                      title="Card size (drag to the small end for compact cards)"
+                    >
+                      <Grid3x3 className="h-4 w-4 flex-shrink-0 text-text-secondary" aria-hidden="true" />
+                      <input
+                        type="range"
+                        min={CARD_SIZE_MULTIPLIER_MIN}
+                        max={CARD_SIZE_MULTIPLIER_MAX}
+                        step={CARD_SIZE_MULTIPLIER_STEP}
+                        value={cardSizeMultiplier}
+                        disabled={layout === 'list'}
+                        onChange={(e) => setCardSizeMultiplier(Number(e.currentTarget.value))}
+                        aria-label="Card size"
+                        aria-valuetext={`${cardSizeMultiplier.toFixed(2)}x card size`}
+                        className="h-1.5 flex-1 cursor-pointer accent-accent disabled:cursor-default"
+                      />
+                      <LayoutGrid className="h-5 w-5 flex-shrink-0 text-text-secondary" aria-hidden="true" />
+                    </div>
+                    {layout === 'list' && (
+                      <p className="mt-1.5 text-[11px] text-text-secondary">
+                        Card size applies to grid view.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-        {/* Row 2 (contextual): status actions get their own strip instead of
-            jostling with the search for row-1 space. */}
-        {topStatusActions && <div className="mt-2">{topStatusActions}</div>}
       </div>
 
       {lockerOverridesOpen && (
