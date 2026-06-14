@@ -48,6 +48,30 @@ function statePath(gameinfoPath: string): string {
     return join(dirname(gameinfoPath), STATE_FILENAME);
 }
 
+function backupPathFor(gameinfoPath: string): string {
+    return `${gameinfoPath}${GAMEINFO_BACKUP_SUFFIX}`;
+}
+
+function hasConVars(text: string): boolean {
+    const normalized = text.includes('\r\n') ? text.split('\r\n').join('\n') : text;
+    return findSectionByPath(normalized, ['ConVars']) !== null;
+}
+
+// True when gameinfo.gi is too broken to patch (empty or missing its ConVars
+// section, e.g. the user cleared it in the external editor) AND a Grimoire
+// backup that is itself intact exists to restore from. Lets the UI offer a
+// one-click recovery instead of dead-ending on the "no ConVars section"
+// error. `content` is the raw live-file text (any EOL style). The backup is
+// validated too: restoring an equally-broken backup would help no one.
+function canRestoreBackup(gameinfoPath: string, content: string): boolean {
+    if (hasConVars(content)) return false;
+    try {
+        return hasConVars(readFileSync(backupPathFor(gameinfoPath), 'utf-8'));
+    } catch {
+        return false; // no backup, or unreadable
+    }
+}
+
 // ---------------------------------------------------------------------------
 // gameinfo.gi text helpers. The file is Valve KV: sections are `Name {...}`,
 // entries are `key "value"` (values quoted, keys usually bare), comments are
@@ -299,8 +323,11 @@ export function applyPerformanceConfig(
 
         // One-time recovery copy of the oldest version we have seen, shared
         // with fixGameinfo's backup so the user has a single restore point.
-        const backupPath = `${gameinfoPath}${GAMEINFO_BACKUP_SUFFIX}`;
-        if (!existsSync(backupPath)) {
+        // Only capture a structurally sane file (has ConVars): backing up an
+        // already-empty/corrupt gameinfo would poison the single restore point
+        // and make "Restore Backup" a no-op.
+        const backupPath = backupPathFor(gameinfoPath);
+        if (!existsSync(backupPath) && hasConVars(original)) {
             try {
                 writeFileSync(backupPath, original, 'utf-8');
             } catch {
@@ -328,7 +355,11 @@ export function applyPerformanceConfig(
         // a duplicate convar would have ambiguous engine precedence.
         let convarRange = findSectionByPath(content, ['ConVars']);
         if (!convarRange) {
-            return status('error', 'gameinfo.gi has no ConVars section. Verify game files in Steam and try again.');
+            const restorable = canRestoreBackup(gameinfoPath, original);
+            const how = restorable
+                ? 'Restore the Grimoire backup below, or verify game files in Steam, then try again.'
+                : 'Verify game files in Steam and try again.';
+            return status('error', `gameinfo.gi has no ConVars section. ${how}`, 0, restorable);
         }
         const existingKeys = new Set(
             content
@@ -473,6 +504,43 @@ export function removePerformanceConfig(deadlockPath: string | null): Performanc
     }
 }
 
+/** Restore gameinfo.gi from the Grimoire backup (.grimoire-bak), the pristine
+ *  pre-apply copy shared with fixGameinfo. Recovery for an emptied or corrupt
+ *  file the preset can no longer patch; after restoring, Apply runs normally.
+ *  The applied-state sidecar is left intact so the user's saved overrides
+ *  re-layer on the next apply. Refuses when no backup exists. */
+export function restorePerformanceConfigBackup(
+    deadlockPath: string | null
+): PerformanceConfigStatus {
+    if (!deadlockPath) return status('error', 'Deadlock path not configured.');
+    const gameinfoPath = getGameinfoPath(deadlockPath);
+    const backupPath = backupPathFor(gameinfoPath);
+    if (!existsSync(backupPath)) {
+        return status(
+            'error',
+            'No Grimoire backup of gameinfo.gi to restore. Verify game files in Steam instead.'
+        );
+    }
+    try {
+        const backup = readFileSync(backupPath, 'utf-8');
+        writeFileSync(gameinfoPath, backup, 'utf-8');
+        // Markers are gone (the backup predates any apply) but the sidecar
+        // stays, so this reads back as a clean "wiped" state: Reapply re-adds
+        // the preset and folds the saved overrides back in.
+        const savedOverrides = Object.keys(readAppliedState(gameinfoPath)?.overrides ?? {}).length;
+        const note = savedOverrides
+            ? ` Your ${savedOverrides} saved override${savedOverrides === 1 ? '' : 's'} will be restored on reapply.`
+            : '';
+        return status(
+            'wiped',
+            `Restored gameinfo.gi from the Grimoire backup. Reapply to re-add the performance config.${note}`,
+            savedOverrides
+        );
+    } catch (err) {
+        return status('error', `Failed to restore gameinfo.gi backup: ${err}`);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Status
 // ---------------------------------------------------------------------------
@@ -512,10 +580,22 @@ export function getPerformanceConfigStatus(deadlockPath: string | null): Perform
             };
         }
         // Applied before, but the markers are gone: a game update replaced
-        // gameinfo.gi (Valve resets it on major patches).
+        // gameinfo.gi (Valve resets it on major patches), or the user cleared
+        // the file by hand. If the file is too broken to patch (no ConVars)
+        // and we hold a backup, point at the restore path rather than a
+        // Reapply that will only error.
         const wipedSidecar = readAppliedState(gameinfoPath);
         if (wipedSidecar) {
             const savedOverrides = Object.keys(wipedSidecar.overrides ?? {}).length;
+            const restorable = canRestoreBackup(gameinfoPath, content);
+            if (restorable) {
+                return status(
+                    'wiped',
+                    'gameinfo.gi is empty or corrupt. Restore the Grimoire backup (or verify game files in Steam), then reapply.',
+                    savedOverrides,
+                    true
+                );
+            }
             const restoreNote = savedOverrides
                 ? ` Your ${savedOverrides} saved override${savedOverrides === 1 ? '' : 's'} will be restored too.`
                 : '';
@@ -534,13 +614,15 @@ export function getPerformanceConfigStatus(deadlockPath: string | null): Perform
 function status(
     state: PerformanceConfigStatus['state'],
     message: string,
-    overrideCount = 0
+    overrideCount = 0,
+    canRestore = false
 ): PerformanceConfigStatus {
     return {
         state,
         appliedVersion: state === 'applied' ? PRESET_VERSION : null,
         bundledVersion: PRESET_VERSION,
         overrideCount,
+        ...(canRestore ? { canRestoreBackup: true } : {}),
         message,
     };
 }

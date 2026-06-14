@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Gauge, ExternalLink, RefreshCw, Settings2, SquarePen } from 'lucide-react';
+import { Gauge, ExternalLink, RefreshCw, RotateCcw, Settings2, SquarePen } from 'lucide-react';
 import { Card, Badge, Button } from '../common/ui';
 import EditorPickerModal from './EditorPickerModal';
 import { useAppStore, type BrowseArtistRef } from '../../stores/appStore';
@@ -10,6 +10,7 @@ import {
   openPerformanceConfigFile,
   removePerformanceConfig,
   resetPerformanceConfigOverrides,
+  restorePerformanceConfigBackup,
 } from '../../lib/api';
 import type { PerformanceConfigStatus } from '../../types/electron';
 
@@ -103,6 +104,9 @@ export default function PerformanceConfigCard() {
 
   const applied = status?.state === 'applied';
   const wiped = status?.state === 'wiped';
+  // gameinfo.gi is empty/corrupt but we hold a backup: offer one-click recovery
+  // so a manually cleared file is never a dead-end.
+  const canRestore = status?.canRestoreBackup === true;
 
   return (
     <Card
@@ -157,10 +161,21 @@ export default function PerformanceConfigCard() {
           {openError && <p className="text-xs text-red-400">{openError}</p>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {canRestore && (
+            <Button
+              onClick={() => run(restorePerformanceConfigBackup)}
+              disabled={busy}
+              icon={RotateCcw}
+              size="sm"
+            >
+              Restore Backup
+            </Button>
+          )}
           <Button
             onClick={() => run(applyPerformanceConfig)}
             isLoading={busy}
             icon={wiped ? RefreshCw : undefined}
+            variant={canRestore ? 'secondary' : 'primary'}
             size="sm"
           >
             {applied ? 'Reapply' : wiped ? 'Reapply Config' : 'Apply Config'}

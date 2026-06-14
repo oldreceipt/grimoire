@@ -8,6 +8,7 @@ import {
     getPerformanceConfigStatus,
     removePerformanceConfig,
     resetPerformanceConfigOverrides,
+    restorePerformanceConfigBackup,
 } from '../services/performanceConfig';
 import type { EditorCandidate, PerformanceConfigStatus } from '../../../src/types/electron';
 
@@ -30,6 +31,12 @@ ipcMain.handle('remove-performance-config', (): PerformanceConfigStatus => {
 // user's saved hand-edit overrides)
 ipcMain.handle('reset-performance-config-overrides', (): PerformanceConfigStatus => {
     return resetPerformanceConfigOverrides(getActiveDeadlockPath());
+});
+
+// restore-performance-config-backup (recover an emptied/corrupt gameinfo.gi
+// from the Grimoire backup, so Apply can run again)
+ipcMain.handle('restore-performance-config-backup', (): PerformanceConfigStatus => {
+    return restorePerformanceConfigBackup(getActiveDeadlockPath());
 });
 
 // open-performance-config-file (power users hand-tune the applied preset in

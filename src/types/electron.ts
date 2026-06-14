@@ -122,6 +122,10 @@ export interface PerformanceConfigStatus {
     /** Saved user deviations from the preset (hand edits harvested on reapply,
      *  layered onto every apply, surviving game-update wipes). */
     overrideCount?: number;
+    /** gameinfo.gi is empty/corrupt (no ConVars section to patch) AND a
+     *  Grimoire backup exists, so the UI can offer a one-click restore. Only
+     *  set on the broken-file states (error / wiped). */
+    canRestoreBackup?: boolean;
     message: string;
 }
 
@@ -518,6 +522,7 @@ export interface ElectronAPI {
     applyPerformanceConfig: () => Promise<PerformanceConfigStatus>;
     removePerformanceConfig: () => Promise<PerformanceConfigStatus>;
     resetPerformanceConfigOverrides: () => Promise<PerformanceConfigStatus>;
+    restorePerformanceConfigBackup: () => Promise<PerformanceConfigStatus>;
     openPerformanceConfigFile: () => Promise<void>;
     listEditorCandidates: () => Promise<EditorCandidate[]>;
     openModsFolder: () => Promise<void>;

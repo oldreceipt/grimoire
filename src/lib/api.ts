@@ -514,6 +514,10 @@ export async function resetPerformanceConfigOverrides(): Promise<PerformanceConf
   return window.electronAPI.resetPerformanceConfigOverrides();
 }
 
+export async function restorePerformanceConfigBackup(): Promise<PerformanceConfigStatus> {
+  return window.electronAPI.restorePerformanceConfigBackup();
+}
+
 export async function openPerformanceConfigFile(): Promise<void> {
   return window.electronAPI.openPerformanceConfigFile();
 }
