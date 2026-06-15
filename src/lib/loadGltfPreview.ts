@@ -48,3 +48,17 @@ export async function loadGltfPreview(url: string): Promise<GLTF> {
     restoreImageBitmapLoader();
   }
 }
+
+/** Parse an in-memory `.glb` (ArrayBuffer) instead of fetching a URL. Used by
+ *  the Soul Container import preview, which loads the dropped/picked file's bytes
+ *  directly (before any build). Shares the createImageBitmap guard. */
+export async function parseGltfPreview(buffer: ArrayBuffer): Promise<GLTF> {
+  disableImageBitmapLoader();
+  try {
+    return await new Promise<GLTF>((resolve, reject) => {
+      new GLTFLoader().parse(buffer, '', resolve, reject);
+    });
+  } finally {
+    restoreImageBitmapLoader();
+  }
+}

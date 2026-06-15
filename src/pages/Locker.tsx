@@ -468,6 +468,29 @@ export default function Locker() {
     await toggleMod(modId);
   };
 
+  // Soul containers are single-select: there's one soul-container slot, so
+  // enabling one disables any other active soul container, and clicking the
+  // already-active card turns it back off (vanilla). Other global types keep
+  // normal multi-toggle (they don't all collapse to a single slot).
+  const selectGlobalMod = async (modId: string) => {
+    const target = mods.find((m) => m.id === modId);
+    if (!target) return;
+    if (getEffectiveGlobalType(target) !== 'soul-container') {
+      await toggleMod(modId);
+      return;
+    }
+    if (target.enabled) {
+      await toggleMod(modId);
+      return;
+    }
+    const active = mods.filter(
+      (m) =>
+        m.id !== modId && m.enabled && getEffectiveGlobalType(m) === 'soul-container'
+    );
+    for (const m of active) await toggleMod(m.id);
+    await toggleMod(modId);
+  };
+
   // Sorted hero name list for the "tag as hero" dropdown on Unassigned cards.
   // We use only heroes that have a GameBanana category, because that's the
   // pool the locker grouping logic resolves names against; picking a hero
@@ -805,7 +828,7 @@ export default function Locker() {
             groups={globalGroups}
             hideNsfw={settings?.hideNsfwPreviews ?? true}
             onBack={() => navigate('/locker')}
-            onToggle={toggleMod}
+            onToggle={selectGlobalMod}
             onSetGlobalType={tagModGlobalType}
           />
         </div>
@@ -1067,10 +1090,16 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
                     mod.thumbnailUrl && !(mod.nsfw && hideNsfw) ? mod.thumbnailUrl : null;
                   return (
                     <div
-                      key={mod.id}
+                      // Soul containers key on the content-stable sha256: their
+                      // id/metaKey change when toggled, which would otherwise
+                      // remount the card and reload its 3D model on every select.
+                      // Other types keep the plain id key (original behavior).
+                      key={
+                        activeType === 'soul-container' ? mod.sha256 ?? mod.id : mod.id
+                      }
                       className={`group/card relative flex flex-col rounded-[10px] border p-2.5 transition-[border-color,background-color,box-shadow] duration-200 ${
                         mod.enabled
-                          ? 'border-accent bg-accent/[0.08] shadow-[0_0_0_1px_var(--color-accent),0_0_18px_-6px_var(--color-accent)] hover:bg-accent/[0.12]'
+                          ? 'border-accent bg-accent/[0.06] shadow-[0_0_0_1px_var(--color-accent)] hover:bg-accent/[0.10]'
                           : 'border-white/[0.08] bg-[#141414]/55 text-text-primary/75 hover:border-white/[0.16] hover:text-text-primary'
                       }`}
                     >
@@ -1115,7 +1144,10 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
                             GameBanana thumbnail. */}
                         {activeType === 'soul-container' ? (
                           <Suspense fallback={null}>
-                            <SoulContainerTile modKey={mod.metaKey} />
+                            <SoulContainerTile
+                              tileId={mod.sha256 ?? mod.id}
+                              modKey={mod.metaKey}
+                            />
                           </Suspense>
                         ) : (
                           <div
@@ -1139,18 +1171,37 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
                           </div>
                         )}
                         <div className="pointer-events-none absolute inset-0 bg-bg-primary/0 transition-colors duration-200 group-hover/card:bg-bg-primary/20" />
-                        {!mod.enabled && (
-                          <div className="pointer-events-none absolute left-2 top-2 z-10 flex h-5 items-start">
-                            <Tag
-                              tone="neutral"
-                              variant="overlay"
-                              icon={PowerOff}
-                              title="This mod is disabled and not loaded in-game"
-                            >
-                              Disabled
-                            </Tag>
-                          </div>
-                        )}
+                        {/* Soul containers are single-select, so mark the one
+                            active pick with a positive "Active" badge (a disabled
+                            card is simply unmarked) and fade it in so selecting
+                            animates rather than snapping. Other global types
+                            allow multiple enabled, so they keep tagging the
+                            disabled ones. */}
+                        {activeType === 'soul-container'
+                          ? mod.enabled && (
+                              <div className="pointer-events-none absolute left-2 top-2 z-10 flex h-5 items-start animate-fade-in">
+                                <Tag
+                                  tone="accent"
+                                  variant="overlay"
+                                  icon={Check}
+                                  title="This soul container is active and loaded in-game"
+                                >
+                                  Active
+                                </Tag>
+                              </div>
+                            )
+                          : !mod.enabled && (
+                              <div className="pointer-events-none absolute left-2 top-2 z-10 flex h-5 items-start">
+                                <Tag
+                                  tone="neutral"
+                                  variant="overlay"
+                                  icon={PowerOff}
+                                  title="This mod is disabled and not loaded in-game"
+                                >
+                                  Disabled
+                                </Tag>
+                              </div>
+                            )}
                         {/* Retag control: sits above the full-card toggle overlay
                             (z-20 > z-10) and stops propagation so opening it never
                             also toggles the mod. Hidden for Killstreak Music: that

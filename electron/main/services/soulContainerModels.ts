@@ -39,7 +39,7 @@ const SOUL_CACHE_VERSION = '1';
  * `_noskins`) would fall back to the base mesh; robust per-mod entry discovery
  * is a later refinement.
  */
-const SOUL_CONTAINER_ENTRY = 'models/props_gameplay/soul_container/soul_container.vmdl_c';
+export const SOUL_CONTAINER_ENTRY = 'models/props_gameplay/soul_container/soul_container.vmdl_c';
 
 function sanitize(value: string): string {
     return value.replace(/[^a-zA-Z0-9_-]+/g, '_');
@@ -61,13 +61,26 @@ function versionFile(key: string): string {
 }
 
 /**
+ * Drop any cached export GLB for a metaKey. Called when a slot's VPK is replaced
+ * (a re-imported soul container reusing the previous slot), so the Locker tile
+ * re-exports the new model instead of serving the stale cached mesh.
+ */
+export async function clearSoulModelCache(key: string): Promise<void> {
+    try {
+        await fs.rm(modelDir(key), { recursive: true, force: true });
+    } catch {
+        /* best-effort: a missing cache dir is fine */
+    }
+}
+
+/**
  * Resolve a mod's metaKey (see metaKeyFor) to its on-disk VPK path. An overflow
  * mod's key is folder-qualified (`addons{N}/<file>`); a base-addons or .disabled
  * mod's key is a bare filename. Resolving by metaKey (not a bare filename) is
  * required because each addon folder carries its own pak01-99 namespace, so the
  * same `pakNN_dir.vpk` name can exist in several folders at once.
  */
-async function resolveModVpk(deadlockPath: string, metaKey: string): Promise<string | null> {
+export async function resolveModVpk(deadlockPath: string, metaKey: string): Promise<string | null> {
     const candidates = metaKey.includes('/')
         ? [join(getCitadelPath(deadlockPath), metaKey)] // enabled overflow folder
         : [
@@ -103,7 +116,7 @@ const GLB_JSON_CHUNK = 0x4e4f534a; // 'JSON'
  * Returns the patched bytes, or the input unchanged when there are no skins or
  * the container can't be parsed as a GLB.
  */
-function stripGlbSkins(glb: Buffer): Buffer {
+export function stripGlbSkins(glb: Buffer): Buffer {
     if (glb.length < 20 || glb.readUInt32LE(0) !== GLB_MAGIC) return glb;
     const jsonLen = glb.readUInt32LE(12);
     if (glb.readUInt32LE(16) !== GLB_JSON_CHUNK) return glb;

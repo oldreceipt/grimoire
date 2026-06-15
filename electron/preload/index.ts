@@ -36,6 +36,8 @@ import type {
     OpenDialogOptions,
     SaveDialogOptions,
     ImportCustomModArgs,
+    ImportSoulContainerGlbArgs,
+    PreviewSoulContainerGlbArgs,
     SearchLocalModsOptions,
     CrosshairSettings,
     VanillaRestoreResult,
@@ -216,6 +218,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('swap-mod-priority', modIdA, modIdB),
     importCustomMod: (args: ImportCustomModArgs) =>
         ipcRenderer.invoke('import-custom-mod', args),
+    importSoulContainerGlb: (args: ImportSoulContainerGlbArgs) =>
+        ipcRenderer.invoke('import-soul-container-glb', args),
+    previewSoulContainerGlb: (args: PreviewSoulContainerGlbArgs) =>
+        ipcRenderer.invoke('preview-soul-container-glb', args),
+    readGlbFile: (glbPath: string) =>
+        ipcRenderer.invoke('read-glb-file', glbPath),
     readImageDataUrl: (imagePath: string) =>
         ipcRenderer.invoke('read-image-data-url', imagePath),
     mergeMods: (args: MergeModsArgs) => ipcRenderer.invoke('merge-mods', args),

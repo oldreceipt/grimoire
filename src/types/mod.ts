@@ -501,6 +501,37 @@ export interface AbilitySoundClassification {
   voSoundFiles: number;
 }
 
+/** User-tracked test status for a locally-built soul-container import. */
+export type SoulImportStatus = 'untested' | 'in-game-ok' | 'broken';
+
+/**
+ * Provenance + transform record for a soul-container mod built from a user GLB
+ * via `vpkmerge soul-container import` (the Locker's drag-and-drop import). Lets
+ * the Installed/Locker UI label it as a local soul-container import and lets the
+ * user reproduce/rebuild the exact orientation later. Presence of this field also
+ * identifies the slot for idempotent re-import (replace the previous build).
+ */
+export interface SoulContainerImportInfo {
+  /** Original GLB filename (basename), for display. */
+  glbFileName: string;
+  /** Orientation mode chosen in the import UI. */
+  orient: 'y-up' | 'z-up' | 'flip-y' | 'auto';
+  /** Extra Euler rotation in degrees [X, Y, Z] applied after orient, if any. */
+  rotate?: [number, number, number];
+  /** Soul-glow particle handling. */
+  glow: 'recolor' | 'base' | 'off';
+  /** vpkmerge version that built the VPK. */
+  vpkmergeVersion?: string;
+  /** Uniform fit scale applied to match the orb's span. */
+  fitScale?: number;
+  /** Import's largest-axis span before fitting (Source units). */
+  sourceSpan?: number;
+  /** Vanilla soul-container span the mesh was fit to (~12.65). */
+  targetSpan?: number;
+  /** User-tracked test status. */
+  status: SoulImportStatus;
+}
+
 export interface Mod {
   id: string;
   name: string;
@@ -557,6 +588,10 @@ export interface Mod {
    *  not yet classified or the mod has no recognized hero ability sounds.
    *  Drives the per-ability sound picker. */
   abilitySounds?: AbilitySoundClassification;
+  /** Set when this VPK was built from a user GLB via the soul-container import.
+   *  Carries the orientation/glow transform so the build is reproducible and the
+   *  UI can label it as a local soul-container import. */
+  soulImport?: SoulContainerImportInfo;
   /** User opted out of the "update available" flag for this mod. Persisted
    *  in metadata; toggled from the mod details modal. */
   ignoreUpdates?: boolean;

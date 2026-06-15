@@ -390,6 +390,35 @@ export async function importCustomMod(args: {
   return window.electronAPI.importCustomMod(args);
 }
 
+/** Build a soul-container override VPK from a user GLB and install it as a
+ *  tracked local mod. Returns the full enriched mod list after install. */
+export async function importSoulContainerGlb(
+  args: import('../types/electron').ImportSoulContainerGlbArgs
+): Promise<Mod[]> {
+  return window.electronAPI.importSoulContainerGlb(args);
+}
+
+/** Build the soul-container for the given orientation and export its model to a
+ *  GLB for the import preview. Returns the GLB as an ArrayBuffer + the resolved
+ *  orientation label and fitted bounds. */
+export async function previewSoulContainerGlb(
+  args: import('../types/electron').PreviewSoulContainerGlbArgs
+): Promise<{ glb: ArrayBuffer; orient: string; fitScale?: number; sourceSpan?: number; targetSpan?: number }> {
+  const res = await window.electronAPI.previewSoulContainerGlb(args);
+  const binary = atob(res.glbBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return { glb: bytes.buffer, orient: res.orient, fitScale: res.fitScale, sourceSpan: res.sourceSpan, targetSpan: res.targetSpan };
+}
+
+export async function readGlbFile(glbPath: string): Promise<ArrayBuffer> {
+  const glbBase64 = await window.electronAPI.readGlbFile(glbPath);
+  const binary = atob(glbBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
 export async function readImageDataUrl(imagePath: string): Promise<string> {
   return window.electronAPI.readImageDataUrl(imagePath);
 }
