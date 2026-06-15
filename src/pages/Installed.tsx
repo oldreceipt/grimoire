@@ -189,8 +189,22 @@ function buildModEntries(mods: Mod[]): ModEntry[] {
   }
 
   const entries: ModEntry[] = [];
+  // The base key is content-derived (sha/gb) so a card keeps its React + dnd
+  // identity across reconciles that churn a mod's id (file renames, overflow
+  // moves). But two physically distinct installs can share the same content
+  // (same VPK installed twice => same sha), which collides the key. Detect
+  // those groups up front and disambiguate every member with its unique id, so
+  // the suffix is deterministic regardless of array order while single-install
+  // mods keep the bare content key.
+  const baseKeyCounts = new Map<string, number>();
   for (const m of singles) {
-    entries.push({ kind: 'single', mod: m, key: modEntryKey(m) });
+    const base = modEntryKey(m);
+    baseKeyCounts.set(base, (baseKeyCounts.get(base) ?? 0) + 1);
+  }
+  for (const m of singles) {
+    const base = modEntryKey(m);
+    const key = (baseKeyCounts.get(base) ?? 0) > 1 ? `${base}#${m.id}` : base;
+    entries.push({ kind: 'single', mod: m, key });
   }
   for (const [gameBananaId, variants] of byGb) {
     // Sort variants by current priority so drag-reorder lines up with the
@@ -377,6 +391,7 @@ interface InstalledEntryCardProps {
   onToggle: (entry: ModEntry) => void;
   onDelete: (entry: ModEntry) => void;
   onEditLocal: (mod: Mod) => void;
+  onRenameLocal: (mod: Mod, newName: string) => Promise<void>;
   onTagLocker: (entry: ModEntry, heroName: string | null) => Promise<void>;
   onTagGlobal: (entry: ModEntry, globalType: GlobalModType | null) => Promise<void>;
   onFixUnknown: (mod: Mod) => void;
@@ -412,6 +427,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
   onToggle,
   onDelete,
   onEditLocal,
+  onRenameLocal,
   onTagLocker,
   onTagGlobal,
   onFixUnknown,
@@ -437,6 +453,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
         onToggle={() => onToggle(entry)}
         onDelete={() => onDelete(entry)}
         onEditLocal={!mod.gameBananaId ? () => onEditLocal(mod) : undefined}
+        onRenameLocal={!mod.gameBananaId ? (newName) => onRenameLocal(mod, newName) : undefined}
         onTagLocker={(heroName) => onTagLocker(entry, heroName)}
         onTagGlobal={(globalType) => onTagGlobal(entry, globalType)}
         onFixUnknown={
@@ -2357,6 +2374,16 @@ export default function Installed() {
     }
   });
   const editLocalEntry = useStableCallback((mod: Mod) => setLocalEditMod(mod));
+  // Inline title rename (double-click). Reuses edit-local-mod but carries the
+  // current thumbnail/NSFW flag through so renaming the name alone never wipes
+  // them (the handler overwrites the full local-mod metadata triplet).
+  const renameLocalMod = useStableCallback(async (mod: Mod, newName: string) => {
+    await editLocalInstalledMod(mod, {
+      name: newName,
+      thumbnailDataUrl: mod.thumbnailUrl,
+      nsfw: mod.nsfw,
+    });
+  });
   const tagEntryLocker = useStableCallback(async (entry: ModEntry, heroName: string | null) => {
     if (entry.kind === 'group') {
       for (const variant of entry.variants) await setModLockerHero(variant.id, heroName);
@@ -2736,6 +2763,7 @@ export default function Installed() {
     onToggle: toggleEntry,
     onDelete: deleteEntry,
     onEditLocal: editLocalEntry,
+    onRenameLocal: renameLocalMod,
     onTagLocker: tagEntryLocker,
     onTagGlobal: tagEntryGlobal,
     onFixUnknown: fixUnknownEntry,
@@ -5126,6 +5154,9 @@ interface ModCardProps {
   onToggle: () => void;
   onDelete: () => void;
   onEditLocal?: () => void;
+  /** Inline rename of a local mod's name (double-click the title). Undefined
+   *  for GameBanana-sourced mods, which can't be renamed. */
+  onRenameLocal?: (newName: string) => Promise<void>;
   onTagLocker?: (heroName: string | null) => void | Promise<void>;
   onTagGlobal?: (globalType: GlobalModType | null) => void | Promise<void>;
   onFixUnknown?: () => void;
@@ -5332,6 +5363,7 @@ interface ModListRowContentProps {
   hideNsfwPreviews: boolean;
   soundVolume: number;
   onOpenDetails?: () => void;
+  onRenameLocal?: (newName: string) => Promise<void>;
   onCommitPriority?: (newPosition: number) => Promise<void>;
   loadPosition?: number;
   loadCount?: number;
@@ -5466,11 +5498,113 @@ function LockerHeroChip({
   );
 }
 
+/**
+ * The card's mod title. For local mods (no GameBanana source) double-clicking
+ * the name swaps it for an inline input so it can be renamed in place without
+ * opening the full Edit modal. Non-local cards just render a plain heading.
+ * `onRename` is expected to persist the new name; rename preserves the mod's
+ * existing thumbnail/NSFW flag (the caller threads those through edit-local-mod).
+ */
+function EditableModTitle({
+  name,
+  className,
+  onRename,
+}: {
+  name: string;
+  className: string;
+  /** Undefined when the title isn't renamable (GameBanana-sourced mods). */
+  onRename?: (newName: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(name);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Reflect an upstream name change (rename elsewhere, reload) while at rest.
+  useEffect(() => {
+    if (!editing) setValue(name);
+  }, [name, editing]);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  if (!editing || !onRename) {
+    return (
+      <h3
+        className={`${className}${onRename ? ' cursor-text' : ''}`}
+        title={onRename ? `${name} (double-click to rename)` : name}
+        onDoubleClick={
+          onRename
+            ? (e) => {
+                e.stopPropagation();
+                setValue(name);
+                setEditing(true);
+              }
+            : undefined
+        }
+      >
+        {name}
+      </h3>
+    );
+  }
+
+  const commit = async () => {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === name) {
+      setEditing(false);
+      setValue(name);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onRename(trimmed);
+      setEditing(false);
+    } catch (err) {
+      console.error('[Installed] Failed to rename local mod:', err);
+      // Stay in edit mode so the user can retry or cancel.
+      inputRef.current?.focus();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <input
+      ref={inputRef}
+      value={value}
+      disabled={saving}
+      onChange={(e) => setValue(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          void commit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          setEditing(false);
+          setValue(name);
+        }
+      }}
+      onBlur={() => void commit()}
+      data-card-action="true"
+      className={`${className} w-full rounded-[4px] border border-accent/70 bg-bg-primary/90 px-1 outline-none focus:border-accent disabled:opacity-60`}
+    />
+  );
+}
+
 function ModListRowContent({
   mod,
   hideNsfwPreviews,
   soundVolume,
   onOpenDetails,
+  onRenameLocal,
   onCommitPriority,
   loadPosition,
   loadCount,
@@ -5560,9 +5694,11 @@ function ModListRowContent({
       </button>
 
       <div className="grid min-w-0 grid-rows-[22px_24px]">
-        <h3 className="min-w-0 truncate text-[13px] font-semibold leading-[22px] text-text-primary" title={mod.name}>
-          {mod.name}
-        </h3>
+        <EditableModTitle
+          name={mod.name}
+          className="min-w-0 truncate text-[13px] font-semibold leading-[22px] text-text-primary"
+          onRename={onRenameLocal}
+        />
         <div className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-[11px] leading-[24px] text-text-secondary">
           <LockerHeroChip
             mod={mod}
@@ -5635,6 +5771,7 @@ function ModCard({
   onToggle,
   onDelete,
   onEditLocal,
+  onRenameLocal,
   onTagLocker,
   onTagGlobal,
   onFixUnknown,
@@ -6176,6 +6313,7 @@ function ModCard({
             hideNsfwPreviews={hideNsfwPreviews}
             soundVolume={soundVolume}
             onOpenDetails={onOpenDetails}
+            onRenameLocal={onRenameLocal}
             onCommitPriority={onCommitPriority}
             loadPosition={loadPosition}
             loadCount={loadCount}
@@ -6293,12 +6431,11 @@ function ModCard({
         })()}
 
         <div className="mt-auto min-w-0 px-0.5">
-          <h3
+          <EditableModTitle
+            name={mod.name}
             className={`min-w-0 text-text-primary ${titleClasses}`}
-            title={mod.name}
-          >
-            {mod.name}
-          </h3>
+            onRename={onRenameLocal}
+          />
           <div
             className={`${isCompact ? 'mt-1.5 h-7' : 'mt-1.5'} grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-3`}
             title={`${mod.fileName} | ${formatBytes(mod.size)} | installed ${formatAbsoluteDate(mod.installedAt)}`}
