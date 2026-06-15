@@ -387,6 +387,7 @@ interface InstalledEntryCardProps {
   selectMode: boolean;
   selected: boolean;
   onOpenDetails: (mod: Mod) => void;
+  onViewAuthor: (mod: Mod) => void;
   onOpenPicker: (gameBananaId: number) => void;
   onToggle: (entry: ModEntry) => void;
   onDelete: (entry: ModEntry) => void;
@@ -423,6 +424,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
   selectMode,
   selected,
   onOpenDetails,
+  onViewAuthor,
   onOpenPicker,
   onToggle,
   onDelete,
@@ -450,6 +452,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
         onOpenDetails={
           mod.merged || mod.gameBananaId ? () => onOpenDetails(mod) : undefined
         }
+        onViewAuthor={mod.gameBananaId ? () => onViewAuthor(mod) : undefined}
         onToggle={() => onToggle(entry)}
         onDelete={() => onDelete(entry)}
         onEditLocal={!mod.gameBananaId ? () => onEditLocal(mod) : undefined}
@@ -498,6 +501,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
       updateAvailable={updateAvailable}
       entryKey={entry.key}
       onOpenDetails={() => onOpenPicker(entry.gameBananaId)}
+      onViewAuthor={entry.gameBananaId ? () => onViewAuthor(entry.primary) : undefined}
       onToggle={() => onToggle(entry)}
       onDelete={() => onDelete(entry)}
       onTagLocker={(heroName) => onTagLocker(entry, heroName)}
@@ -2358,6 +2362,33 @@ export default function Installed() {
   const openEntryPicker = useStableCallback((gameBananaId: number) => {
     setPickerGroupId(gameBananaId);
   });
+  // Open the mod author's GameBanana profile. We don't store the submitter
+  // locally, so resolve from the catalog cache first (instant when the mod is
+  // mirrored) and fall back to a live details fetch.
+  const viewEntryAuthor = useStableCallback(async (mod: Mod) => {
+    if (!mod.gameBananaId) return;
+    try {
+      const cached = await window.electronAPI.getCachedMod(mod.gameBananaId).catch(() => null);
+      let url =
+        cached?.submitterId && cached.submitterId > 0
+          ? `https://gamebanana.com/members/${cached.submitterId}`
+          : undefined;
+      if (!url) {
+        const details = await getModDetails(mod.gameBananaId, mod.sourceSection ?? 'Mod');
+        const s = details.submitter;
+        url = s?.profileUrl ?? (s && s.id > 0 ? `https://gamebanana.com/members/${s.id}` : undefined);
+      }
+      if (!url) {
+        showToast("Couldn't find this mod's author page", { tone: 'error' });
+        return;
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      showToast(`Couldn't open author page: ${err instanceof Error ? err.message : String(err)}`, {
+        tone: 'error',
+      });
+    }
+  });
   const toggleEntry = useStableCallback((entry: ModEntry) => {
     if (entry.kind === 'group') void handleGroupToggle(entry);
     else void toggleMod(entry.mod.id);
@@ -2759,6 +2790,7 @@ export default function Installed() {
     selectMode,
     selected: isEntrySelected(entry),
     onOpenDetails: openEntryDetails,
+    onViewAuthor: viewEntryAuthor,
     onOpenPicker: openEntryPicker,
     onToggle: toggleEntry,
     onDelete: deleteEntry,
@@ -5151,6 +5183,9 @@ interface ModCardProps {
   soundVolume: number;
   updateAvailable?: boolean;
   onOpenDetails?: () => void;
+  /** Open the mod author's GameBanana profile in the browser. Undefined for
+   *  local mods with no GameBanana source. */
+  onViewAuthor?: () => void;
   onToggle: () => void;
   onDelete: () => void;
   onEditLocal?: () => void;
@@ -5768,6 +5803,7 @@ function ModCard({
   soundVolume,
   updateAvailable,
   onOpenDetails,
+  onViewAuthor,
   onToggle,
   onDelete,
   onEditLocal,
@@ -6092,6 +6128,21 @@ function ModCard({
               >
                 <Info className="w-3.5 h-3.5" />
                 View details
+              </button>
+            )}
+            {onViewAuthor && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onViewAuthor();
+                }}
+                className={menuItemClasses}
+              >
+                <Banana className="w-3.5 h-3.5" />
+                View author's page
               </button>
             )}
             {(onTagLocker || onTagGlobal) && (
