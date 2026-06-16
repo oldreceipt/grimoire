@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FileArchive, Check, X } from 'lucide-react';
 import type { MultiVpkPickData } from '../types/electron';
 import { formatBytes } from '../lib/formatBytes';
@@ -26,6 +27,7 @@ interface Props {
  * useEffect here.
  */
 export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props) {
+    const { t } = useTranslation();
     const [selected, setSelected] = useState<Set<string>>(() => new Set(data.vpkFileNames));
 
     const allSelected = selected.size === data.vpkFileNames.length;
@@ -66,7 +68,7 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                     <p className="text-sm text-text-secondary">
                         <span className="font-medium text-text-primary">{data.modName}</span> contains{' '}
                         {data.vpkFileNames.length} <code className="font-mono text-text-primary/90 bg-black/30 px-1 py-0.5 rounded">.vpk</code> files.
-                        Pick which ones to install: leave any unwanted ones unchecked and they&apos;ll be skipped.
+                        {t('multiVpk.uncheckHint')}
                     </p>
 
                     <div className="flex items-center justify-between pb-2 border-b border-border/60">

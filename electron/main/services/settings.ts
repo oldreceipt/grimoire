@@ -23,6 +23,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     experimentalStats: false,
     experimentalCrosshair: false,
     experimentalSocial: false,
+    experimentalTranslationMode: false,
+    translationModeLanguage: null,
     experimentalUnknownModMatching: false,
     hasCompletedSetup: false,
     ignoredConflicts: [],

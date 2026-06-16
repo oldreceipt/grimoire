@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   X,
   Loader2,
@@ -154,6 +155,7 @@ export default function ImportCollectionModal({
   activeDeadlockPath,
   onClose,
 }: ImportCollectionModalProps) {
+  const { t } = useTranslation();
   const [input, setInput] = useState('');
   const [collection, setCollection] = useState<GameBananaCollection | null>(null);
   const [rows, setRows] = useState<ItemRow[]>([]);
@@ -354,7 +356,7 @@ export default function ImportCollectionModal({
   const resolveCollection = useCallback(async () => {
     const collectionId = parseCollectionId(input);
     if (collectionId === null) {
-      setResolveError('Enter a collection URL like https://gamebanana.com/collections/164637 or its numeric id.');
+      setResolveError(t('importCollection.invalidId'));
       return;
     }
 
@@ -406,7 +408,7 @@ export default function ImportCollectionModal({
         setLoadingItems(false);
       }
     }
-  }, [input, installedIds, queuedIds]);
+  }, [input, installedIds, queuedIds, t]);
 
   // ───────── Variant picker (lazy resolve) ─────────
 
@@ -796,7 +798,7 @@ export default function ImportCollectionModal({
                 Import Collection
               </h2>
               <p className="text-sm text-text-secondary mt-1">
-                Paste a GameBanana collection URL or id. Items get queued through the same download pipeline as Browse.
+                {t('importCollection.pasteHint')}
               </p>
             </div>
           </div>
@@ -906,7 +908,7 @@ export default function ImportCollectionModal({
                   onClick={() => void handleToggleShowAllVariants()}
                   disabled={variantScanProgress !== null}
                   className="text-xs inline-flex items-center gap-1.5 px-2 py-1 rounded-sm border border-white/10 text-text-secondary hover:text-text-primary hover:border-white/20 disabled:opacity-60 disabled:cursor-default cursor-pointer"
-                  title="Fetch every selectable mod's file list and expand any with multiple variants"
+                  title={t('importCollection.scanTitle')}
                 >
                   {variantScanProgress ? (
                     <>
@@ -1105,8 +1107,7 @@ export default function ImportCollectionModal({
                         <div className="text-xs text-text-tertiary flex items-start gap-1.5">
                           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                           <span>
-                            GameBanana returned no downloadable files for this mod.
-                            It may have been removed or taken down. The mod page is still browsable.
+                            {t('importCollection.noFiles')}
                           </span>
                         </div>
                       )}
@@ -1114,7 +1115,7 @@ export default function ImportCollectionModal({
                         <>
                           {row.details.files.length > 1 && (
                             <p className="text-[11px] text-text-tertiary mb-1.5">
-                              Check one or more variants. Leaving everything unchecked falls back to the most popular file.
+                              {t('importCollection.variantHint')}
                             </p>
                           )}
                           <ul className="space-y-1">

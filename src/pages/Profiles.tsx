@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Layers, Plus, Trash2, Play, Save, RefreshCw, AlertTriangle, User, ChevronDown, ChevronUp, Terminal, Check, Pencil, X, Upload, Share2, Globe, History, RotateCcw, Camera } from 'lucide-react';
 import {
   getProfiles,
@@ -95,6 +96,7 @@ function getProfileModGroups(
 }
 
 export default function Profiles() {
+  const { t } = useTranslation();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [crosshairEnabled, setCrosshairEnabled] = useState(false);
@@ -594,7 +596,7 @@ export default function Profiles() {
               <EmptyState
                 icon={User}
                 title="No Profiles Yet"
-                description="Create your first profile above to save your current mod configuration."
+                description={t('profiles.empty.noProfiles')}
               />
             </div>
           ) : (

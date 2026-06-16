@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Layers, X, Share2, Scissors, Check, PackageOpen, Loader2, AlertTriangle } from 'lucide-react';
 import type { Mod, MergedModSource } from '../types/mod';
 import ModThumbnail from './ModThumbnail';
@@ -23,6 +24,7 @@ interface Props {
  * (with a copy button) and an Unmerge shortcut.
  */
 export default function MergedContentsModal({ mod, hideNsfw, onClose, onUnmerge, onExtractSource }: Props) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   // The fileName of the source row currently being extracted, and the last
   // error surfaced by an extract.
@@ -160,7 +162,7 @@ export default function MergedContentsModal({ mod, hideNsfw, onClose, onUnmerge,
                       {!src.enabledAtMergeTime && (
                         <span
                           className="text-[10px] uppercase tracking-wide text-text-secondary/70 px-1.5 py-0.5 rounded border border-border"
-                          title="This source was disabled when the merge happened"
+                          title={t('mergedContents.disabledAtMerge')}
                         >
                           off
                         </span>

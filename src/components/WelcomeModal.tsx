@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FolderOpen, Wrench, Check, X, ArrowRight, Loader2, Terminal } from 'lucide-react';
 import { Button, Badge } from './common/ui';
 import { Modal } from './common/Modal';
@@ -17,6 +18,7 @@ interface WelcomeModalProps {
 }
 
 export default function WelcomeModal({ onComplete }: WelcomeModalProps) {
+    const { t } = useTranslation();
     const { detectDeadlock } = useAppStore();
     const [localPath, setLocalPath] = useState<string | null>(null);
     const [isValidPath, setIsValidPath] = useState<boolean | null>(null);
@@ -189,7 +191,7 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps) {
                         {detectFailed && !isDetecting && (
                             <div className="ml-7 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
                                 <p className="text-xs text-yellow-200 mb-2">
-                                    Couldn't auto-detect. Browse to your Steam library:
+                                    {t('welcome.autoDetectFailed')}
                                 </p>
                                 <code className="block text-xs text-text-secondary font-mono mb-2">
                                     steamapps/common/Deadlock
@@ -266,7 +268,7 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps) {
                         <div className="ml-7">
                             {autoexecStatus?.exists ? (
                                 <p className="text-xs text-text-secondary">
-                                    Existing autoexec.cfg found. Your settings will be preserved.
+                                    {t('welcome.autoexecExists')}
                                 </p>
                             ) : autoexecStatus ? (
                                 <div className="flex items-center gap-3">

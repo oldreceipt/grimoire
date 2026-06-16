@@ -20,7 +20,88 @@
       "label": "Language",
       "description": "Choose the app language, or follow your system preference.",
       "systemDefault": "System default"
+    },
+    "header": {
+      "description": "Game paths, preferences, and maintenance"
+    },
+    "toggles": {
+      "hideOutdated": "Hide Browse mods older than the current game version.",
+      "expandLocker": "Start Locker list view with hero cards expanded.",
+      "switchVariants": "Installing a new variant disables the old one. Off keeps both active. Updates always replace the old file.",
+      "enableAfterDownload": "Enable mods as soon as they finish downloading. Stays disabled if no slot is free.",
+      "confirmProfileUpdate": "Confirm before overwriting a profile's saved mods. Off overwrites immediately.",
+      "ignoreConflicts": "Hide all conflicts from the Conflicts page. Off shows them.",
+      "discordRpc": "Show your current Grimoire activity on your Discord profile. Talks only to your local Discord app and sends nothing to Grimoire.",
+      "contributeSalts": "Share the replay keys Steam already caches for matches you view in-game. Sends only the match id, server cluster, and two download keys: no account id, no username, nothing about you or your mods.",
+      "translationMode": "Double-click translated labels to suggest edits. Requires Steam sign-in.",
+      "fixUnknown": "Match unknown local VPKs against GameBanana to recover names and thumbnails. May hit rate limits on large libraries.",
+      "deadworks": "Add a Servers tab to browse and join Deadworks community servers. Required content downloads before connecting.",
+      "performanceConfig": "One-click fps boost using Sqooky's community preset. Mods keep working. Remove any time."
+    },
+    "cache": {
+      "wipeMessage": "Removes cached mod metadata and sync state. Browse re-syncs from GameBanana next time. Installed mods are not affected.",
+      "clearPreviewMessage": "Deletes cached preview images to reclaim disk. They regenerate when you next view them. Installed mods are not affected."
     }
+  },
+  "crosshair": {
+    "toggles": {
+      "staticGap": "Keep the gap fixed. Off lets it expand with weapon spread (not shown in preview).",
+      "disableHeroCrosshairs": "Force your custom crosshair on heroes that override it."
+    }
+  },
+  "installed": {
+    "empty": {
+      "noGamePath": "Set your Deadlock path or enable dev mode.",
+      "noMods": "Download mods from Browse or import a custom VPK to get started."
+    }
+  },
+  "locker": {
+    "empty": {
+      "noGamePath": "Set your Deadlock path or enable dev mode."
+    }
+  },
+  "profiles": {
+    "empty": {
+      "noProfiles": "Create a profile to save your current mod setup."
+    }
+  },
+  "social": {
+    "account": {
+      "deleteMessage": "Permanently deletes your account, your likes, and your published profiles from Discover. People who already imported them keep their copy."
+    },
+    "publish": {
+      "localBlocked": "Local mods can't be published."
+    }
+  },
+  "exportProfile": {
+    "localBlocked": "Local mods can't be shared."
+  },
+  "importCollection": {
+    "invalidId": "Paste a collection URL or numeric id.",
+    "pasteHint": "Paste a GameBanana collection URL or id. Items queue like any Browse download.",
+    "scanTitle": "Fetch file lists and expand mods with variants",
+    "noFiles": "No downloadable files. This mod may have been removed.",
+    "variantHint": "Check a variant, or leave unchecked to use the most popular file."
+  },
+  "importProfile": {
+    "alreadyInstalled": "Already installed: reused without re-downloading",
+    "noFiles": "No downloadable files. This mod may have been removed.",
+    "variantHint": "Check a variant, or leave unchecked to use the profile's pinned file."
+  },
+  "mergeMods": {
+    "oneVariant": "One variant per mod",
+    "strictDescription": "Stop if two mods touch the same file. Off lets the higher-priority mod win.",
+    "localNote": "Local mods merge fine but aren't in the share code. Delete the disabled originals and they can't be recovered on unmerge."
+  },
+  "mergedContents": {
+    "disabledAtMerge": "Disabled at merge time"
+  },
+  "multiVpk": {
+    "uncheckHint": "Uncheck any you don't want to install."
+  },
+  "welcome": {
+    "autoexecExists": "Existing autoexec.cfg found. Your settings stay intact.",
+    "autoDetectFailed": "Auto-detect failed. Browse to your Steam library:"
   },
   "sidebar": {
     "expandSidebar": "Expand sidebar",

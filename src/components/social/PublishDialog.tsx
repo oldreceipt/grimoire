@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, AlertTriangle, Loader2, CheckCircle2, Globe } from 'lucide-react';
 import { Button } from '../common/ui';
 import { Modal } from '../common/Modal';
@@ -40,6 +41,7 @@ export default function PublishDialog({
   onClose,
   onPublished,
 }: PublishDialogProps) {
+  const { t } = useTranslation();
   const [title, setTitle] = useState(profileName);
   const [description, setDescription] = useState('');
   const [exportResult, setExportResult] = useState<PortableExportResult | null>(null);
@@ -164,7 +166,7 @@ export default function PublishDialog({
                       {exportResult.warnings.map((w, i) => <div key={i}>{w}</div>)}
                     </div>
                     <div className="text-xs text-text-secondary mt-2">
-                      Locally-imported mods (not from GameBanana) can't be published.
+                      {t('social.publish.localBlocked')}
                     </div>
                   </div>
                 </div>

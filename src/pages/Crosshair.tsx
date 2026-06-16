@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Copy, Check, RotateCcw, Save, Trash2, Play, Pin, XCircle, Download } from 'lucide-react';
 import { useCrosshairStore } from '../stores/crosshairStore';
 import CrosshairPreview from '../components/crosshair/CrosshairPreview';
@@ -22,6 +23,7 @@ function detectResolutionHeight(): number {
 }
 
 export default function Crosshair() {
+    const { t } = useTranslation();
     const [copied, setCopied] = useState(false);
     const [imported, setImported] = useState(false);
     const [resolution, setResolution] = useState(detectResolutionHeight);
@@ -254,13 +256,13 @@ export default function Crosshair() {
                         <div className="space-y-4">
                             <Toggle
                                 label="Static Gap"
-                                description="Keep the gap fixed. When off, the in-game gap expands with weapon spread (not simulated in the preview)."
+                                description={t('crosshair.toggles.staticGap')}
                                 checked={pipGapStatic}
                                 onChange={setPipGapStatic}
                             />
                             <Toggle
                                 label="Disable Hero Crosshairs"
-                                description="Some heroes override the crosshair with their own. Turn this on so your custom crosshair always wins."
+                                description={t('crosshair.toggles.disableHeroCrosshairs')}
                                 checked={disableHeroSpecificCrosshairs}
                                 onChange={setDisableHeroSpecificCrosshairs}
                             />
