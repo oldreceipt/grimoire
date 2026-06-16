@@ -14,6 +14,12 @@ import {
   previewTrippySprite,
 } from '../../lib/api';
 import { loadGltfPreview } from '../../lib/loadGltfPreview';
+import {
+  isNprMaterial,
+  wrapMaterialWithNpr,
+  buildOutlineShell,
+  type NprWrapResult,
+} from '../../lib/source2NprMaterial';
 import type { HeroPoseSkinSource } from '../../types/portrait';
 import type { TrippySpriteResult } from '../../types/mod';
 import type { TrippyPreview } from '../../stores/trippyPreviewStore';
@@ -53,6 +59,18 @@ const IBL_FACES = [
 // pose stays the default. The rigged backend + viewer path remain in place; flip
 // this to true to bring them back once the animation is improved.
 const USE_RIGGED_PREVIEW: boolean = false;
+
+// Source 2 NPR cel/rim/tint restyle layered ON TOP of the PMREM IBL + ACES
+// tonemap output (not a replacement pass). Gated per-material on userData.morphic
+// + F_USE_NPR_LIGHTING, so heroes/materials without that data render exactly as
+// today. This flag is the global kill switch; flip to true to ship cel+rim+tint.
+const USE_NPR_PREVIEW: boolean = false;
+
+// Inverted-hull solid-color outline (Source 2's method; vpkmerge strips the
+// engine shells from the export, so we regenerate them). Independent flag, default
+// off: the skinned shell binding is the highest-risk piece and the cel+rim+tint
+// already deliver the bulk of the in-game look. Honors per-material outline data.
+const USE_NPR_OUTLINE: boolean = false;
 
 // Turntable rotation rate (rad/s). The spin pauses while the user holds (orbits)
 // the model with the mouse.
@@ -426,6 +444,103 @@ function TrippyPaint({
   return null;
 }
 
+/** Wraps every NPR-eligible material in `scene` with a CSM that layers the
+ *  Deadlock cel ramp + rim + tint mask on the lit PBR output. Side-effects the
+ *  shared scene graph in place (like the model effects / TrippyPaint), so one
+ *  instance serves both PosedModel and RiggedModel (both render the same scene).
+ *  Restores originals and disposes its CSM wrappers + mask clones on cleanup.
+ *  No-op when disabled or when no material carries morphic data. */
+function NprMaterials({
+  scene,
+  enabled,
+  outline,
+  tint,
+}: {
+  scene: THREE.Object3D;
+  enabled: boolean;
+  outline: boolean;
+  tint: THREE.Color | null;
+}) {
+  // Live handle to the wraps so the tint effect can poke uniforms without a rebuild.
+  const wrapsRef = useRef<Map<THREE.Material, NprWrapResult>>(new Map());
+
+  useEffect(() => {
+    if (!enabled) return;
+    const wraps = new Map<THREE.Material, NprWrapResult>();
+    const restore: Array<() => void> = [];
+
+    scene.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      const skinned = obj as THREE.SkinnedMesh;
+      if (!mesh.isMesh && !skinned.isSkinnedMesh) return;
+
+      const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      list.forEach((mat, i) => {
+        if (!mat || !isNprMaterial(mat)) return;
+        // Idempotency: a CSM stamps `__csm` on the instance it copies from, so a
+        // StrictMode double-invoke never double-wraps.
+        if ((mat as { __csm?: unknown }).__csm) return;
+
+        let w = wraps.get(mat);
+        if (!w) {
+          const built = wrapMaterialWithNpr(mat, undefined, tint);
+          if (!built) return;
+          w = built;
+          wraps.set(mat, w);
+        }
+        const csm = w.material;
+        if (Array.isArray(mesh.material)) {
+          const arr = mesh.material;
+          arr[i] = csm;
+          restore.push(() => {
+            arr[i] = mat;
+          });
+        } else {
+          mesh.material = csm;
+          restore.push(() => {
+            mesh.material = mat;
+          });
+        }
+      });
+
+      if (outline) {
+        const dispose = buildOutlineShell(mesh);
+        if (dispose) restore.push(dispose);
+      }
+    });
+
+    wrapsRef.current = wraps;
+
+    return () => {
+      // Restore originals first, then dispose only what this wrap created (the CSM
+      // wrappers and the mask clones). The parent loader effect's disposeScene then
+      // disposes the restored originals, so there is no double-free.
+      restore.forEach((fn) => fn());
+      wraps.forEach((w) => {
+        w.material.dispose();
+        w.ownedTextures.forEach((t) => t.dispose());
+      });
+      wraps.clear();
+      wrapsRef.current = new Map();
+    };
+    // `tint` is intentionally excluded: the separate effect below applies it by
+    // mutating uniforms, so a recolor never tears down and rebuilds the wraps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene, enabled, outline]);
+
+  // Live tint (ability-recolor preview): mutate uniforms only, no rebuild.
+  useEffect(() => {
+    if (!enabled) return;
+    wrapsRef.current.forEach((w) => {
+      const u = w.uniforms.uTintColor.value as THREE.Color;
+      if (tint) u.copy(tint);
+      else u.setRGB(1, 1, 1);
+    });
+  }, [tint, enabled]);
+
+  return null;
+}
+
 const q = (x: number): number => Math.round(x * 100) / 100;
 
 export default function HeroPoseViewer({
@@ -620,6 +735,14 @@ export default function HeroPoseViewer({
           <RiggedModel scene={scene} clips={clips} interaction={interaction} />
         ) : (
           <PosedModel scene={scene} interaction={interaction} />
+        )}
+        {USE_NPR_PREVIEW && scene && (
+          <NprMaterials
+            scene={scene}
+            enabled={USE_NPR_PREVIEW && !trippySprite}
+            outline={USE_NPR_OUTLINE}
+            tint={null /* wire to a recolor color once the Locker recolor surface exists */}
+          />
         )}
         {trippySprite && <TrippyPaint scene={scene} sprite={trippySprite} />}
         <Controls interaction={interaction} />

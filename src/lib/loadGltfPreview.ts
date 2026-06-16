@@ -1,4 +1,5 @@
 import { GLTFLoader, type GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { resolveMorphicTextures } from './source2NprMaterial';
 
 type CreateImageBitmapFunction = Window['createImageBitmap'];
 
@@ -41,9 +42,14 @@ function restoreImageBitmapLoader(): void {
 export async function loadGltfPreview(url: string): Promise<GLTF> {
   disableImageBitmapLoader();
   try {
-    return await new Promise<GLTF>((resolve, reject) => {
+    const gltf = await new Promise<GLTF>((resolve, reject) => {
       new GLTFLoader().load(url, resolve, undefined, reject);
     });
+    // Resolve the NPR mask texture indices (the only part of the morphic contract
+    // the stock loader does not surface) while gltf.parser is still live and the
+    // ImageBitmap suppression is in effect. No-op when no material carries masks.
+    await resolveMorphicTextures(gltf);
+    return gltf;
   } finally {
     restoreImageBitmapLoader();
   }
@@ -55,9 +61,11 @@ export async function loadGltfPreview(url: string): Promise<GLTF> {
 export async function parseGltfPreview(buffer: ArrayBuffer): Promise<GLTF> {
   disableImageBitmapLoader();
   try {
-    return await new Promise<GLTF>((resolve, reject) => {
+    const gltf = await new Promise<GLTF>((resolve, reject) => {
       new GLTFLoader().parse(buffer, '', resolve, reject);
     });
+    await resolveMorphicTextures(gltf);
+    return gltf;
   } finally {
     restoreImageBitmapLoader();
   }

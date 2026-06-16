@@ -69,9 +69,28 @@ branch**: `cargo build --release --manifest-path ..\vpkmerge\Cargo.toml -p vpkme
   bind/A-pose (clipless WIP heroes + mesh skins that ship no clips). Re-enabling is
   task #11. No vpkmerge change is needed for the rig: the no-pose export already
   emits the full skinned + animated glTF.
-- **NPR cel/rim/tint shader** (drafted, not applied): the biggest remaining visual
-  leap (the actual cel-shaded look). Draft is in the materials-parity workflow
-  output; needs `pnpm add three-custom-shader-material` + visual tuning. Task #7.
+- **NPR cel/rim/tint shader** (IMPLEMENTED, flagged OFF): the actual cel-shaded
+  look, the biggest visual leap. New module `src/lib/source2NprMaterial.ts` +
+  `HeroPoseViewer.tsx` `NprMaterials` component + a one-line `loadGltfPreview.ts`
+  mask-resolver, gated behind `USE_NPR_PREVIEW = false` (and a per-material
+  `F_USE_NPR_LIGHTING` predicate, so non-morphic heroes render exactly as today).
+  Built via a draft+adversarial-verify workflow; the first draft had three
+  confirmed blockers (all fixed): (1) CSM injects the user fragment body at the TOP
+  of `main()`, so the lit color cannot be read there: all post-light cel+rim math
+  lives in the `patchMap` after `#include <opaque_fragment>` and writes
+  `gl_FragColor` directly (never `csm_FragColor`, or CSM would inject its own mix);
+  (2) `parser.getDependency('texture')` returns a SHARED cached texture, so masks
+  are `.clone()`d per material before mutate/own/dispose; (3) `g_vColorTint1` is
+  already baked into base color by vpkmerge, so `uTintColor` defaults to white
+  (driven only by a future recolor override). Typecheck + lint green; an
+  independent verifier confirmed the shader compiles against the installed CSM
+  6.4.0. REMAINING before flipping `USE_NPR_PREVIEW = true`: a runtime smoke test
+  (the GLSL can only be validated by running the app on a real hero) + visual
+  tuning of `DEFAULT_NPR_TUNING` against in-game screenshots. Task #7.
+- **NPR solid-color outline** (built, `USE_NPR_OUTLINE = false`): inverted-hull
+  shell in `buildOutlineShell`, gated on the presence of `g_vSolidOutlineTint`.
+  The skinned-shell binding is unverified; dump a real hero's `extras.morphic` and
+  smoke-test on one rigged hero before enabling.
 - **Mis-routed pure-normal materials** (task #8), **g_tRoughness wiring + toon
   outlines** (task #10): see the plan doc's round-2 section.
 
@@ -157,9 +176,9 @@ findings), this file.
 
 ## Open follow-ups (task list)
 
-- **#7 NPR cel/rim/tint shader** - apply the drafted `three-custom-shader-material`
-  module (`src/lib/source2NprMaterial.ts` + HeroPoseViewer edits), gated on
-  `userData.morphic`. Needs the dep + visual tuning. Biggest visual leap left.
+- **#7 NPR cel/rim/tint shader** - DONE (implemented, flagged OFF; see "What's
+  built but gated" above). Remaining: runtime smoke test + visual tuning, then flip
+  `USE_NPR_PREVIEW = true`.
 - **#8 mis-routed pure-normal materials** - content-discriminator fix in `glb.rs`
   (see gotcha above). Headless-verifiable.
 - **#10 g_tRoughness wiring + toon outline pass** - recover ghost's authored
