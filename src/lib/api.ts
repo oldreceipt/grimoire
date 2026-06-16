@@ -218,6 +218,26 @@ export async function exportHeroPose(
   return window.electronAPI.exportHeroPose(heroName, skinSources, fallbackSkinMetaKey);
 }
 
+/** Whether a hero's RIGGED (animated, skinned) glb exists for the active skin
+ *  stack (+ mtime, key). Mirrors getHeroPoseInfo for the rigged variant. */
+export async function getRiggedHeroPose(
+  heroName: string,
+  skinSources?: HeroPoseSkinSource[]
+): Promise<HeroPoseInfo> {
+  return window.electronAPI.getRiggedHeroPose(heroName, skinSources);
+}
+
+/** Generate a hero's RIGGED glb via the bundled vpkmerge exporter (no --pose,
+ *  single idle clip; keeps skeleton + skin + idle animation). Pass the active
+ *  skin stack to rig the equipped look; omit for vanilla. */
+export async function exportRiggedHeroPose(
+  heroName: string,
+  skinSources?: HeroPoseSkinSource[],
+  fallbackSkinMetaKey?: string
+): Promise<HeroPoseInfo> {
+  return window.electronAPI.exportRiggedHeroPose(heroName, skinSources, fallbackSkinMetaKey);
+}
+
 export async function applyHeroSound(
   heroName: string,
   slot: AbilitySlot,

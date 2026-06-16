@@ -144,6 +144,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('get-hero-pose-info', heroName, skinSources),
     exportHeroPose: (heroName: string, skinSources?: unknown[], fallbackSkinMetaKey?: string) =>
         ipcRenderer.invoke('export-hero-pose', heroName, skinSources, fallbackSkinMetaKey),
+    getRiggedHeroPose: (heroName: string, skinSources?: unknown[]) =>
+        ipcRenderer.invoke('get-rigged-hero-pose', heroName, skinSources),
+    exportRiggedHeroPose: (heroName: string, skinSources?: unknown[], fallbackSkinMetaKey?: string) =>
+        ipcRenderer.invoke('export-rigged-hero-pose', heroName, skinSources, fallbackSkinMetaKey),
     getPreviewCacheSize: () =>
         ipcRenderer.invoke('get-preview-cache-size'),
     clearPreviewCache: () =>

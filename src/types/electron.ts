@@ -448,6 +448,15 @@ export interface ElectronAPI {
         skinSources?: HeroPoseSkinSource[],
         fallbackSkinMetaKey?: string
     ) => Promise<HeroPoseInfo>;
+    getRiggedHeroPose: (
+        heroName: string,
+        skinSources?: HeroPoseSkinSource[]
+    ) => Promise<HeroPoseInfo>;
+    exportRiggedHeroPose: (
+        heroName: string,
+        skinSources?: HeroPoseSkinSource[],
+        fallbackSkinMetaKey?: string
+    ) => Promise<HeroPoseInfo>;
     getPreviewCacheSize: () => Promise<{ bytes: number }>;
     clearPreviewCache: () => Promise<{ bytesFreed: number }>;
     applyHeroSound: (

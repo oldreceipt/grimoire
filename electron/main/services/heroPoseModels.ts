@@ -134,8 +134,18 @@ function modelDir(key: string): string {
     return join(app.getPath('userData'), 'hero-poses', sanitize(key.toLowerCase()));
 }
 
+/** Static (`--pose`) baked still. The legacy/default glb. */
+const STATIC_MODEL_FILENAME = 'model.glb';
+/** Rigged (no `--pose`, single idle-clip) SkinnedMesh + animated glb. Sibling of
+ *  the static glb in the same entry dir; served over the same scheme. */
+const RIGGED_MODEL_FILENAME = 'model-rigged.glb';
+
 function modelFile(key: string): string {
-    return join(modelDir(key), 'model.glb');
+    return join(modelDir(key), STATIC_MODEL_FILENAME);
+}
+
+function riggedModelFile(key: string): string {
+    return join(modelDir(key), RIGGED_MODEL_FILENAME);
 }
 
 /**
@@ -156,14 +166,49 @@ function modelFile(key: string): string {
  *
  * v4: Rem now pins `familiar_wip.vmdl_c`; old cached Familiar GLBs targeted
  * `familiar.vmdl_c`, whose rendered vertices are all pelvis-weighted.
+ *
+ * v5: glb.rs material-export fixes (roughness from the normal texture's BLUE
+ * channel not its constant alpha, normal-Z reconstruction, and constant
+ * metalness/roughness/color-tint fallbacks), so PBR reads correctly under the
+ * new IBL. Old GLBs baked fully-rough/matte surfaces; forces a re-export.
+ *
+ * v6: sheen now reads TextureSheenColor1 * tint and binds the g_tSheen texture
+ * (was white sheen on most cloth), and glass honors the authored g_flIOR.
  */
-const POSE_CACHE_VERSION = '4';
+const POSE_CACHE_VERSION = '6';
 
 const POSE_VERSION_FILENAME = '.cache-version';
 
 function versionFile(key: string): string {
     return join(modelDir(key), POSE_VERSION_FILENAME);
 }
+
+/**
+ * Cache schema version for stored RIGGED (animated, skinned) hero glbs. Bumped
+ * INDEPENDENTLY of POSE_CACHE_VERSION so a change to one export pipeline never
+ * invalidates the other's cache. v1: initial rigged-export spine: no `--pose`,
+ * filtered to a single looping idle clip, emitting skin + per-bone nodes + one
+ * glTF animation.
+ */
+const RIGGED_CACHE_VERSION = '1';
+
+const RIGGED_VERSION_FILENAME = '.rigged-cache-version';
+
+function riggedVersionFile(key: string): string {
+    return join(modelDir(key), RIGGED_VERSION_FILENAME);
+}
+
+/**
+ * The single idle clip kept in a rigged export. Pass EXACTLY ONE `--clip`: the
+ * CLI's `--clip` is ADDITIVE (retains EVERY matching clip), so a candidate LIST
+ * would keep two competing idle loops on heroes that carry more than one
+ * (verified: abrams with 4 candidates = 52 MB / 2 anims vs 50.7 MB / 1 anim for
+ * the single clip). `primary_stand_idle` is the universal idle: present on every
+ * resolvable hero tested (haze, abrams, astro, bebop, ...; 81-91 keyframes,
+ * ~3.0s loop). A model lacking it exports a valid skinned BIND-POSE glb
+ * (anims=0), which the viewer renders without a mixer (the graceful fallback).
+ */
+const RIGGED_IDLE_CLIP = 'primary_stand_idle';
 
 /**
  * Cap on total bytes stored under hero-poses/. Each entry is a 50-95 MB GLB
@@ -403,6 +448,28 @@ export async function getHeroPoseInfo(
     return infoForKey(poseKey(heroName, normalizeSkinSources(skinSources)));
 }
 
+async function infoForRiggedKey(key: string): Promise<HeroPoseInfo> {
+    try {
+        const stat = await fs.stat(riggedModelFile(key));
+        const version = await fs.readFile(riggedVersionFile(key), 'utf8').catch(() => '');
+        if (version.trim() !== RIGGED_CACHE_VERSION) {
+            return { hasModel: false, mtimeMs: null, key };
+        }
+        return { hasModel: true, mtimeMs: stat.mtimeMs, key };
+    } catch {
+        return { hasModel: false, mtimeMs: null, key };
+    }
+}
+
+/** Whether a hero's RIGGED (animated, skinned) glb exists for the given active
+ *  skin stack, plus its mtime and storage key. Mirrors getHeroPoseInfo. */
+export async function getRiggedHeroPose(
+    heroName: string,
+    skinSources?: HeroPoseSkinSource[]
+): Promise<HeroPoseInfo> {
+    return infoForRiggedKey(poseKey(heroName, normalizeSkinSources(skinSources)));
+}
+
 /**
  * In-flight pose exports, keyed by the requested (hero, skin) so concurrent
  * identical requests collapse onto one vpkmerge run. Without this, a rapid 3D
@@ -520,6 +587,112 @@ async function runHeroPoseExportForSources(
     }
 }
 
+/** In-flight rigged exports. Separate map from inFlightExports: a rigged and a
+ *  static export for the same key are independent and may run concurrently. */
+const inFlightRiggedExports = new Map<string, Promise<HeroPoseInfo>>();
+
+/**
+ * Generate a hero's RIGGED glb: identical model/skin selection to exportHeroPose
+ * but WITHOUT `--pose`, filtered to the single RIGGED_IDLE_CLIP, so the output
+ * keeps its skeleton, skin (JOINTS_0/WEIGHTS_0) and one glTF idle animation.
+ * Writes the sibling `model-rigged.glb` + `.rigged-cache-version` next to the
+ * static `model.glb`. The static export is untouched.
+ */
+export async function exportRiggedHeroPose(
+    deadlockPath: string,
+    heroName: string,
+    skinSources?: HeroPoseSkinSource[],
+    fallbackSkinMetaKey?: string
+): Promise<HeroPoseInfo> {
+    const normalized = normalizeSkinSources(skinSources);
+    const requestKey = poseKey(heroName, normalized);
+    const existing = inFlightRiggedExports.get(requestKey);
+    if (existing) return existing;
+
+    const work = runRiggedHeroExport(deadlockPath, heroName, normalized, fallbackSkinMetaKey);
+    inFlightRiggedExports.set(requestKey, work);
+    try {
+        const info = await work;
+        void sweepHeroPoseCache();
+        return info;
+    } finally {
+        inFlightRiggedExports.delete(requestKey);
+    }
+}
+
+async function runRiggedHeroExport(
+    deadlockPath: string,
+    heroName: string,
+    skinSources: HeroPoseSkinSource[],
+    fallbackSkinMetaKey?: string
+): Promise<HeroPoseInfo> {
+    try {
+        return await runRiggedHeroExportForSources(deadlockPath, heroName, skinSources);
+    } catch (err) {
+        if (skinSources.length <= 1 || !fallbackSkinMetaKey) throw err;
+        const fallback =
+            skinSources.find((source) => source.metaKey === fallbackSkinMetaKey) ?? {
+                metaKey: fallbackSkinMetaKey,
+                priority: 0,
+            };
+        return runRiggedHeroExportForSources(deadlockPath, heroName, [fallback]);
+    }
+}
+
+async function runRiggedHeroExportForSources(
+    deadlockPath: string,
+    heroName: string,
+    skinSources: HeroPoseSkinSource[]
+): Promise<HeroPoseInfo> {
+    const selectors = modelSelectorsForHero(heroName);
+    if (selectors.length === 0) {
+        throw new Error(`No known model codename for hero "${heroName}".`);
+    }
+
+    const pak01 = join(getCitadelPath(deadlockPath), 'pak01_dir.vpk');
+    const source = await resolvePoseSource(deadlockPath, pak01, skinSources);
+    try {
+        const key = poseKey(heroName, source.sources);
+        const dir = modelDir(key);
+        await fs.mkdir(dir, { recursive: true });
+        const out = riggedModelFile(key);
+
+        let lastError: unknown;
+        for (const selector of selectors) {
+            try {
+                await runVpkmerge([
+                    'model',
+                    'export',
+                    '--vpk',
+                    source.vpk,
+                    ...selector,
+                    '--base',
+                    pak01,
+                    // NO --pose: keep the skeleton + skin + clip. Exactly ONE
+                    // --clip: --clip is additive, so a candidate LIST would keep
+                    // multiple competing idle loops on heroes carrying more than
+                    // one (verified abrams: 2 anims w/ a list vs 1 w/ one clip).
+                    '--clip',
+                    RIGGED_IDLE_CLIP,
+                    '--out',
+                    out,
+                ]);
+                await fs.writeFile(riggedVersionFile(key), RIGGED_CACHE_VERSION);
+                return infoForRiggedKey(key);
+            } catch (err) {
+                lastError = err;
+            }
+        }
+        throw lastError instanceof Error
+            ? lastError
+            : new Error(`Failed to export rigged model for "${heroName}".`);
+    } finally {
+        if (source.tempDir) {
+            await fs.rm(source.tempDir, { recursive: true, force: true });
+        }
+    }
+}
+
 /**
  * Register the `grimoire-hero:` scheme handler. URLs look like
  * `grimoire-hero://m/<encoded-key>/model.glb` (the `?v=` cache-buster is
@@ -533,14 +706,22 @@ export function registerHeroPoseProtocol(): void {
     protocol.handle(HERO_POSE_SCHEME, async (request) => {
         try {
             const url = new URL(request.url);
-            const segment = url.pathname.split('/').filter(Boolean)[0] ?? '';
-            const key = decodeURIComponent(segment);
-            const file = modelFile(key);
+            const parts = url.pathname.split('/').filter(Boolean);
+            const key = decodeURIComponent(parts[0] ?? '');
+            // The trailing segment names which glb: the static `model.glb`
+            // (default; legacy URLs omit it) or the rigged `model-rigged.glb`.
+            // Allowlist the two known basenames so the key segment can never be
+            // used to escape the entry dir.
+            const requested = parts[1] ?? STATIC_MODEL_FILENAME;
+            const filename =
+                requested === RIGGED_MODEL_FILENAME ? RIGGED_MODEL_FILENAME : STATIC_MODEL_FILENAME;
+            const file = join(modelDir(key), filename);
             await fs.access(file);
             // LRU touch for the cache sweep, which uses the newest file mtime
-            // in the entry dir as last-used. Touch the tiny sidecar, not the
-            // GLB: the GLB mtime feeds the renderer's ?v= cache-buster and
-            // must keep meaning "export time".
+            // in the entry dir as last-used. Touch the tiny static sidecar, not
+            // a GLB: the GLB mtime feeds the renderer's ?v= cache-buster and
+            // must keep meaning "export time". Both glbs share the dir, so
+            // touching the one sidecar protects the whole entry.
             const now = new Date();
             void fs.utimes(versionFile(key), now, now).catch(() => {});
             return net.fetch(pathToFileURL(file).toString());
