@@ -1,6 +1,6 @@
 import { ipcMain, shell } from 'electron';
 import { promises as fs, existsSync } from 'fs';
-import { extname } from 'path';
+import { extname, basename } from 'path';
 import { loadSettings, saveSettings, getActiveDeadlockPath } from '../services/settings';
 import {
     scanMods,
@@ -30,9 +30,11 @@ import {
 } from '../services/unknownModDetection';
 import { downloadMod } from '../services/download';
 import { mergeMods, unmergeMod, extractMergeSource } from '../services/modMerger';
+import { buildSoulContainerVpk, cleanupSoulContainerBuild, previewSoulContainerGlb } from '../services/soulContainerImport';
+import { resolveModVpk, clearSoulModelCache } from '../services/soulContainerModels';
 import { getMainWindow } from '../index';
-import type { ImportCustomModArgs } from '../../../src/types/electron';
-import type { AbilitySoundClassification, ApplyUnknownCustomModArgs, ApplyUnknownModMatchArgs, AssociateUnknownModArgs, EditLocalModArgs, GlobalModType, LockerHeroSource, MergeModsArgs, Mod as WireMod, UnmergeModResult, ExtractMergeSourceResult, UnknownModFileList } from '../../../src/types/mod';
+import type { ImportCustomModArgs, ImportSoulContainerGlbArgs, PreviewSoulContainerGlbArgs, SoulContainerPreview } from '../../../src/types/electron';
+import type { AbilitySoundClassification, ApplyUnknownCustomModArgs, ApplyUnknownModMatchArgs, AssociateUnknownModArgs, EditLocalModArgs, GlobalModType, LockerHeroSource, MergeModsArgs, Mod as WireMod, SoulContainerImportInfo, UnmergeModResult, ExtractMergeSourceResult, UnknownModFileList } from '../../../src/types/mod';
 
 const unknownDetectionControllers = new Map<string, AbortController>();
 
@@ -201,6 +203,7 @@ function enrichMod(mod: Mod): WireMod {
             lockerCosmetics: metadata.lockerCosmetics,
             lockerSounds: metadata.lockerSounds,
             abilitySounds: abilitySounds ?? undefined,
+            soulImport: metadata.soulImport,
             ignoreUpdates: metadata.ignoreUpdates,
         };
     }
@@ -803,6 +806,21 @@ async function readImageAsDataUrl(imagePath: string): Promise<string> {
     return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
+// read-glb-file
+// Used by the soul-container import modal to render the selected local GLB
+// directly in Three.js. The renderer cannot fetch arbitrary file:// paths under
+// webSecurity, so main validates the extension and returns the bytes as base64.
+ipcMain.handle('read-glb-file', async (_, glbPath: string): Promise<string> => {
+    if (!glbPath || !existsSync(glbPath)) {
+        throw new Error('GLB file not found');
+    }
+    if (extname(glbPath).toLowerCase() !== '.glb') {
+        throw new Error('Selected file is not a .glb');
+    }
+    const buf = await fs.readFile(glbPath);
+    return buf.toString('base64');
+});
+
 // read-image-data-url
 // Used by the custom-mod import modal to preview a local image file. The renderer can't
 // fetch file:// URLs under webSecurity; main reads and hands back a base64 data URL.
@@ -860,6 +878,126 @@ ipcMain.handle(
 
         const mods = await scanMods(deadlockPath);
         return mods.map(enrichMod);
+    }
+);
+
+// preview-soul-container-glb
+// Build the override VPK for the current orientation and export its model back
+// to a GLB so the import modal can render EXACTLY what will load in-game (the
+// preview can't drift from the build). Temp artifacts are cleaned up by the
+// service. Geometry depends only on orient/rotate, so the modal calls this
+// (debounced) on orientation changes, not on every keystroke.
+ipcMain.handle(
+    'preview-soul-container-glb',
+    async (_, args: PreviewSoulContainerGlbArgs): Promise<SoulContainerPreview> => {
+        const deadlockPath = getActiveDeadlockPath();
+        if (!deadlockPath) {
+            throw new Error('No Deadlock path configured');
+        }
+        const preview = await previewSoulContainerGlb(deadlockPath, {
+            glbPath: args.glbPath,
+            name: 'preview',
+            orient: args.orient,
+            rotate: args.rotate,
+            glow: args.glow,
+        });
+        return {
+            glbBase64: preview.glbBase64,
+            orient: preview.orient,
+            fitScale: preview.report.fitScale,
+            sourceSpan: preview.report.sourceSpan,
+            targetSpan: preview.report.targetSpan,
+        };
+    }
+);
+
+// import-soul-container-glb
+// Build a soul-container override VPK from a user GLB (bundled `vpkmerge
+// soul-container import`) and install it as a tracked local mod, mirroring
+// import-custom-mod's allocate -> copy -> metadata flow. Soul-container imports
+// all override the same canonical model path, so two enabled at once would
+// fight: when `replaceMetaKey` is given we reuse that slot in place instead of
+// allocating a new one (the UI offers this when another import is already
+// enabled).
+ipcMain.handle(
+    'import-soul-container-glb',
+    async (_, args: ImportSoulContainerGlbArgs): Promise<Mod[]> => {
+        const deadlockPath = getActiveDeadlockPath();
+        if (!deadlockPath) {
+            throw new Error('No Deadlock path configured');
+        }
+        const { glbPath, name, orient, rotate, glow, status, notes, nsfw, thumbnailDataUrl, replaceMetaKey } = args;
+        if (!name?.trim()) {
+            throw new Error('A name is required');
+        }
+
+        // 1. Build the override VPK to a temp staging path.
+        const built = await buildSoulContainerVpk(deadlockPath, {
+            glbPath,
+            name: name.trim(),
+            orient,
+            rotate,
+            glow,
+        });
+
+        try {
+            // 2. Resolve the destination slot: reuse the previous import's slot
+            //    when replacing (never stack two soul containers), else allocate
+            //    the next free ENABLED slot the same way import-custom-mod does.
+            let destPath: string | null = null;
+            let destMetaKey: string | null = null;
+            if (replaceMetaKey) {
+                destPath = await resolveModVpk(deadlockPath, replaceMetaKey);
+                if (destPath) destMetaKey = replaceMetaKey;
+            }
+            if (!destPath) {
+                destPath = await allocateEnabledVpkPath(deadlockPath);
+                destMetaKey = metaKeyFor(destPath);
+            }
+
+            await fs.copyFile(built.vpkPath, destPath);
+            // A reused slot may have a stale exported-GLB cache; drop it so the
+            // Locker tile re-exports the new model.
+            await clearSoulModelCache(destMetaKey!);
+
+            const soulImport: SoulContainerImportInfo = {
+                glbFileName: basename(glbPath),
+                orient,
+                glow,
+                ...(rotate && (rotate[0] || rotate[1] || rotate[2]) ? { rotate } : {}),
+                vpkmergeVersion: built.report.version,
+                fitScale: built.report.fitScale,
+                sourceSpan: built.report.sourceSpan,
+                targetSpan: built.report.targetSpan,
+                status: status ?? 'untested',
+            };
+
+            // 3. Scrub orphan metadata, then write the local-import entry. We set
+            //    globalType explicitly (it always classifies as soul-container) so
+            //    it lands in the Locker's Global soul-container group immediately.
+            removeModMetadata(destMetaKey!);
+            await setModMetadataWithHash(
+                destMetaKey!,
+                {
+                    modName: name.trim(),
+                    thumbnailUrl: thumbnailDataUrl,
+                    nsfw: !!nsfw,
+                    sourceSection: 'SoulContainerImport',
+                    globalType: 'soul-container',
+                    globalTypeClassifierVersion: GLOBAL_CLASSIFIER_VERSION,
+                    soulImport,
+                    ...(notes?.trim() ? { variantLabel: notes.trim() } : {}),
+                },
+                destPath
+            );
+
+            const mods = await scanMods(deadlockPath);
+            return mods.map(enrichMod);
+        } finally {
+            // 4. Always remove the temp staging dir (the installed copy is
+            //    byte-identical, so nothing is lost).
+            await cleanupSoulContainerBuild(built.vpkPath);
+        }
     }
 );
 
@@ -921,4 +1059,3 @@ ipcMain.handle(
         };
     }
 );
-

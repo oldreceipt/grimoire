@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, ExternalLink, Layers, MoreVertical, Music, Palette, PowerOff, Shield, Shirt, Star } from 'lucide-react';
+import { ArrowLeft, Boxes, Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, ExternalLink, Layers, MoreVertical, Music, Palette, PowerOff, Shield, Shirt, Star } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import {
   getGamebananaCategories,
@@ -16,7 +16,12 @@ import { LockerHeroView } from './LockerHero';
 import ModThumbnail from '../components/ModThumbnail';
 
 // Heavy (three.js): only pulled in when the soul-container type is viewed.
-const SoulContainerViewer = lazy(() => import('../components/locker/SoulContainerViewer'));
+import { SoulRegistryProvider } from '../components/locker/SoulRegistryProvider';
+const SoulContainerTile = lazy(() => import('../components/locker/SoulContainerTile'));
+const SoulContainerCanvas = lazy(() => import('../components/locker/SoulContainerCanvas'));
+// Heavy (three.js): only pulled in when the user opens the soul-container GLB
+// import from the global Locker tab, mirroring the Installed-page trigger.
+const SoulContainerImportModal = lazy(() => import('../components/locker/SoulContainerImportModal'));
 import AudioPreviewPlayer from '../components/AudioPreviewPlayer';
 import type { GameBananaCategoryNode } from '../types/gamebanana';
 import type { GlobalModType, Mod } from '../types/mod';
@@ -137,6 +142,15 @@ export default function Locker() {
     return stored === 'list' ? 'list' : 'gallery';
   });
   const [abilityRecolorSupport, setAbilityRecolorSupport] = useState<Record<string, boolean>>({});
+  // Soul-container GLB import (lazy three.js modal), openable from the global
+  // Locker tab. Mirrors the Installed-page trigger.
+  const [soulImportOpen, setSoulImportOpen] = useState(false);
+  // Enabled soul-container imports (they override the same model), so the modal
+  // can warn + offer to replace rather than silently stack two.
+  const existingSoulImports = useMemo(
+    () => mods.filter((m) => m.enabled && m.globalType === 'soul-container'),
+    [mods]
+  );
   // List-view accordion state. The Settings preference decides the initial
   // state; after that, manual expand/collapse stays under the user's control.
   const [expandedHeroes, setExpandedHeroes] = useState<Set<number>>(() => new Set());
@@ -463,6 +477,29 @@ export default function Locker() {
     const skins = heroMods.map.get(heroId) ?? [];
     const sounds = heroSounds.map.get(heroId) ?? [];
     if (!skins.some((m) => m.id === modId) && !sounds.some((m) => m.id === modId)) return;
+    await toggleMod(modId);
+  };
+
+  // Soul containers are single-select: there's one soul-container slot, so
+  // enabling one disables any other active soul container, and clicking the
+  // already-active card turns it back off (vanilla). Other global types keep
+  // normal multi-toggle (they don't all collapse to a single slot).
+  const selectGlobalMod = async (modId: string) => {
+    const target = mods.find((m) => m.id === modId);
+    if (!target) return;
+    if (getEffectiveGlobalType(target) !== 'soul-container') {
+      await toggleMod(modId);
+      return;
+    }
+    if (target.enabled) {
+      await toggleMod(modId);
+      return;
+    }
+    const active = mods.filter(
+      (m) =>
+        m.id !== modId && m.enabled && getEffectiveGlobalType(m) === 'soul-container'
+    );
+    for (const m of active) await toggleMod(m.id);
     await toggleMod(modId);
   };
 
@@ -803,10 +840,23 @@ export default function Locker() {
             groups={globalGroups}
             hideNsfw={settings?.hideNsfwPreviews ?? true}
             onBack={() => navigate('/locker')}
-            onToggle={toggleMod}
+            onToggle={selectGlobalMod}
             onSetGlobalType={tagModGlobalType}
+            onImportSoul={() => setSoulImportOpen(true)}
           />
         </div>
+      )}
+
+      {soulImportOpen && (
+        <Suspense fallback={null}>
+          <SoulContainerImportModal
+            onClose={() => setSoulImportOpen(false)}
+            existingSoulImports={existingSoulImports}
+            onImported={() => {
+              void loadMods();
+            }}
+          />
+        </Suspense>
       )}
     </div>
   );
@@ -890,6 +940,8 @@ interface LockerGlobalViewProps {
   onToggle: (modId: string) => void | Promise<unknown>;
   /** Reassign a mod to another global type, or null to drop it off the axis. */
   onSetGlobalType: (modId: string, globalType: GlobalModType | null) => void | Promise<unknown>;
+  /** Open the soul-container GLB import modal (shown on the soul-container tab). */
+  onImportSoul: () => void;
 }
 
 /**
@@ -897,7 +949,8 @@ interface LockerGlobalViewProps {
  * frosted-glass carousel of cosmetic types (echoing the LockerHeroView shell's
  * art + blur language). Selecting a tile reveals that type's toggleable mods.
  */
-function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType }: LockerGlobalViewProps) {
+function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType, onImportSoul }: LockerGlobalViewProps) {
+  const { t } = useTranslation();
   const soundVolume = useAppStore((s) => s.soundVolume);
   const available = GLOBAL_MOD_TYPE_ORDER.filter((type) => groups[type].length > 0);
   const [selectedType, setSelectedType] = useState<GlobalModType>(
@@ -928,8 +981,12 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
   const activeType = groups[selectedType]?.length ? selectedType : available[0];
   const activeMods = activeType ? groups[activeType] : [];
   const total = GLOBAL_MOD_TYPE_ORDER.reduce((sum, type) => sum + groups[type].length, 0);
+  // The scrollable card pane: the shared soul-container canvas clamps each
+  // card's render rect to this element so models never bleed past the pane.
+  const paneRef = useRef<HTMLDivElement>(null);
 
   return (
+    <SoulRegistryProvider>
     <div className="relative flex h-full overflow-hidden">
       {/* Background art (Deadlock environment), full-bleed behind both panels.
           A moderate overlay keeps the right-pane cards legible; the bottom
@@ -1041,7 +1098,7 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
       </div>
 
       {/* Right pane: the selected type's mods as cards */}
-      <div className="relative z-10 flex-1 overflow-y-auto scrollbar-glass">
+      <div ref={paneRef} className="relative z-10 flex-1 overflow-y-auto scrollbar-glass">
         <div className="space-y-4 p-6">
           {activeType ? (
             <>
@@ -1052,6 +1109,17 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
                 <span className="text-xs text-white/60">
                   {activeMods.length} mod{activeMods.length !== 1 ? 's' : ''}
                 </span>
+                {activeType === 'soul-container' && (
+                  <button
+                    type="button"
+                    onClick={onImportSoul}
+                    className="ml-auto inline-flex items-center gap-1.5 self-center rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:border-accent/60 hover:bg-accent/20"
+                    title={t('locker.soulImport.trigger.title')}
+                  >
+                    <Boxes className="h-3.5 w-3.5" />
+                    {t('locker.soulImport.trigger.label')}
+                  </button>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 2xl:grid-cols-4">
                 {activeMods.map((mod) => {
@@ -1061,10 +1129,16 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
                     mod.thumbnailUrl && !(mod.nsfw && hideNsfw) ? mod.thumbnailUrl : null;
                   return (
                     <div
-                      key={mod.id}
+                      // Soul containers key on the content-stable sha256: their
+                      // id/metaKey change when toggled, which would otherwise
+                      // remount the card and reload its 3D model on every select.
+                      // Other types keep the plain id key (original behavior).
+                      key={
+                        activeType === 'soul-container' ? mod.sha256 ?? mod.id : mod.id
+                      }
                       className={`group/card relative flex flex-col rounded-[10px] border p-2.5 transition-[border-color,background-color,box-shadow] duration-200 ${
                         mod.enabled
-                          ? 'border-accent bg-accent/[0.08] shadow-[0_0_0_1px_var(--color-accent),0_0_18px_-6px_var(--color-accent)] hover:bg-accent/[0.12]'
+                          ? 'border-accent bg-accent/[0.06] shadow-[0_0_0_1px_var(--color-accent)] hover:bg-accent/[0.10]'
                           : 'border-white/[0.08] bg-[#141414]/55 text-text-primary/75 hover:border-white/[0.16] hover:text-text-primary'
                       }`}
                     >
@@ -1109,7 +1183,10 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
                             GameBanana thumbnail. */}
                         {activeType === 'soul-container' ? (
                           <Suspense fallback={null}>
-                            <SoulContainerViewer modKey={mod.metaKey} />
+                            <SoulContainerTile
+                              tileId={mod.sha256 ?? mod.id}
+                              modKey={mod.metaKey}
+                            />
                           </Suspense>
                         ) : (
                           <div
@@ -1133,18 +1210,37 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
                           </div>
                         )}
                         <div className="pointer-events-none absolute inset-0 bg-bg-primary/0 transition-colors duration-200 group-hover/card:bg-bg-primary/20" />
-                        {!mod.enabled && (
-                          <div className="pointer-events-none absolute left-2 top-2 z-10 flex h-5 items-start">
-                            <Tag
-                              tone="neutral"
-                              variant="overlay"
-                              icon={PowerOff}
-                              title="This mod is disabled and not loaded in-game"
-                            >
-                              Disabled
-                            </Tag>
-                          </div>
-                        )}
+                        {/* Soul containers are single-select, so mark the one
+                            active pick with a positive "Active" badge (a disabled
+                            card is simply unmarked) and fade it in so selecting
+                            animates rather than snapping. Other global types
+                            allow multiple enabled, so they keep tagging the
+                            disabled ones. */}
+                        {activeType === 'soul-container'
+                          ? mod.enabled && (
+                              <div className="pointer-events-none absolute left-2 top-2 z-10 flex h-5 items-start animate-fade-in">
+                                <Tag
+                                  tone="accent"
+                                  variant="overlay"
+                                  icon={Check}
+                                  title={t('locker.global.activeBadgeTitle')}
+                                >
+                                  {t('common.status.active')}
+                                </Tag>
+                              </div>
+                            )
+                          : !mod.enabled && (
+                              <div className="pointer-events-none absolute left-2 top-2 z-10 flex h-5 items-start">
+                                <Tag
+                                  tone="neutral"
+                                  variant="overlay"
+                                  icon={PowerOff}
+                                  title={t('locker.global.disabledBadgeTitle')}
+                                >
+                                  {t('locker.global.disabledBadge')}
+                                </Tag>
+                              </div>
+                            )}
                         {/* Retag control: sits above the full-card toggle overlay
                             (z-20 > z-10) and stops propagation so opening it never
                             also toggles the mod. Hidden for Killstreak Music: that
@@ -1279,7 +1375,18 @@ function LockerGlobalView({ groups, hideNsfw, onBack, onToggle, onSetGlobalType 
           </div>
         </>
       )}
+
+      {/* Shared 3D canvas for the Global soul-container grid: one WebGL context
+          renders every card (scissored into its on-screen rect), so the grid
+          can't exhaust the browser's live-context cap. Only mounted while that
+          type is selected. */}
+      {activeType === 'soul-container' && (
+        <Suspense fallback={null}>
+          <SoulContainerCanvas paneRef={paneRef} />
+        </Suspense>
+      )}
     </div>
+    </SoulRegistryProvider>
   );
 }
 

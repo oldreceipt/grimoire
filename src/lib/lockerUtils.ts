@@ -411,9 +411,13 @@ export type GlobalModGroups = Record<GlobalModType, Mod[]>;
 
 /**
  * Bucket mods by their classified global type. Mods with no globalType (hero
- * cosmetics and anything that matched no signal) are simply omitted. Each
- * bucket sorts enabled mods first (so the active ones are always at the top),
- * then by priority within each enabled/disabled half.
+ * cosmetics and anything that matched no signal) are simply omitted.
+ *
+ * Soul containers are single-select and shown with a live 3D preview, so their
+ * bucket is sorted by name (stable, enabled-independent): toggling never
+ * reshuffles the grid, and the active one is marked in place rather than jumped
+ * to the top. Every other type keeps the enabled-first ordering (active mods
+ * grouped at the top), since they allow multiple enabled at once.
  */
 export function groupGlobalMods(mods: Mod[]): GlobalModGroups {
   const groups: GlobalModGroups = {
@@ -431,10 +435,14 @@ export function groupGlobalMods(mods: Mod[]): GlobalModGroups {
     }
   }
   for (const type of GLOBAL_MOD_TYPE_ORDER) {
-    groups[type].sort((a, b) => {
-      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-      return a.priority - b.priority;
-    });
+    if (type === 'soul-container') {
+      groups[type].sort((a, b) => a.name.localeCompare(b.name) || a.priority - b.priority);
+    } else {
+      groups[type].sort((a, b) => {
+        if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+        return a.priority - b.priority;
+      });
+    }
   }
   return groups;
 }
