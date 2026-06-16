@@ -43,6 +43,7 @@ README.txt
 icon-32.png
 /.pnpm-store
 .codex-run/
+reports/
 
 # Project summary (LaTeX source + build artifacts)
 docs/grimoire-project-summary.*
