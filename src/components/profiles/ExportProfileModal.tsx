@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Download, ClipboardCopy, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '../common/ui';
 import { Modal } from '../common/Modal';
@@ -18,6 +19,7 @@ function safeFileName(name: string): string {
 }
 
 export default function ExportProfileModal({ profileId, profileName, onClose }: ExportProfileModalProps) {
+  const { t } = useTranslation();
   const [result, setResult] = useState<PortableExportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -109,7 +111,7 @@ export default function ExportProfileModal({ profileId, profileName, onClose }: 
                       {result.warnings.map((w, i) => <div key={i}>{w}</div>)}
                     </div>
                     <div className="text-xs text-text-secondary mt-2">
-                      Local mods (not from GameBanana) can't be shared portably.
+                      {t('exportProfile.localBlocked')}
                     </div>
                   </div>
                 </div>

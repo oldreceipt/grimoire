@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   X,
   Loader2,
@@ -148,6 +149,7 @@ export default function ImportProfileDialog({
   onSignInRequested,
   onLikeWithoutSignIn,
 }: ImportProfileDialogProps) {
+  const { t } = useTranslation();
   // In social mode the share code arrives via SocialProfileHeader's detail
   // fetch; the input is empty until then. In paste mode it's seeded from
   // initialInput as before.
@@ -1072,7 +1074,7 @@ export default function ImportProfileDialog({
                           {r.status === 'already-installed' && (
                             <span
                               className="text-text-secondary inline-flex items-center gap-1.5 justify-end text-xs"
-                              title="Already installed locally — will be wired into the new profile without re-downloading"
+                              title={t('importProfile.alreadyInstalled')}
                             >
                               <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
                               <span className="hidden sm:inline">On disk</span>
@@ -1131,7 +1133,7 @@ export default function ImportProfileDialog({
                             <div className="text-xs text-text-tertiary flex items-start gap-1.5">
                               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                               <span>
-                                GameBanana returned no downloadable files for this mod.
+                                {t('importProfile.noFiles')}
                               </span>
                             </div>
                           )}
@@ -1139,7 +1141,7 @@ export default function ImportProfileDialog({
                             <>
                               {r.details.files.length > 1 && (
                                 <p className="text-[11px] text-text-tertiary mb-1.5">
-                                  Check one or more variants. Leaving everything unchecked uses the file pinned by the profile.
+                                  {t('importProfile.variantHint')}
                                 </p>
                               )}
                               <ul className="space-y-1">

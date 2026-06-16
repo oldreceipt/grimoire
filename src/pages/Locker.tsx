@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronDown, ChevronsDownUp, ChevronsUpDown, ExternalLink, Layers, MoreVertical, Music, Palette, PowerOff, Shield, Shirt, Star } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
@@ -122,6 +123,7 @@ function RainbowPaletteIcon({ className = '', title }: { className?: string; tit
 }
 
 export default function Locker() {
+  const { t } = useTranslation();
   const { settings, mods, modsLoading, modsError, loadSettings, loadMods, toggleMod, setBrowseUi, setLockerHeroName } =
     useAppStore();
   const activeDeadlockPath = getActiveDeadlockPath(settings);
@@ -498,7 +500,7 @@ export default function Locker() {
       <EmptyState
         icon={Shield}
         title="No Game Path Set"
-        description="Configure your Deadlock installation path or enable dev mode to manage hero skins."
+        description={t('locker.empty.noGamePath')}
       />
     );
   }

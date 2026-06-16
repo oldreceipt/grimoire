@@ -19,6 +19,14 @@ import type {
   GameBananaCollectionItemsResponse,
   GameBananaArtistLink,
 } from '../types/gamebanana';
+import type {
+  TranslationCatalogResponse,
+  TranslationCatalogRow,
+  TranslationContributorResponse,
+  TranslationProgressResponse,
+  TranslationSuggestionRequest,
+  TranslationSuggestionResponse,
+} from '../types/translation';
 
 // Re-export types for convenience
 export type {
@@ -839,6 +847,41 @@ export function socialOnSessionChanged(
   callback: (status: SocialSessionStatus) => void
 ): () => void {
   return window.electronAPI.social.onSessionChanged(callback);
+}
+
+// =====================
+// Translation Mode API
+// =====================
+
+export type {
+  TranslationCatalogResponse,
+  TranslationCatalogRow,
+  TranslationContributorResponse,
+  TranslationProgressResponse,
+  TranslationSuggestionRequest,
+  TranslationSuggestionResponse,
+};
+
+export async function registerTranslationContributor(): Promise<TranslationContributorResponse> {
+  return window.electronAPI.translation.registerContributor();
+}
+
+export async function getTranslationCatalog(
+  languageCode: string
+): Promise<TranslationCatalogResponse> {
+  return window.electronAPI.translation.getCatalog(languageCode);
+}
+
+export async function getTranslationProgress(
+  languageCode: string
+): Promise<TranslationProgressResponse> {
+  return window.electronAPI.translation.getProgress(languageCode);
+}
+
+export async function saveTranslationSuggestion(
+  body: TranslationSuggestionRequest
+): Promise<TranslationSuggestionResponse> {
+  return window.electronAPI.translation.saveSuggestion(body);
 }
 
 // ── Deadworks custom-server browser ──

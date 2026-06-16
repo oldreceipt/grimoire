@@ -707,6 +707,20 @@ export interface ElectronAPI {
         ) => () => void;
     };
 
+    // Translation Mode
+    translation: {
+        registerContributor: () => Promise<import('./translation').TranslationContributorResponse>;
+        getCatalog: (
+            languageCode: string
+        ) => Promise<import('./translation').TranslationCatalogResponse>;
+        getProgress: (
+            languageCode: string
+        ) => Promise<import('./translation').TranslationProgressResponse>;
+        saveSuggestion: (
+            body: import('./translation').TranslationSuggestionRequest
+        ) => Promise<import('./translation').TranslationSuggestionResponse>;
+    };
+
     // Stats API
     stats: {
         // Steam Detection

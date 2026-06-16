@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Globe, LogOut, AlertTriangle, ShieldAlert, Trash2, X, ExternalLink, ShieldCheck } from 'lucide-react';
 import { Button, Badge } from '../common/ui';
 import { ConfirmModal } from '../common/PageComponents';
@@ -21,6 +22,7 @@ function KeyringNotice() {
 }
 
 export default function SocialAccountSection() {
+  const { t } = useTranslation();
   const { status, loading, error, hydrated, hydrate, login, cancelLogin, logout, deleteAccount, clearError } =
     useSocialStore();
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -155,7 +157,7 @@ export default function SocialAccountSection() {
         onCancel={() => setDeleteConfirmOpen(false)}
         onConfirm={handleDelete}
         title="Delete Grimoire Social account"
-        message="This permanently deletes your account, removes your likes, and hides your published profiles from Discover. People who already imported your profiles keep them. This can't be undone."
+        message={t('social.account.deleteMessage')}
         confirmLabel="Delete account"
         variant="danger"
       />

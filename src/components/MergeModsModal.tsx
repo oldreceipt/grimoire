@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Layers, X, AlertTriangle, Info } from 'lucide-react';
 import type { Mod } from '../types/mod';
 import ModThumbnail from './ModThumbnail';
@@ -27,6 +28,7 @@ interface Props {
  * from the mod details modal after the fact if they want to.
  */
 export default function MergeModsModal({ sources, hideNsfw, onCancel, onConfirm }: Props) {
+  const { t } = useTranslation();
   const groups = useMemo(() => buildSourceGroups(sources), [sources]);
 
   // Picks: one chosen variant id per multi-variant group. Singles + single-
@@ -135,7 +137,7 @@ export default function MergeModsModal({ sources, hideNsfw, onCancel, onConfirm 
               </div>
               {groups.some((g) => g.kind === 'variants') && (
                 <div className="text-xs text-text-secondary">
-                  Pick one variant per mod
+                  {t('mergeMods.oneVariant')}
                 </div>
               )}
             </div>
@@ -214,8 +216,7 @@ export default function MergeModsModal({ sources, hideNsfw, onCancel, onConfirm 
                 <div className="text-text-primary font-medium">
                   {localSourceCount} local mod{localSourceCount === 1 ? '' : 's'} included
                 </div>
-                Local mods (no GameBanana ID) merge fine but aren&apos;t included in the share code.
-                If you delete the disabled originals, those won&apos;t be recoverable on unmerge.
+                {t('mergeMods.localNote')}
               </div>
             </div>
           )}
@@ -230,7 +231,7 @@ export default function MergeModsModal({ sources, hideNsfw, onCancel, onConfirm 
             <span>
               Strict mode
               <span className="block text-xs text-text-secondary mt-0.5">
-                Abort if two mods touch the same file path. Off by default (higher-priority mod wins).
+                {t('mergeMods.strictDescription')}
               </span>
             </span>
           </label>

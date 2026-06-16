@@ -1,4 +1,5 @@
 import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 import {
   DndContext,
@@ -601,6 +602,7 @@ function getCardSizeGridStyle(multiplier: number): CSSProperties {
 }
 
 export default function Installed() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const {
     settings,
@@ -2462,7 +2464,7 @@ export default function Installed() {
       <EmptyState
         icon={Package}
         title="No Game Path Set"
-        description="Configure your Deadlock installation path or enable dev mode to start managing mods."
+        description={t('installed.empty.noGamePath')}
         action={
           <Button onClick={() => navigate('/settings')} icon={Settings}>
             Open Settings
@@ -2875,7 +2877,7 @@ export default function Installed() {
         <EmptyState
           icon={Package}
           title="No Mods Found"
-          description="No mods installed yet. Download mods from the Browse tab, import a custom VPK, or manually place VPK files in your addons folder."
+          description={t('installed.empty.noMods')}
           action={
             <div className="flex items-center gap-3">
               <Button onClick={() => navigate('/browse')} icon={Search}>

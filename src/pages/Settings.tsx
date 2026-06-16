@@ -18,6 +18,7 @@ import {
 import { getActiveDeadlockPath } from '../lib/appSettings';
 import { formatDateParts } from '../lib/dateFormat';
 import { AVAILABLE_LANGUAGES, languageDisplayName } from '../i18n';
+import { TRANSLATION_LANGUAGE_OPTIONS, translationLanguageLabel } from '../lib/translationLanguages';
 import { Card, Badge, Toggle, Button } from '../components/common/ui';
 import { PageHeader, ConfirmModal } from '../components/common/PageComponents';
 import { ACCENT_PRESETS, DEFAULT_ACCENT_COLOR, applyAccentColor } from '../lib/accentColor';
@@ -375,6 +376,24 @@ export default function Settings() {
     }
   };
 
+  const handleTranslationModeChange = async (checked: boolean) => {
+    if (!settings) return;
+    const existingLanguage = settings.translationModeLanguage ?? null;
+    const preferredLanguage =
+      settings.language && settings.language !== 'en' ? settings.language : null;
+    await saveSettings({
+      ...settings,
+      experimentalTranslationMode: checked,
+      translationModeLanguage: checked ? existingLanguage ?? preferredLanguage : existingLanguage,
+    });
+  };
+
+  const handleTranslationModeLanguageChange = async (language: string) => {
+    if (!settings) return;
+    const normalized = language.trim() || null;
+    await saveSettings({ ...settings, translationModeLanguage: normalized });
+  };
+
   const handleDevModeChange = async (checked: boolean) => {
     if (!settings) return;
     if (checked) {
@@ -631,7 +650,7 @@ export default function Settings() {
     <div className="p-8 max-w-5xl mx-auto space-y-8 animate-fade-in">
       <PageHeader
         title="Settings"
-        description="Configure game paths, preferences, and maintenance tasks"
+        description={t('settings.header.description')}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1109,7 +1128,7 @@ export default function Settings() {
               checked={settings?.hideOutdatedMods ?? false}
               onChange={handleHideOutdatedChange}
               label="Hide Outdated Mods"
-              description="Hide mods in Browse that haven't been updated since the current game version cutoff."
+              description={t('settings.toggles.hideOutdated')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1118,7 +1137,7 @@ export default function Settings() {
               checked={settings?.lockerCardsExpandedByDefault ?? false}
               onChange={handleLockerCardsExpandedByDefaultChange}
               label="Expand Locker cards by default"
-              description="Open hero cards expanded when you enter Locker list view. You can still collapse or expand them manually."
+              description={t('settings.toggles.expandLocker')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1127,7 +1146,7 @@ export default function Settings() {
               checked={settings?.autoDisableSiblingVariants ?? true}
               onChange={handleAutoDisableSiblingsChange}
               label="Switch variants instead of stacking them"
-              description="When you install a different file of a mod you already have enabled, disable the previous variant so only the new one is active. Turn off to keep multiple variants of the same mod enabled at once. (Updates always replace the old file regardless of this setting.)"
+              description={t('settings.toggles.switchVariants')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1136,7 +1155,7 @@ export default function Settings() {
               checked={settings?.autoEnableDownloads ?? false}
               onChange={handleAutoEnableDownloadsChange}
               label="Enable mods after download"
-              description="Move newly downloaded mods into the active load order as soon as installation finishes. If no enabled slot is available, the mod stays installed and disabled."
+              description={t('settings.toggles.enableAfterDownload')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1145,7 +1164,7 @@ export default function Settings() {
               checked={settings?.confirmProfileUpdate ?? true}
               onChange={handleConfirmProfileUpdateChange}
               label="Confirm before updating a profile"
-              description="Ask first when you click Update on a profile, since it overwrites that profile's saved mods with your current set and can't be undone. Turn off to overwrite immediately."
+              description={t('settings.toggles.confirmProfileUpdate')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1154,7 +1173,7 @@ export default function Settings() {
               checked={settings?.ignoreConflictsByDefault ?? false}
               onChange={handleIgnoreConflictsByDefaultChange}
               label="Ignore conflicts by default"
-              description="Hide every detected mod conflict instead of surfacing it in the Conflicts page. Turn off to bring them back."
+              description={t('settings.toggles.ignoreConflicts')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1163,7 +1182,7 @@ export default function Settings() {
               checked={settings?.discordRpcEnabled ?? false}
               onChange={handleDiscordRpcChange}
               label="Discord Rich Presence"
-              description="Show what you are doing in Grimoire on your Discord profile (browsing mods, in the Locker, and so on). Talks only to your local Discord app and sends nothing to Grimoire. Off by default."
+              description={t('settings.toggles.discordRpc')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1173,7 +1192,7 @@ export default function Settings() {
                 checked={settings?.contributeMatchSalts ?? false}
                 onChange={handleContributeMatchSaltsChange}
                 label="Contribute match data to deadlock-api.com"
-                description="Help the community stats project by submitting the replay keys (salts) Steam already caches for matches whose details you view in-game. Sends only the match id, server cluster, and two download keys: no account id, no username, nothing about you or your mods. Off by default."
+                description={t('settings.toggles.contributeSalts')}
               />
               {settings?.contributeMatchSalts && saltIngestStatus && (
                 <div className="mt-2 text-xs text-text-secondary">
@@ -1295,11 +1314,52 @@ export default function Settings() {
 
             <div className="h-px bg-white/5" />
 
+            <div className="space-y-3">
+              <Toggle
+                checked={settings?.experimentalTranslationMode ?? false}
+                onChange={handleTranslationModeChange}
+                label="Translation Mode"
+                description={t('settings.toggles.translationMode')}
+              />
+              {settings?.experimentalTranslationMode && (
+                <div className="max-w-xs">
+                  <label className="text-xs font-medium uppercase tracking-wider text-text-secondary">
+                    Target language
+                  </label>
+                  <select
+                    value={settings.translationModeLanguage ?? ''}
+                    onChange={(event) => handleTranslationModeLanguageChange(event.target.value)}
+                    className="mt-1 w-full rounded-md border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary"
+                  >
+                    <option value="">Choose a language</option>
+                    {settings.translationModeLanguage &&
+                      !TRANSLATION_LANGUAGE_OPTIONS.some(
+                        (language) => language.code === settings.translationModeLanguage
+                      ) && (
+                        <option value={settings.translationModeLanguage}>
+                          {translationLanguageLabel(settings.translationModeLanguage)}
+                        </option>
+                      )}
+                    {TRANSLATION_LANGUAGE_OPTIONS.map((language) => (
+                      <option key={language.code} value={language.code}>
+                        {language.name} ({language.code})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    Pick the language that should receive your translation suggestions.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="h-px bg-white/5" />
+
             <Toggle
               checked={settings?.experimentalUnknownModMatching ?? false}
               onChange={(checked) => settings && saveSettings({ ...settings, experimentalUnknownModMatching: checked })}
               label="Fix Unknown Mods"
-              description="Auto-match unknown local VPKs against GameBanana to recover their names and thumbnails. Currently hits rate limits on larger libraries while we rework it. The manual Custom Mod path stays available either way."
+              description={t('settings.toggles.fixUnknown')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1308,7 +1368,7 @@ export default function Settings() {
               checked={settings?.experimentalDeadworksServers ?? false}
               onChange={(checked) => settings && saveSettings({ ...settings, experimentalDeadworksServers: checked })}
               label="Deadworks Servers"
-              description="Browse and join Deadworks community dedicated servers from a Servers tab. Required map/addon content is downloaded automatically before connecting."
+              description={t('settings.toggles.deadworks')}
             />
 
             <div className="h-px bg-white/5" />
@@ -1317,7 +1377,7 @@ export default function Settings() {
               checked={settings?.experimentalPerformanceConfig ?? false}
               onChange={(checked) => settings && saveSettings({ ...settings, experimentalPerformanceConfig: checked })}
               label="Performance Config"
-              description="One-click fps boost using Sqooky's community preset. Mods keep working; removable any time."
+              description={t('settings.toggles.performanceConfig')}
             />
           </div>
         </Card>
@@ -1677,7 +1737,7 @@ export default function Settings() {
         onCancel={() => setWipeConfirmOpen(false)}
         onConfirm={handleWipeCache}
         title="Wipe mod cache?"
-        message="This removes all cached mod metadata and sync state. The next Browse session will re-sync from GameBanana (a few minutes on first run). Your installed mods are not affected."
+        message={t('settings.cache.wipeMessage')}
         confirmLabel="Wipe Cache"
         variant="danger"
       />
@@ -1687,7 +1747,7 @@ export default function Settings() {
         onCancel={() => setPreviewConfirmOpen(false)}
         onConfirm={handleClearPreviewCache}
         title="Clear preview cache?"
-        message="This deletes the cached 3D model stills, hero portraits, and locker card thumbnails to reclaim disk. They regenerate on demand the next time you view them (a brief pause on first view). Your installed mods are not affected."
+        message={t('settings.cache.clearPreviewMessage')}
         confirmLabel="Clear"
         variant="danger"
       />

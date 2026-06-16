@@ -46,6 +46,7 @@ import { getAssetPath } from '../lib/assetPath';
 import { DEFAULT_SIDEBAR_HERO, getSidebarHeroImageStyle, getHeroRenderPath } from '../lib/lockerUtils';
 import { useAppStore } from '../stores/appStore';
 import UpdateModal from './UpdateModal';
+import Tx from './translation/Tx';
 
 const COLLAPSED_KEY = 'grimoire:sidebar-collapsed';
 const LAUNCH_BG_HIDDEN_KEY = 'grimoire:launch-bg-hidden';
@@ -494,6 +495,7 @@ export default function Sidebar() {
     type NavItem = {
       to: string;
       icon: typeof Boxes;
+      labelKey: string;
       label: string;
       tooltip: string;
       experimental?: 'crosshair' | 'stats' | 'social' | 'servers';
@@ -502,11 +504,12 @@ export default function Sidebar() {
       badgeTone?: BadgeTone;
     };
     const items: NavItem[] = [
-      { to: '/', icon: Boxes, label: t('nav.installed'), tooltip: t('sidebar.tooltip.installed'), badge: installedCount, badgeTone: 'muted' },
-      { to: '/browse', icon: Compass, label: t('nav.browse'), tooltip: t('sidebar.tooltip.browse') },
+      { to: '/', icon: Boxes, labelKey: 'nav.installed', label: t('nav.installed'), tooltip: t('sidebar.tooltip.installed'), badge: installedCount, badgeTone: 'muted' },
+      { to: '/browse', icon: Compass, labelKey: 'nav.browse', label: t('nav.browse'), tooltip: t('sidebar.tooltip.browse') },
       {
         to: '/discover',
         icon: Globe2,
+        labelKey: 'nav.discover',
         label: t('nav.discover'),
         tooltip: discoverNotificationCount > 0
           ? t('sidebar.tooltip.discoverNew', { count: discoverNotificationCount })
@@ -515,13 +518,13 @@ export default function Sidebar() {
         badge: discoverNotificationCount,
         badgeTone: 'info',
       },
-      { to: '/servers', icon: Server, label: t('nav.servers'), tooltip: t('sidebar.tooltip.servers'), experimental: 'servers' },
-      { to: '/locker', icon: Vault, label: t('nav.locker'), tooltip: t('sidebar.tooltip.locker') },
-      { to: '/crosshair', icon: Target, label: t('nav.crosshair'), tooltip: t('sidebar.tooltip.crosshair'), experimental: 'crosshair' },
-      { to: '/autoexec', icon: ScrollText, label: t('nav.autoexec'), tooltip: t('sidebar.tooltip.autoexec') },
-      { to: '/stats', icon: Activity, label: t('nav.stats'), tooltip: t('sidebar.tooltip.stats'), experimental: 'stats' },
-      { to: '/conflicts', icon: Swords, label: t('nav.conflicts'), tooltip: t('sidebar.tooltip.conflicts'), badge: conflictCount, badgeTone: 'warning' },
-      { to: '/profiles', icon: BookMarked, label: t('nav.profiles'), tooltip: t('sidebar.tooltip.profiles') },
+      { to: '/servers', icon: Server, labelKey: 'nav.servers', label: t('nav.servers'), tooltip: t('sidebar.tooltip.servers'), experimental: 'servers' },
+      { to: '/locker', icon: Vault, labelKey: 'nav.locker', label: t('nav.locker'), tooltip: t('sidebar.tooltip.locker') },
+      { to: '/crosshair', icon: Target, labelKey: 'nav.crosshair', label: t('nav.crosshair'), tooltip: t('sidebar.tooltip.crosshair'), experimental: 'crosshair' },
+      { to: '/autoexec', icon: ScrollText, labelKey: 'nav.autoexec', label: t('nav.autoexec'), tooltip: t('sidebar.tooltip.autoexec') },
+      { to: '/stats', icon: Activity, labelKey: 'nav.stats', label: t('nav.stats'), tooltip: t('sidebar.tooltip.stats'), experimental: 'stats' },
+      { to: '/conflicts', icon: Swords, labelKey: 'nav.conflicts', label: t('nav.conflicts'), tooltip: t('sidebar.tooltip.conflicts'), badge: conflictCount, badgeTone: 'warning' },
+      { to: '/profiles', icon: BookMarked, labelKey: 'nav.profiles', label: t('nav.profiles'), tooltip: t('sidebar.tooltip.profiles') },
     ];
 
     return items.filter((item) => {
@@ -760,7 +763,7 @@ export default function Sidebar() {
             </div>
           )}
           <ul ref={navListRef} className="relative z-10 space-y-0.5">
-            {navItems.map(({ to, icon: Icon, label, tooltip, tone, badge, badgeTone }, index) => {
+            {navItems.map(({ to, icon: Icon, labelKey, label, tooltip, tone, badge, badgeTone }, index) => {
               // Style from the optimistic index, not the router's isActive:
               // isActive trails the click by the destination page's render
               // time (see pendingNavPath above).
@@ -802,7 +805,7 @@ export default function Sidebar() {
                       </span>
                       {labelMounted && (
                         <span className={`relative z-10 ${navLabelClass}`} aria-hidden={!labelsVisible}>
-                          {label}
+                          <Tx k={labelKey} fallback={label} />
                         </span>
                       )}
                       {badge !== undefined && badge > 0 && (
