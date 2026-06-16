@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { HDRCubeTextureLoader } from 'three/examples/jsm/loaders/HDRCubeTextureLoader.js';
 import { Loader2 } from 'lucide-react';
 import { getAssetPath } from '../../lib/assetPath';
-import { getHeroPoseInfo, exportHeroPose, previewTrippySprite } from '../../lib/api';
+import {
+  getHeroPoseInfo,
+  exportHeroPose,
+  getRiggedHeroPose,
+  exportRiggedHeroPose,
+  previewTrippySprite,
+} from '../../lib/api';
 import { loadGltfPreview } from '../../lib/loadGltfPreview';
 import type { HeroPoseSkinSource } from '../../types/portrait';
 import type { TrippySpriteResult } from '../../types/mod';
@@ -41,6 +47,16 @@ const IBL_FACES = [
   getAssetPath('/ibl/nz.hdr'),
 ];
 
+// Rigged (animated, skinned) preview is gated OFF for now: the idle clip is WIP
+// and too many heroes fall back to a default A-pose, so the static `--pose` menu
+// pose stays the default. The rigged backend + viewer path remain in place; flip
+// this to true to bring them back once the animation is improved.
+const USE_RIGGED_PREVIEW: boolean = false;
+
+// Turntable rotation rate (rad/s). The spin pauses while the user holds (orbits)
+// the model with the mouse.
+const SPIN_SPEED = 0.25;
+
 function meshUrlFor(key: string, mtimeMs: number | null): string {
   // The key contains `::` (and a `/` for overflow skins), which a standard
   // scheme forbids in the host, so carry it as a single encoded path segment
@@ -48,9 +64,19 @@ function meshUrlFor(key: string, mtimeMs: number | null): string {
   return `${HERO_POSE_SCHEME}://m/${encodeURIComponent(key)}/model.glb?v=${mtimeMs ?? 0}`;
 }
 
-/** Free a loaded scene's GPU resources (geometry, materials, textures). */
+function riggedMeshUrlFor(key: string, mtimeMs: number | null): string {
+  return `${HERO_POSE_SCHEME}://m/${encodeURIComponent(key)}/model-rigged.glb?v=${mtimeMs ?? 0}`;
+}
+
+/** Free a loaded scene's GPU resources (geometry, materials, textures,
+ *  skeletons). */
 function disposeScene(root: THREE.Object3D): void {
   root.traverse((obj) => {
+    const skinned = obj as THREE.SkinnedMesh;
+    if (skinned.isSkinnedMesh && skinned.skeleton) {
+      // Releases the bone texture / internal buffers held by the skeleton.
+      skinned.skeleton.dispose?.();
+    }
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
     mesh.geometry?.dispose();
@@ -65,9 +91,63 @@ function disposeScene(root: THREE.Object3D): void {
   });
 }
 
+/** Enable per-vertex COLOR multiply wherever the attribute exists. Pure
+ *  read/write of an existing material flag, so material identity is untouched
+ *  (the NPR CustomShaderMaterial wrap still finds the same instances). */
+function enableVertexColors(scene: THREE.Object3D): void {
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry?.attributes.color) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const sm = m as THREE.MeshStandardMaterial;
+      if (sm && !sm.vertexColors) {
+        sm.vertexColors = true;
+        sm.needsUpdate = true;
+      }
+    }
+  });
+}
+
+/** Pick the idle clip to play. The export already ships exactly one clip
+ *  (primary_stand_idle), so this is a thin guard: prefer the named idle, else
+ *  the first non-trivial clip, else clip[0]; null if there are no clips at all
+ *  (mesh-skin / clipless hero -> render skinned bind pose, no mixer). */
+function pickIdleClip(clips: THREE.AnimationClip[]): THREE.AnimationClip | null {
+  if (clips.length === 0) return null;
+  const named = clips.find((c) => c.name === 'primary_stand_idle' && c.duration > 0.001);
+  if (named) return named;
+  const animated = clips.find((c) => c.duration > 0.001);
+  return animated ?? clips[0];
+}
+
+/** Shared pointer-interaction state between OrbitControls and the model group:
+ *  the turntable pauses while `dragging`. A mutable ref so it updates without
+ *  re-rendering. */
+type TurntableInteraction = { dragging: boolean };
+
+/** Slow turntable auto-rotation on the model group, paused while the user holds
+ *  (orbits) the model with the mouse. */
+function useTurntable(
+  groupRef: RefObject<THREE.Group | null>,
+  interaction: RefObject<TurntableInteraction>
+): void {
+  useFrame((_, delta) => {
+    const g = groupRef.current;
+    if (!g || interaction.current.dragging) return;
+    g.rotation.y += delta * SPIN_SPEED;
+  });
+}
+
 /** The posed figure, normalized to a consistent height and centered, with a
  *  slow idle turntable. */
-function PosedModel({ scene }: { scene: THREE.Object3D }) {
+function PosedModel({
+  scene,
+  interaction,
+}: {
+  scene: THREE.Object3D;
+  interaction: RefObject<TurntableInteraction>;
+}) {
   const groupRef = useRef<THREE.Group>(null);
 
   // Normalize by the largest dimension so every hero fills the frame the same
@@ -83,29 +163,87 @@ function PosedModel({ scene }: { scene: THREE.Object3D }) {
     return { scale, center };
   }, [scene]);
 
-  // Deadlock skin meshes bake skin tone / accents into a per-vertex COLOR stream;
-  // the exporter only keeps that stream on materials the engine actually reads it
-  // for, so wherever the attribute is present we should let it multiply through.
-  // Without this the affected faces render flat white. (A later pass can gate this
-  // on userData.morphic flags for full correctness.)
+  // Per-vertex COLOR multiply where present (skin tone / accents render flat
+  // white without it); see enableVertexColors.
   useEffect(() => {
-    scene.traverse((obj) => {
-      const mesh = obj as THREE.Mesh;
-      if (!mesh.isMesh || !mesh.geometry?.attributes.color) return;
-      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const m of mats) {
-        const sm = m as THREE.MeshStandardMaterial;
-        if (sm && !sm.vertexColors) {
-          sm.vertexColors = true;
-          sm.needsUpdate = true;
-        }
-      }
-    });
+    enableVertexColors(scene);
   }, [scene]);
 
+  useTurntable(groupRef, interaction);
+
+  return (
+    <group ref={groupRef} scale={norm.scale}>
+      <group position={[-norm.center.x, -norm.center.y, -norm.center.z]}>
+        <primitive object={scene} />
+      </group>
+    </group>
+  );
+}
+
+/** The skinned figure, idle clip driven by an AnimationMixer. gltf.scene is
+ *  rendered AS-IS under wrapper groups so the SkinnedMesh's bone references stay
+ *  valid (no reparenting, no clone). The normalize box is computed ONCE from the
+ *  bind pose so the model does not breathe/drift as the clip plays. */
+function RiggedModel({
+  scene,
+  clips,
+  interaction,
+}: {
+  scene: THREE.Object3D;
+  clips: THREE.AnimationClip[];
+  interaction: RefObject<TurntableInteraction>;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+
+  // Normalize from the BIND/rest pose, once. Force the skeleton to bind pose and
+  // flush world matrices first so the AABB is the true rest extent and does not
+  // change frame to frame.
+  const norm = useMemo(() => {
+    scene.traverse((obj) => {
+      const s = obj as THREE.SkinnedMesh;
+      if (s.isSkinnedMesh && s.skeleton) s.skeleton.pose();
+    });
+    scene.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(scene);
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    box.getSize(size);
+    box.getCenter(center);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const scale = maxDim > 0 ? 2.0 / maxDim : 1;
+    return { scale, center };
+  }, [scene]);
+
+  useEffect(() => {
+    enableVertexColors(scene);
+  }, [scene]);
+
+  // Build the mixer + play the idle clip once per scene. Kept in a ref so React
+  // re-renders never restart playback.
+  useEffect(() => {
+    const clip = pickIdleClip(clips);
+    if (!clip) return; // no clip -> stays at bind pose (still a valid render).
+    const mixer = new THREE.AnimationMixer(scene);
+    mixerRef.current = mixer;
+    const action = mixer.clipAction(clip);
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.clampWhenFinished = false;
+    action.reset().play();
+    return () => {
+      action.stop();
+      mixer.stopAllAction();
+      mixer.uncacheClip(clip);
+      mixer.uncacheRoot(scene);
+      mixerRef.current = null;
+    };
+  }, [scene, clips]);
+
   useFrame((_, delta) => {
-    if (groupRef.current) groupRef.current.rotation.y += delta * 0.25;
+    mixerRef.current?.update(delta);
   });
+
+  useTurntable(groupRef, interaction);
 
   return (
     <group ref={groupRef} scale={norm.scale}>
@@ -118,7 +256,7 @@ function PosedModel({ scene }: { scene: THREE.Object3D }) {
 
 /** Mouse orbit + zoom, damped. Auto-rotation lives on the model group so the
  *  controls don't fight it; dragging just reorients the camera. */
-function Controls() {
+function Controls({ interaction }: { interaction: RefObject<TurntableInteraction> }) {
   const { camera, gl } = useThree();
   const controlsRef = useRef<OrbitControls | null>(null);
   useEffect(() => {
@@ -129,14 +267,25 @@ function Controls() {
     controls.maxDistance = 6;
     controls.target.set(0, 0, 0);
     controlsRef.current = controls;
+    // Pause the turntable while held; kick a wobble on release (maglev feel).
+    const onStart = () => {
+      interaction.current.dragging = true;
+    };
+    const onEnd = () => {
+      interaction.current.dragging = false;
+    };
+    controls.addEventListener('start', onStart);
+    controls.addEventListener('end', onEnd);
     return () => {
+      controls.removeEventListener('start', onStart);
+      controls.removeEventListener('end', onEnd);
       controlsRef.current = null;
       controls.dispose();
     };
-  }, [camera, gl]);
+  }, [camera, gl, interaction]);
   // enableDamping requires update() every frame: without it the inertial glide
   // after a drag never runs (and on some three builds the orbit barely tracks).
-  // The frame loop is already alive from PosedModel's turntable useFrame.
+  // R3F's default frameloop renders every frame, so this update() always runs.
   useFrame(() => controlsRef.current?.update());
   return null;
 }
@@ -294,7 +443,10 @@ export default function HeroPoseViewer({
   trippyPreview?: TrippyPreview;
 }) {
   const [scene, setScene] = useState<THREE.Object3D | null>(null);
+  const [clips, setClips] = useState<THREE.AnimationClip[]>([]);
+  const [rigged, setRigged] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const interaction = useRef<TurntableInteraction>({ dragging: false });
   const [failed, setFailed] = useState(false);
   const sourceKey = skinSources.map((source) => `${source.priority}:${source.metaKey}`).join('|');
 
@@ -345,6 +497,39 @@ export default function HeroPoseViewer({
 
     (async () => {
       try {
+        // --- Attempt 1: rigged (animated, skinned) glb. Gated OFF for now: the
+        //     idle anim is WIP and too many heroes fall back to A-pose, so the
+        //     static --pose menu pose (Attempt 2) is the default. ---
+        if (USE_RIGGED_PREVIEW) {
+          try {
+            let rig = await getRiggedHeroPose(heroName, skinSources);
+            if (cancelled) return;
+            if (!rig.hasModel) {
+              setGenerating(true);
+              rig = await exportRiggedHeroPose(heroName, skinSources, fallbackSkinMetaKey);
+              if (cancelled) return;
+              setGenerating(false);
+            }
+            if (rig.hasModel) {
+              const url = riggedMeshUrlFor(rig.key, rig.mtimeMs);
+              const gltf = await loadGltfPreview(url);
+              if (cancelled) {
+                disposeScene(gltf.scene);
+                return;
+              }
+              loaded = gltf.scene;
+              setClips(gltf.animations ?? []);
+              setRigged(true);
+              setScene(gltf.scene);
+              return; // rigged path won.
+            }
+          } catch {
+            // Rigged export/load failed; fall through to the static pose path.
+            setGenerating(false);
+          }
+        }
+
+        // --- Attempt 2: static --pose glb (the default). ---
         let info = await getHeroPoseInfo(heroName, skinSources);
         if (!info.hasModel) {
           if (cancelled) return;
@@ -364,6 +549,8 @@ export default function HeroPoseViewer({
           return;
         }
         loaded = gltf.scene;
+        setRigged(false);
+        setClips([]);
         setScene(gltf.scene);
       } catch {
         if (!cancelled) {
@@ -426,9 +613,13 @@ export default function HeroPoseViewer({
         <ambientLight intensity={0.12} />
         <directionalLight position={[3, 5, 4]} intensity={1.1} color="#fff3e0" />
         <directionalLight position={[-4, 2, -3]} intensity={0.4} color="#cfe0ff" />
-        <PosedModel scene={scene} />
+        {rigged ? (
+          <RiggedModel scene={scene} clips={clips} interaction={interaction} />
+        ) : (
+          <PosedModel scene={scene} interaction={interaction} />
+        )}
         {trippySprite && <TrippyPaint scene={scene} sprite={trippySprite} />}
-        <Controls />
+        <Controls interaction={interaction} />
       </Canvas>
     </div>
   );
