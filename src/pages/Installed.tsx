@@ -64,7 +64,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { MenuContent, MenuItem, MenuRoot, MenuTrigger } from '../components/common/menu';
 import { showToast } from '../stores/toastStore';
-import { useAppStore } from '../stores/appStore';
+import { useAppStore, type BrowseArtistRef } from '../stores/appStore';
 import { getActiveDeadlockPath } from '../lib/appSettings';
 import { getConflicts, openModsFolder, readImageDataUrl, showOpenDialog, getModDetails, getModFileList, downloadMod, createSnapshot, detectUnknownModFilters, detectUnknownModCacheBulk, cancelUnknownModDetection, onUnknownModDetectionProgress, applyUnknownModMatch, applyUnknownCustomMod, associateUnknownMod, listUnknownModFiles, browseMods, mergeMods, unmergeMod, extractMergeSource, reorderMods as apiReorderMods, setModIgnoreUpdates, getLockerOverview, revealModInFolder } from '../lib/api';
 import type { UnmergeModResult } from '../lib/api';
@@ -387,6 +387,7 @@ interface InstalledEntryCardProps {
   selectMode: boolean;
   selected: boolean;
   onOpenDetails: (mod: Mod) => void;
+  onViewAuthor: (mod: Mod) => void;
   onOpenPicker: (gameBananaId: number) => void;
   onToggle: (entry: ModEntry) => void;
   onDelete: (entry: ModEntry) => void;
@@ -423,6 +424,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
   selectMode,
   selected,
   onOpenDetails,
+  onViewAuthor,
   onOpenPicker,
   onToggle,
   onDelete,
@@ -450,6 +452,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
         onOpenDetails={
           mod.merged || mod.gameBananaId ? () => onOpenDetails(mod) : undefined
         }
+        onViewAuthor={mod.gameBananaId ? () => onViewAuthor(mod) : undefined}
         onToggle={() => onToggle(entry)}
         onDelete={() => onDelete(entry)}
         onEditLocal={!mod.gameBananaId ? () => onEditLocal(mod) : undefined}
@@ -498,6 +501,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
       updateAvailable={updateAvailable}
       entryKey={entry.key}
       onOpenDetails={() => onOpenPicker(entry.gameBananaId)}
+      onViewAuthor={entry.gameBananaId ? () => onViewAuthor(entry.primary) : undefined}
       onToggle={() => onToggle(entry)}
       onDelete={() => onDelete(entry)}
       onTagLocker={(heroName) => onTagLocker(entry, heroName)}
@@ -617,6 +621,7 @@ export default function Installed() {
     importCustomMod,
     soundVolume,
     setInstalledScrollTop,
+    setBrowseUi,
   } = useAppStore();
   const activeDeadlockPath = getActiveDeadlockPath(settings);
 
@@ -1040,7 +1045,7 @@ export default function Installed() {
     setDetailsDates(null);
     try {
       const [details, cached] = await Promise.all([
-        getModDetails(m.gameBananaId, section),
+        getModDetails(m.gameBananaId, section, { includeSubmitter: true }),
         window.electronAPI.getCachedMod(m.gameBananaId).catch(() => null),
       ]);
       setDetailsMod(details);
@@ -2358,6 +2363,46 @@ export default function Installed() {
   const openEntryPicker = useStableCallback((gameBananaId: number) => {
     setPickerGroupId(gameBananaId);
   });
+  // Open an artist's page inside Grimoire by entering Browse's artist mode (the
+  // grid scoped to that submitter), the same surface the artist card in a mod's
+  // details opens.
+  const openArtistPage = useStableCallback((artist: BrowseArtistRef) => {
+    if (!artist?.id || artist.id <= 0) return;
+    closeModDetails();
+    setBrowseUi({ submitter: artist });
+    navigate('/browse');
+  });
+  // Kebab-menu entry point: we don't store the submitter locally, so resolve it
+  // from the catalog cache first (instant when the mod is mirrored) and fall
+  // back to a live details fetch before opening the artist page.
+  const viewEntryAuthor = useStableCallback(async (mod: Mod) => {
+    if (!mod.gameBananaId) return;
+    try {
+      const cached = await window.electronAPI.getCachedMod(mod.gameBananaId).catch(() => null);
+      let artist: BrowseArtistRef | undefined =
+        cached?.submitterId && cached.submitterId > 0
+          ? { id: cached.submitterId, name: cached.submitterName ?? 'Artist', profileUrl: cached.profileUrl }
+          : undefined;
+      if (!artist) {
+        const details = await getModDetails(mod.gameBananaId, mod.sourceSection ?? 'Mod', {
+          includeSubmitter: true,
+        });
+        const s = details.submitter;
+        if (s && s.id > 0) {
+          artist = { id: s.id, name: s.name, avatarUrl: s.avatarUrl, profileUrl: s.profileUrl, kofiUrl: s.kofiUrl };
+        }
+      }
+      if (!artist) {
+        showToast("Couldn't find this mod's author page", { tone: 'error' });
+        return;
+      }
+      openArtistPage(artist);
+    } catch (err) {
+      showToast(`Couldn't open author page: ${err instanceof Error ? err.message : String(err)}`, {
+        tone: 'error',
+      });
+    }
+  });
   const toggleEntry = useStableCallback((entry: ModEntry) => {
     if (entry.kind === 'group') void handleGroupToggle(entry);
     else void toggleMod(entry.mod.id);
@@ -2759,6 +2804,7 @@ export default function Installed() {
     selectMode,
     selected: isEntrySelected(entry),
     onOpenDetails: openEntryDetails,
+    onViewAuthor: viewEntryAuthor,
     onOpenPicker: openEntryPicker,
     onToggle: toggleEntry,
     onDelete: deleteEntry,
@@ -3586,6 +3632,7 @@ export default function Installed() {
           ignoreUpdates={detailsIgnoreUpdates}
           onToggleIgnoreUpdates={handleToggleIgnoreUpdates}
           onClose={closeModDetails}
+          onViewArtist={openArtistPage}
           onDownload={handleDetailsDownload}
           onNavigatePrevious={
             previousDetailsEntry ? () => navigateToDetailsEntry(previousDetailsEntry) : undefined
@@ -5151,6 +5198,9 @@ interface ModCardProps {
   soundVolume: number;
   updateAvailable?: boolean;
   onOpenDetails?: () => void;
+  /** Open the mod author's GameBanana profile in the browser. Undefined for
+   *  local mods with no GameBanana source. */
+  onViewAuthor?: () => void;
   onToggle: () => void;
   onDelete: () => void;
   onEditLocal?: () => void;
@@ -5768,6 +5818,7 @@ function ModCard({
   soundVolume,
   updateAvailable,
   onOpenDetails,
+  onViewAuthor,
   onToggle,
   onDelete,
   onEditLocal,
@@ -6092,6 +6143,21 @@ function ModCard({
               >
                 <Info className="w-3.5 h-3.5" />
                 View details
+              </button>
+            )}
+            {onViewAuthor && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onViewAuthor();
+                }}
+                className={menuItemClasses}
+              >
+                <Banana className="w-3.5 h-3.5" />
+                View author's page
               </button>
             )}
             {(onTagLocker || onTagGlobal) && (

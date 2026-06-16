@@ -350,21 +350,22 @@ export async function resolvePortableProfile(
         ? await buildInstalledIndex(deadlockPath)
         : null;
 
-    const resolved: PortableResolvedMod[] = [];
-    for (const entry of profile.mods) {
-        const r = await resolveOne(entry);
-        if (
-            installedIndex &&
-            r.status !== 'unresolvable' &&
-            r.entry.source === 'gamebanana' &&
-            r.resolvedFileId !== undefined
-        ) {
-            const ref = r.entry.ref as { submissionId: number; vpkStem?: string };
-            const hit = lookupInstalled(installedIndex, ref.submissionId, r.resolvedFileId, ref.vpkStem);
-            if (hit) r.alreadyInstalled = true;
-        }
-        resolved.push(r);
-    }
+    const resolved = await Promise.all(
+        profile.mods.map(async (entry) => {
+            const r = await resolveOne(entry);
+            if (
+                installedIndex &&
+                r.status !== 'unresolvable' &&
+                r.entry.source === 'gamebanana' &&
+                r.resolvedFileId !== undefined
+            ) {
+                const ref = r.entry.ref as { submissionId: number; vpkStem?: string };
+                const hit = lookupInstalled(installedIndex, ref.submissionId, r.resolvedFileId, ref.vpkStem);
+                if (hit) r.alreadyInstalled = true;
+            }
+            return r;
+        })
+    );
 
     let exactCount = 0;
     let upgradedCount = 0;
