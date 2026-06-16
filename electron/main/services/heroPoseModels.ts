@@ -174,8 +174,12 @@ function riggedModelFile(key: string): string {
  *
  * v6: sheen now reads TextureSheenColor1 * tint and binds the g_tSheen texture
  * (was white sheen on most cloth), and glass honors the authored g_flIOR.
+ *
+ * v7: vpkmerge fixed draw-call index offsets for resourcecompiler/global-index
+ * meshes. Pre-v7 cached GLBs can contain out-of-range primitive indices, which
+ * renders shredded in three.js even after the bundled binary is fixed.
  */
-const POSE_CACHE_VERSION = '6';
+const POSE_CACHE_VERSION = '7';
 
 const POSE_VERSION_FILENAME = '.cache-version';
 
@@ -189,8 +193,10 @@ function versionFile(key: string): string {
  * invalidates the other's cache. v1: initial rigged-export spine: no `--pose`,
  * filtered to a single looping idle clip, emitting skin + per-bone nodes + one
  * glTF animation.
+ *
+ * v2: same vpkmerge index-offset fix as POSE_CACHE_VERSION v7.
  */
-const RIGGED_CACHE_VERSION = '1';
+const RIGGED_CACHE_VERSION = '2';
 
 const RIGGED_VERSION_FILENAME = '.rigged-cache-version';
 

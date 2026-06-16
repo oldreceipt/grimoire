@@ -29,7 +29,9 @@ export const SOUL_MODEL_SCHEME = 'grimoire-soul';
 // v1: the original pipeline (vpkmerge export + stripGlbSkins patch). Pre-sidecar
 // GLBs are treated as v1 in getSoulModelInfo, so introducing the sidecar did not
 // invalidate existing caches.
-const SOUL_CACHE_VERSION = '1';
+// v2: vpkmerge fixed draw-call index offsets for resourcecompiler/global-index
+// meshes, invalidating any model-export GLBs written by the broken binary.
+const SOUL_CACHE_VERSION = '2';
 
 /**
  * Canonical soul-container model entry. Present in the base pak01 and in the
