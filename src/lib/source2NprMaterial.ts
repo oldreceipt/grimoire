@@ -635,6 +635,12 @@ uniform float uNprStrength;
 uniform vec3  uTintColor;
 uniform sampler2D uTintRimMask;
 uniform float uHasTintMask;
+uniform float uTime;
+uniform sampler2D uSelfIllumMap;
+uniform float uHasSelfIllum;
+uniform vec2  uSelfIllumScroll;
+uniform vec3  uSelfIllumTint;
+uniform float uSelfIllumScale;
 varying vec2 vNprUv;
 
 // Soft-quantize a 0..1 value into uBands steps, softening only the riser so band
@@ -693,6 +699,18 @@ const NPR_PATCH_MAP: CSMPatchMap = {
         float nprRim = nprFres * nprGate * nprRimMaskG * uRimStrength;
 
         vec3 nprOut = nprCel + uRimColor * nprRim;
+
+        // Self-illum: scrolling emissive on materials with a REAL mask (viscous_head's
+        // liquid mask scrolls up at g_vSelfIllumScrollSpeed and glows green). Gated by
+        // uHasSelfIllum so placeholder-4x4 masks (ball/body) contribute nothing. The
+        // GLB-baked base emissive is zeroed in applySource2MaterialHints so this is the
+        // sole owner of the glow (no double-green).
+        if (uHasSelfIllum > 0.5) {
+          vec2 siUv = fract(vNprUv + uSelfIllumScroll * uTime);
+          float siMask = texture2D(uSelfIllumMap, siUv).r;
+          nprOut += uSelfIllumTint * (siMask * uSelfIllumScale);
+        }
+
         gl_FragColor.rgb = mix(gl_FragColor.rgb, nprOut, uNprStrength);
       }
     `,
@@ -724,6 +742,34 @@ export function wrapMaterialWithNpr(
   // color factor by vpkmerge; re-reading it here would double-apply the tint.
   const tintColor = tintOverride ?? new THREE.Color(1, 1, 1);
 
+  // Self-illum: only a REAL mask animates (placeholder 4x4 gate, same as the hints
+  // path). g_tSelfIllumMask scrolls at g_vSelfIllumScrollSpeed, tinted+scaled.
+  const selfIllumMap = morphic.resolvedTextures?.g_tSelfIllumMask;
+  const hasSelfIllum = isMeaningfulMask(selfIllumMap);
+  if (selfIllumMap) {
+    // Scroll wraps via fract(), so the sampler must repeat or the seam smears.
+    selfIllumMap.wrapS = THREE.RepeatWrapping;
+    selfIllumMap.wrapT = THREE.RepeatWrapping;
+    selfIllumMap.needsUpdate = true;
+  }
+  const siScroll = morphic.vectors?.g_vSelfIllumScrollSpeed1 ?? morphic.vectors?.g_vSelfIllumScrollSpeed;
+  const siTint = vectorColor(
+    morphic.vectors?.g_vSelfIllumTint1 ?? morphic.vectors?.g_vSelfIllumTint,
+    new THREE.Color(0, 0, 0)
+  );
+  // Use the real scale (viscous_head = 0.629); never floor to 1 (milky-white guard).
+  const siScale = firstNumber(morphic, ['g_flSelfIllumScale1', 'g_flSelfIllumScale'], 0);
+
+  // The GLB exporter bakes viscous_head's emissive (texture + green factor) into the
+  // base; the lit pass would emit it before our patch runs -> double-green. When the
+  // NPR path owns the (scrolling) glow, zero the base emissive BEFORE the CSM copies
+  // base props. unwrapNprBase restores it on teardown. Stamped on the base instance.
+  if (hasSelfIllum) {
+    const std = base as THREE.MeshStandardMaterial & { __nprPrevEmissiveIntensity?: number };
+    std.__nprPrevEmissiveIntensity = std.emissiveIntensity;
+    std.emissiveIntensity = 0;
+  }
+
   const uniforms: Record<string, THREE.IUniform> = {
     uKeyDir: { value: tuning.keyDir.clone() },
     uBands: { value: tuning.bands },
@@ -737,6 +783,12 @@ export function wrapMaterialWithNpr(
     uTintColor: { value: tintColor },
     uTintRimMask: { value: tintMask ?? whiteFallback() },
     uHasTintMask: { value: tintMask ? 1.0 : 0.0 },
+    uTime: { value: 0 },
+    uSelfIllumMap: { value: hasSelfIllum ? selfIllumMap : whiteFallback() },
+    uHasSelfIllum: { value: hasSelfIllum ? 1.0 : 0.0 },
+    uSelfIllumScroll: { value: new THREE.Vector2(siScroll?.[0] ?? 0, siScroll?.[1] ?? 0) },
+    uSelfIllumTint: { value: siTint },
+    uSelfIllumScale: { value: siScale },
   };
 
   const csm = new CustomShaderMaterial({
@@ -765,7 +817,13 @@ export function wrapMaterialWithNpr(
 export function unwrapNprBase(mat: THREE.Material): void {
   const m = mat as THREE.Material & {
     __csm?: { prevOnBeforeCompile?: THREE.Material['onBeforeCompile'] };
+    __nprPrevEmissiveIntensity?: number;
   };
+  // Restore the baked emissive the NPR self-illum path zeroed (see wrapMaterialWithNpr).
+  if (m.__nprPrevEmissiveIntensity !== undefined) {
+    (mat as THREE.MeshStandardMaterial).emissiveIntensity = m.__nprPrevEmissiveIntensity;
+    delete m.__nprPrevEmissiveIntensity;
+  }
   if (!m.__csm) return;
   mat.onBeforeCompile = m.__csm.prevOnBeforeCompile ?? (() => {});
   delete m.__csm;

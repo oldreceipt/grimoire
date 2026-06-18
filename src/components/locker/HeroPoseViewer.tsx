@@ -605,6 +605,14 @@ function NprMaterials({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scene, enabled, outline]);
 
+  // Drive uTime for the self-illum UV scroll (viscous_head's liquid glow).
+  useFrame((state) => {
+    if (!enabled) return;
+    wrapsRef.current.forEach((w) => {
+      if (w.uniforms.uTime) w.uniforms.uTime.value = state.clock.elapsedTime;
+    });
+  });
+
   // Live tint (ability-recolor preview): mutate uniforms only, no rebuild.
   useEffect(() => {
     if (!enabled) return;
