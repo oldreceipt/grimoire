@@ -6,9 +6,9 @@ import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
  * Source 2 NPR (cel / rim / tint) restyle for the Locker hero preview.
  *
  * React-free. Owns reading the `morphic` extras vpkmerge emits, resolving the
- * NPR mask texture indices, and building the CSM that layers the Deadlock toon
- * look ON TOP of the existing PMREM IBL + ACES tonemap output (it is additive on
- * the lit result, never a replacement pass).
+ * Source 2 preview texture indices, and building the CSM that layers the
+ * Deadlock toon look ON TOP of the existing PMREM IBL + ACES tonemap output (it
+ * is additive on the lit result, never a replacement pass).
  *
  * Data contract (mirror of vpkmerge morphic/src/model/glb.rs `morphic_extras`):
  *   material.userData.morphic = {
@@ -24,8 +24,10 @@ import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
  */
 
 /**
- * The three NPR mask slots vpkmerge emits (mirror of NPR_TEXTURE_SLOTS in
- * vpkmerge morphic/src/model/glb.rs). Only these ever appear in morphic.textures.
+ * Preview texture slots vpkmerge emits (mirror of SOURCE2_PREVIEW_TEXTURE_SLOTS
+ * in vpkmerge morphic/src/model/glb.rs). These are not ordinary glTF PBR
+ * bindings; they are resolved into linear data textures for NPR masks, shader
+ * approximation, and debug scans.
  *   g_tTintMaskRimLightMask  R = tint enable, G = rim-light constant
  *   g_tNprOutlineMask        where outlines appear
  *   g_tNprTransmissiveColor  NPR transmissive color (deferred in v1)
@@ -34,6 +36,15 @@ export const NPR_TEXTURE_SLOTS = [
   'g_tTintMaskRimLightMask',
   'g_tNprOutlineMask',
   'g_tNprTransmissiveColor',
+] as const;
+
+export const SOURCE2_PREVIEW_TEXTURE_SLOTS = [
+  ...NPR_TEXTURE_SLOTS,
+  'g_tGlass',
+  'g_tAltTranslucency',
+  'g_tJitterMask',
+  'g_tSelfIllumMask',
+  'g_tSheen',
 ] as const;
 
 /**
@@ -83,6 +94,48 @@ export interface NprWrapResult {
   ownedTextures: THREE.Texture[];
 }
 
+export interface NprSceneSummary {
+  meshes: number;
+  materials: number;
+  morphicMaterials: number;
+  nprMaterials: number;
+  glassMaterials: number;
+  translucentMaterials: number;
+  additiveMaterials: number;
+  selfIllumMaterials: number;
+  jitterMaterials: number;
+  sheenMaterials: number;
+  unlitMaterials: number;
+  backfaceMaterials: number;
+  tintRimMasks: number;
+  outlineTintMaterials: number;
+  glassMasks: number;
+  altTranslucencyMasks: number;
+  jitterMasks: number;
+  selfIllumMasks: number;
+  resolvedTextureSlots: Record<string, number>;
+  shaders: Record<string, number>;
+}
+
+export interface Source2MaterialHintStats {
+  materials: number;
+  glass: number;
+  translucent: number;
+  additive: number;
+  selfIllum: number;
+  unlit: number;
+  sheen: number;
+  backfaces: number;
+  alphaMaps: number;
+  emissiveMaps: number;
+  jitterDisplacements: number;
+}
+
+export interface Source2MaterialHintsResult {
+  restore: () => void;
+  stats: Source2MaterialHintStats;
+}
+
 /**
  * Deadlock-tuned starting constants. keyDir matches the scene key light at
  * [3, 5, 4] so the cel terminator reads consistently with the lit form.
@@ -122,8 +175,38 @@ function getMorphic(mat: THREE.Material): MorphicExtras | undefined {
   return (mat.userData as { morphic?: MorphicExtras }).morphic;
 }
 
+function flag(morphic: MorphicExtras, name: string): boolean {
+  return scalar(morphic.ints?.[name], 0) !== 0;
+}
+
+function vectorColor(v: number[] | undefined, fallback: THREE.Color): THREE.Color {
+  if (!v) return fallback.clone();
+  return new THREE.Color(v[0] ?? fallback.r, v[1] ?? fallback.g, v[2] ?? fallback.b);
+}
+
+function firstNumber(morphic: MorphicExtras, names: string[], fallback: number): number {
+  for (const name of names) {
+    const f = scalar(morphic.floats?.[name], Number.NaN);
+    if (Number.isFinite(f)) return f;
+    const v = morphic.vectors?.[name]?.[0];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+  }
+  return fallback;
+}
+
+function textureSize(tex: THREE.Texture | undefined): { width: number; height: number } | null {
+  const image = tex?.image as { width?: number; height?: number } | undefined;
+  if (!image || typeof image.width !== 'number' || typeof image.height !== 'number') return null;
+  return { width: image.width, height: image.height };
+}
+
+function isMeaningfulMask(tex: THREE.Texture | undefined): tex is THREE.Texture {
+  const size = textureSize(tex);
+  return !!size && size.width > 4 && size.height > 4;
+}
+
 /**
- * Resolve the NPR mask texture INDICES on every morphic material in the scene to
+ * Resolve the preview texture INDICES on every morphic material in the scene to
  * live THREE.Texture instances, stashed on userData.morphic.resolvedTextures.
  *
  * Called from loadGltfPreview while gltf.parser is still live: getDependency is
@@ -152,7 +235,7 @@ export async function resolveMorphicTextures(gltf: GLTF): Promise<void> {
       const indices = morphic.textures!;
       const resolved: Record<string, THREE.Texture> = {};
       await Promise.all(
-        NPR_TEXTURE_SLOTS.filter((slot) => typeof indices[slot] === 'number').map(async (slot) => {
+        SOURCE2_PREVIEW_TEXTURE_SLOTS.filter((slot) => typeof indices[slot] === 'number').map(async (slot) => {
           try {
             const shared = (await gltf.parser.getDependency(
               'texture',
@@ -196,6 +279,324 @@ export function isNprMaterial(mat: THREE.Material): boolean {
   if (!morphic) return false;
   if (mat.type === 'ShaderMaterial' || mat.type === 'RawShaderMaterial') return false;
   return scalar(morphic.ints?.F_USE_NPR_LIGHTING, 0) === 1;
+}
+
+/**
+ * Cheap runtime smoke summary for dev builds. This answers the first question
+ * before touching shader output: did this GLB actually arrive with morphic
+ * material extras and the preview texture indices resolved?
+ */
+export function summarizeNprScene(scene: THREE.Object3D): NprSceneSummary {
+  const materials = new Set<THREE.Material>();
+  let meshes = 0;
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    meshes += 1;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    mats.forEach((mat) => {
+      if (mat) materials.add(mat);
+    });
+  });
+
+  const shaders: Record<string, number> = {};
+  let morphicMaterials = 0;
+  let nprMaterials = 0;
+  let glassMaterials = 0;
+  let translucentMaterials = 0;
+  let additiveMaterials = 0;
+  let selfIllumMaterials = 0;
+  let jitterMaterials = 0;
+  let sheenMaterials = 0;
+  let unlitMaterials = 0;
+  let backfaceMaterials = 0;
+  let tintRimMasks = 0;
+  let outlineTintMaterials = 0;
+  let glassMasks = 0;
+  let altTranslucencyMasks = 0;
+  let jitterMasks = 0;
+  let selfIllumMasks = 0;
+  const resolvedTextureSlots: Record<string, number> = {};
+  materials.forEach((mat) => {
+    const morphic = getMorphic(mat);
+    if (!morphic) return;
+    morphicMaterials += 1;
+    shaders[morphic.shader || 'unknown'] = (shaders[morphic.shader || 'unknown'] ?? 0) + 1;
+    if (isNprMaterial(mat)) nprMaterials += 1;
+    if (flag(morphic, 'F_GLASS')) glassMaterials += 1;
+    if (flag(morphic, 'F_TRANSLUCENT') || flag(morphic, 'F_ADVANCED_TRANSLUCENCY')) {
+      translucentMaterials += 1;
+    }
+    if (flag(morphic, 'F_ADDITIVE_BLEND')) additiveMaterials += 1;
+    if (flag(morphic, 'F_SELF_ILLUM') || morphic.floats?.g_flSelfIllumScale1) {
+      selfIllumMaterials += 1;
+    }
+    if (flag(morphic, 'F_JITTER_VERTICES') || morphic.resolvedTextures?.g_tJitterMask) {
+      jitterMaterials += 1;
+    }
+    if (flag(morphic, 'F_SHEEN')) sheenMaterials += 1;
+    if (flag(morphic, 'F_UNLIT')) unlitMaterials += 1;
+    if (flag(morphic, 'F_RENDER_BACKFACES')) backfaceMaterials += 1;
+    if (morphic.resolvedTextures?.g_tTintMaskRimLightMask) tintRimMasks += 1;
+    if (morphic.vectors?.g_vSolidOutlineTint) outlineTintMaterials += 1;
+    if (morphic.resolvedTextures?.g_tGlass) glassMasks += 1;
+    if (morphic.resolvedTextures?.g_tAltTranslucency) altTranslucencyMasks += 1;
+    if (morphic.resolvedTextures?.g_tJitterMask) jitterMasks += 1;
+    if (morphic.resolvedTextures?.g_tSelfIllumMask) selfIllumMasks += 1;
+    Object.keys(morphic.resolvedTextures ?? {}).forEach((slot) => {
+      resolvedTextureSlots[slot] = (resolvedTextureSlots[slot] ?? 0) + 1;
+    });
+  });
+
+  return {
+    meshes,
+    materials: materials.size,
+    morphicMaterials,
+    nprMaterials,
+    glassMaterials,
+    translucentMaterials,
+    additiveMaterials,
+    selfIllumMaterials,
+    jitterMaterials,
+    sheenMaterials,
+    unlitMaterials,
+    backfaceMaterials,
+    tintRimMasks,
+    outlineTintMaterials,
+    glassMasks,
+    altTranslucencyMasks,
+    jitterMasks,
+    selfIllumMasks,
+    resolvedTextureSlots,
+    shaders,
+  };
+}
+
+/**
+ * Cheap Source 2 material hints for shader families GLTFLoader cannot represent
+ * fully. This deliberately mutates only standard/physical material properties
+ * and returns a restore handle so it can be gated independently from the NPR CSM.
+ */
+export function applySource2MaterialHints(
+  scene: THREE.Object3D,
+  debug = false
+): Source2MaterialHintsResult {
+  const restore: Array<() => void> = [];
+  const seen = new Set<THREE.Material>();
+  const stats: Source2MaterialHintStats = {
+    materials: 0,
+    glass: 0,
+    translucent: 0,
+    additive: 0,
+    selfIllum: 0,
+    unlit: 0,
+    sheen: 0,
+    backfaces: 0,
+    alphaMaps: 0,
+    emissiveMaps: 0,
+    jitterDisplacements: 0,
+  };
+
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    mats.forEach((mat) => {
+      if (!mat || seen.has(mat)) return;
+      seen.add(mat);
+      const morphic = getMorphic(mat);
+      if (!morphic) return;
+      const standard = mat as THREE.MeshStandardMaterial;
+      if (!standard.isMeshStandardMaterial && !(standard as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial) {
+        return;
+      }
+      stats.materials += 1;
+
+      const physical = standard as THREE.MeshPhysicalMaterial;
+      const before = {
+        side: mat.side,
+        transparent: mat.transparent,
+        opacity: mat.opacity,
+        alphaMap: standard.alphaMap,
+        alphaTest: standard.alphaTest,
+        depthWrite: mat.depthWrite,
+        blending: mat.blending,
+        toneMapped: mat.toneMapped,
+        roughness: standard.roughness,
+        metalness: standard.metalness,
+        emissive: standard.emissive?.clone(),
+        emissiveMap: standard.emissiveMap,
+        emissiveIntensity: standard.emissiveIntensity,
+        envMapIntensity: standard.envMapIntensity,
+        displacementMap: standard.displacementMap,
+        displacementScale: standard.displacementScale,
+        displacementBias: standard.displacementBias,
+        transmission: physical.transmission,
+        thickness: physical.thickness,
+        ior: physical.ior,
+        clearcoat: physical.clearcoat,
+        clearcoatRoughness: physical.clearcoatRoughness,
+        sheen: physical.sheen,
+        sheenRoughness: physical.sheenRoughness,
+        sheenColor: physical.sheenColor?.clone(),
+      };
+
+      const glass = flag(morphic, 'F_GLASS');
+      const translucent = flag(morphic, 'F_TRANSLUCENT') || flag(morphic, 'F_ADVANCED_TRANSLUCENCY');
+      const additive = flag(morphic, 'F_ADDITIVE_BLEND');
+      const selfIllum = flag(morphic, 'F_SELF_ILLUM') || morphic.floats?.g_flSelfIllumScale1 !== undefined;
+      const unlit = flag(morphic, 'F_UNLIT');
+      const sheen = flag(morphic, 'F_SHEEN');
+      const backfaces = flag(morphic, 'F_RENDER_BACKFACES');
+      const selfIllumMap = morphic.resolvedTextures?.g_tSelfIllumMask;
+      const hasSelfIllumMap = isMeaningfulMask(selfIllumMap);
+      const selfIllumScale = firstNumber(
+        morphic,
+        ['g_flSelfIllumScale1', 'g_flSelfIllumScale'],
+        Number.NaN
+      );
+      const selfIllumTintVec = morphic.vectors?.g_vSelfIllumTint1 ?? morphic.vectors?.g_vSelfIllumTint;
+
+      if (glass) stats.glass += 1;
+      if (translucent) stats.translucent += 1;
+      if (additive) stats.additive += 1;
+      if (selfIllum) stats.selfIllum += 1;
+      if (unlit) stats.unlit += 1;
+      if (sheen) stats.sheen += 1;
+      if (backfaces) {
+        stats.backfaces += 1;
+        mat.side = THREE.DoubleSide;
+      }
+
+      if (glass) {
+        standard.roughness = Math.min(standard.roughness ?? 1, 0.18);
+        standard.metalness = Math.min(standard.metalness ?? 0, 0.05);
+        standard.envMapIntensity = Math.max(standard.envMapIntensity ?? 1, 1.35);
+        physical.transmission = Math.max(physical.transmission ?? 0, 0.85);
+        physical.thickness = Math.max(physical.thickness ?? 0, 0.12);
+        physical.ior = firstNumber(morphic, ['g_flIOR'], physical.ior ?? 1.5);
+        physical.clearcoat = Math.max(physical.clearcoat ?? 0, 0.45);
+        physical.clearcoatRoughness = Math.min(physical.clearcoatRoughness ?? 0.25, 0.18);
+      }
+
+      if (translucent || additive) {
+        const alphaMask =
+          morphic.resolvedTextures?.g_tAltTranslucency ?? morphic.resolvedTextures?.g_tGlass;
+        mat.transparent = true;
+        // Translucent goo skin keeps depthWrite ON so it occludes the opaque
+        // interior (Viscous's black gear/"bones"). depthWrite=false x-rayed every
+        // interior layer at once, making the bones read as see-through. Additive
+        // glow (below) still needs it off.
+        mat.depthWrite = true;
+        mat.opacity = Math.min(
+          mat.opacity,
+          firstNumber(morphic, ['g_flOpacityScale1', 'TextureOpacity1'], glass ? 0.72 : 0.62)
+        );
+        if (isMeaningfulMask(alphaMask)) {
+          standard.alphaMap = alphaMask;
+          standard.alphaTest = Math.max(standard.alphaTest ?? 0, 0.01);
+          stats.alphaMaps += 1;
+        }
+      }
+
+      if (additive) {
+        mat.blending = THREE.AdditiveBlending;
+        mat.depthWrite = false;
+      }
+
+      // Self-illum fires ONLY on a real mask (matches the GLB exporter, which skips
+      // placeholder 4x4 default masks). Deadlock emissive = mask * scale * tint:
+      // viscous_body/ball carry F_SELF_ILLUM with a placeholder mask, default white
+      // tint, and 0.02 scale, which the old gate (tint/scale "present" -> emit,
+      // intensity floored to 1) turned into a full white glow -- the milky-white
+      // body. viscous_head has the real liquid mask + green tint + 0.629 scale and
+      // still glows green. Use the real scale as intensity, not a forced floor of 1.
+      if (selfIllum && standard.emissive && hasSelfIllumMap) {
+        standard.emissive.copy(vectorColor(selfIllumTintVec, new THREE.Color(1, 1, 1)));
+        standard.emissiveIntensity = Number.isFinite(selfIllumScale)
+          ? Math.max(selfIllumScale, 0)
+          : 1;
+        if (!standard.emissiveMap) {
+          standard.emissiveMap = selfIllumMap;
+          stats.emissiveMaps += 1;
+        }
+      }
+
+      if (unlit && standard.emissive) {
+        standard.emissive.copy(standard.color ?? new THREE.Color(1, 1, 1));
+        standard.emissiveIntensity = Math.max(standard.emissiveIntensity ?? 1, 1.2);
+        mat.toneMapped = false;
+      }
+
+      if (sheen && physical.isMeshPhysicalMaterial) {
+        physical.sheen = Math.max(physical.sheen ?? 0, 0.65);
+        physical.sheenRoughness = firstNumber(morphic, ['TextureSheenRoughness1', 'g_flSheenRoughness'], physical.sheenRoughness ?? 0.45);
+        physical.sheenColor.copy(
+          vectorColor(morphic.vectors?.TextureSheenColor1 ?? morphic.vectors?.g_vSheenColorTint1, physical.sheenColor)
+        );
+      }
+
+      const jitterMask = morphic.resolvedTextures?.g_tJitterMask;
+      if (flag(morphic, 'F_JITTER_VERTICES') && isMeaningfulMask(jitterMask)) {
+        standard.displacementMap = jitterMask;
+        standard.displacementScale = Math.max(standard.displacementScale ?? 0, 0.01);
+        standard.displacementBias = standard.displacementBias ?? 0;
+        stats.jitterDisplacements += 1;
+      }
+
+      mat.needsUpdate = true;
+      if (debug) {
+        console.info('[source2hints]', mat.name || '(unnamed)', {
+          shader: morphic.shader,
+          glass,
+          translucent,
+          additive,
+          selfIllum: selfIllum && hasSelfIllumMap,
+          unlit,
+          sheen,
+          backfaces,
+          emissiveIntensity: standard.emissiveIntensity,
+          opacity: mat.opacity,
+          transparent: mat.transparent,
+        });
+      }
+      restore.push(() => {
+        mat.side = before.side;
+        mat.transparent = before.transparent;
+        mat.opacity = before.opacity;
+        standard.alphaMap = before.alphaMap;
+        standard.alphaTest = before.alphaTest;
+        mat.depthWrite = before.depthWrite;
+        mat.blending = before.blending;
+        mat.toneMapped = before.toneMapped;
+        standard.roughness = before.roughness;
+        standard.metalness = before.metalness;
+        if (before.emissive) standard.emissive.copy(before.emissive);
+        standard.emissiveMap = before.emissiveMap;
+        standard.emissiveIntensity = before.emissiveIntensity;
+        standard.envMapIntensity = before.envMapIntensity;
+        standard.displacementMap = before.displacementMap;
+        standard.displacementScale = before.displacementScale;
+        standard.displacementBias = before.displacementBias;
+        physical.transmission = before.transmission;
+        physical.thickness = before.thickness;
+        physical.ior = before.ior;
+        physical.clearcoat = before.clearcoat;
+        physical.clearcoatRoughness = before.clearcoatRoughness;
+        physical.sheen = before.sheen;
+        physical.sheenRoughness = before.sheenRoughness;
+        if (before.sheenColor) physical.sheenColor.copy(before.sheenColor);
+        mat.needsUpdate = true;
+      });
+    });
+  });
+
+  return {
+    restore: () => {
+      restore.forEach((fn) => fn());
+    },
+    stats,
+  };
 }
 
 // Shared GLSL (module constants so every hero reuses one compiled program).
@@ -351,6 +752,27 @@ export function wrapMaterialWithNpr(
   // sampler points at the shared white fallback, which must NOT be disposed.
   const ownedTextures = tintMask ? [tintMask] : [];
   return { material: csm as unknown as THREE.Material, uniforms, ownedTextures };
+}
+
+/**
+ * Reverse CSM's in-place mutation of a base material. three-custom-shader-material,
+ * when handed a material INSTANCE (not a class), patches that instance's
+ * onBeforeCompile + customProgramCacheKey rather than a copy, stashing the
+ * originals on `__csm`. So restoring mesh.material to the base is NOT enough to
+ * toggle the cel shader off -- the base still compiles the NPR program. This puts
+ * the original compile hooks back and forces a recompile.
+ */
+export function unwrapNprBase(mat: THREE.Material): void {
+  const m = mat as THREE.Material & {
+    __csm?: { prevOnBeforeCompile?: THREE.Material['onBeforeCompile'] };
+  };
+  if (!m.__csm) return;
+  mat.onBeforeCompile = m.__csm.prevOnBeforeCompile ?? (() => {});
+  delete m.__csm;
+  // CSM set customProgramCacheKey as an own property; drop it to fall back to the
+  // prototype default (it is non-optional on Material, hence the record cast).
+  delete (mat as unknown as Record<string, unknown>).customProgramCacheKey;
+  mat.needsUpdate = true;
 }
 
 /**

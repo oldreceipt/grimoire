@@ -11,13 +11,23 @@ import {
   exportHeroPose,
   getRiggedHeroPose,
   exportRiggedHeroPose,
+  getHeroClothModel,
+  getHeroEffectInfo,
+  exportHeroEffect,
   previewTrippySprite,
 } from '../../lib/api';
 import { loadGltfPreview } from '../../lib/loadGltfPreview';
+import { ParticleEffect } from './ParticleEffect';
+import type { FxDescriptor } from './fxDescriptor';
+import { useClothSim, type FeModel } from '../../lib/useClothSim';
+import ClothTuner from './ClothTuner';
 import {
   isNprMaterial,
   wrapMaterialWithNpr,
   buildOutlineShell,
+  unwrapNprBase,
+  summarizeNprScene,
+  applySource2MaterialHints,
   type NprWrapResult,
 } from '../../lib/source2NprMaterial';
 import type { HeroPoseSkinSource } from '../../types/portrait';
@@ -71,6 +81,31 @@ const USE_NPR_PREVIEW: boolean = false;
 // off: the skinned shell binding is the highest-risk piece and the cel+rim+tint
 // already deliver the bulk of the in-game look. Honors per-material outline data.
 const USE_NPR_OUTLINE: boolean = false;
+
+// Broader Source 2 material approximations for shader-heavy heroes (glass,
+// translucency/additive, self-illum, unlit, sheen). Kept separate from the NPR
+// CSM so shader experiments can be toggled without touching the default path.
+const USE_SOURCE2_SHADER_HINTS: boolean = false;
+
+// Ambient particle FX overlay (the effects-preview axis). Default off: current
+// shader work deliberately avoids effects rendering, which needs separate CP /
+// child-system plumbing. Dev opt-in: localStorage grimoire.preview.effects=1.
+const USE_EFFECT_PREVIEW: boolean = false;
+
+function previewFlag(name: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined') return fallback;
+  const raw = window.localStorage.getItem(name);
+  if (raw === null) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
+}
+
+function effectDescriptorUrl(key: string): string {
+  return `${HERO_POSE_SCHEME}://m/${encodeURIComponent(key)}/effect.json`;
+}
+
+function effectTextureBaseUrl(key: string): string {
+  return `${HERO_POSE_SCHEME}://m/${encodeURIComponent(key)}/effect-tex/`;
+}
 
 // Turntable rotation rate (rad/s). The spin pauses while the user holds (orbits)
 // the model with the mouse.
@@ -143,7 +178,7 @@ function pickIdleClip(clips: THREE.AnimationClip[]): THREE.AnimationClip | null 
 /** Shared pointer-interaction state between OrbitControls and the model group:
  *  the turntable pauses while `dragging`. A mutable ref so it updates without
  *  re-rendering. */
-type TurntableInteraction = { dragging: boolean };
+type TurntableInteraction = { dragging: boolean; paused: boolean };
 
 /** Slow turntable auto-rotation on the model group, paused while the user holds
  *  (orbits) the model with the mouse. */
@@ -153,7 +188,7 @@ function useTurntable(
 ): void {
   useFrame((_, delta) => {
     const g = groupRef.current;
-    if (!g || interaction.current.dragging) return;
+    if (!g || interaction.current.dragging || interaction.current.paused) return;
     g.rotation.y += delta * SPIN_SPEED;
   });
 }
@@ -163,9 +198,11 @@ function useTurntable(
 function PosedModel({
   scene,
   interaction,
+  effect,
 }: {
   scene: THREE.Object3D;
   interaction: RefObject<TurntableInteraction>;
+  effect?: EffectMount | null;
 }) {
   const groupRef = useRef<THREE.Group>(null);
 
@@ -194,9 +231,19 @@ function PosedModel({
     <group ref={groupRef} scale={norm.scale}>
       <group position={[-norm.center.x, -norm.center.y, -norm.center.z]}>
         <primitive object={scene} />
+        {effect && (
+          <ParticleEffect descriptor={effect.descriptor} textureBaseUrl={effect.baseUrl} />
+        )}
       </group>
     </group>
   );
+}
+
+/** The descriptor + bundled-texture base URL for the ambient FX overlay mounted
+ *  inside a model's normalized group (so it shares the preview scale/centering). */
+interface EffectMount {
+  descriptor: FxDescriptor;
+  baseUrl: string;
 }
 
 /** The skinned figure, idle clip driven by an AnimationMixer. gltf.scene is
@@ -207,10 +254,14 @@ function RiggedModel({
   scene,
   clips,
   interaction,
+  clothModel,
+  effect,
 }: {
   scene: THREE.Object3D;
   clips: THREE.AnimationClip[];
   interaction: RefObject<TurntableInteraction>;
+  clothModel: FeModel | null;
+  effect?: EffectMount | null;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
@@ -258,8 +309,13 @@ function RiggedModel({
     };
   }, [scene, clips]);
 
+  // Cloth bones swing under gravity + turntable inertia, AFTER the mixer poses
+  // the skeleton, and collide with the body capsules/spheres from the FeModel
+  // sidecar (null on a model with no cloth -> the sim no-ops).
+  const clothStep = useClothSim(scene, clothModel);
   useFrame((_, delta) => {
     mixerRef.current?.update(delta);
+    clothStep(delta);
   });
 
   useTurntable(groupRef, interaction);
@@ -268,6 +324,9 @@ function RiggedModel({
     <group ref={groupRef} scale={norm.scale}>
       <group position={[-norm.center.x, -norm.center.y, -norm.center.z]}>
         <primitive object={scene} />
+        {effect && (
+          <ParticleEffect descriptor={effect.descriptor} textureBaseUrl={effect.baseUrl} />
+        )}
       </group>
     </group>
   );
@@ -281,10 +340,13 @@ function Controls({ interaction }: { interaction: RefObject<TurntableInteraction
   useEffect(() => {
     const controls = new OrbitControls(camera, gl.domElement);
     controls.enableDamping = true;
-    controls.enablePan = false;
+    controls.enablePan = true; // right-drag pans (moves) the model
     controls.minDistance = 1.6;
     controls.maxDistance = 6;
     controls.target.set(0, 0, 0);
+    // OrbitControls ignores the wheel whenever a drag is active (state !== NONE),
+    // so we handle zoom ourselves to keep scroll working while holding the mouse.
+    controls.enableZoom = false;
     controlsRef.current = controls;
     // Pause the turntable while held; kick a wobble on release (maglev feel).
     const onStart = () => {
@@ -293,11 +355,24 @@ function Controls({ interaction }: { interaction: RefObject<TurntableInteraction
     const onEnd = () => {
       interaction.current.dragging = false;
     };
+    // Dolly toward/away from the target in any state, clamped to min/max distance.
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const offset = camera.position.clone().sub(controls.target);
+      const dist = THREE.MathUtils.clamp(
+        offset.length() * (e.deltaY > 0 ? 1.1 : 1 / 1.1),
+        controls.minDistance,
+        controls.maxDistance
+      );
+      camera.position.copy(controls.target).add(offset.setLength(dist));
+    };
     controls.addEventListener('start', onStart);
     controls.addEventListener('end', onEnd);
+    gl.domElement.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       controls.removeEventListener('start', onStart);
       controls.removeEventListener('end', onEnd);
+      gl.domElement.removeEventListener('wheel', onWheel);
       controlsRef.current = null;
       controls.dispose();
     };
@@ -494,11 +569,13 @@ function NprMaterials({
           arr[i] = csm;
           restore.push(() => {
             arr[i] = mat;
+            unwrapNprBase(mat);
           });
         } else {
           mesh.material = csm;
           restore.push(() => {
             mesh.material = mat;
+            unwrapNprBase(mat);
           });
         }
       });
@@ -541,6 +618,25 @@ function NprMaterials({
   return null;
 }
 
+function Source2MaterialHints({
+  scene,
+  enabled,
+  debug,
+}: {
+  scene: THREE.Object3D;
+  enabled: boolean;
+  debug: boolean;
+}) {
+  useEffect(() => {
+    if (!enabled) return;
+    const hints = applySource2MaterialHints(scene, debug);
+    if (debug) console.info('[source2hints] summary', hints.stats);
+    return () => hints.restore();
+  }, [scene, enabled, debug]);
+
+  return null;
+}
+
 const q = (x: number): number => Math.round(x * 100) / 100;
 
 export default function HeroPoseViewer({
@@ -562,10 +658,34 @@ export default function HeroPoseViewer({
   const [scene, setScene] = useState<THREE.Object3D | null>(null);
   const [clips, setClips] = useState<THREE.AnimationClip[]>([]);
   const [rigged, setRigged] = useState(false);
+  const [clothModel, setClothModel] = useState<FeModel | null>(null);
   const [generating, setGenerating] = useState(false);
-  const interaction = useRef<TurntableInteraction>({ dragging: false });
+  const interaction = useRef<TurntableInteraction>({ dragging: false, paused: false });
+  const [spinPaused, setSpinPaused] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [effect, setEffect] = useState<EffectMount | null>(null);
   const sourceKey = skinSources.map((source) => `${source.priority}:${source.metaKey}`).join('|');
+  // Dev shader toggles: state-backed (not just localStorage) so the in-app panel
+  // re-applies live. The child effects key on these flags, so flipping one cleanly
+  // applies/restores its material mutations without a reload.
+  const [devFlags, setDevFlags] = useState(() => ({
+    npr: previewFlag('grimoire.preview.npr', USE_NPR_PREVIEW),
+    nprOutline: previewFlag('grimoire.preview.nprOutline', USE_NPR_OUTLINE),
+    source2: previewFlag('grimoire.preview.source2Shaders', USE_SOURCE2_SHADER_HINTS),
+    nprDebug: previewFlag('grimoire.preview.nprDebug', false),
+  }));
+  const setDevFlag = (key: keyof typeof devFlags, storageKey: string, value: boolean) => {
+    if (typeof window !== 'undefined') window.localStorage.setItem(storageKey, value ? '1' : '0');
+    setDevFlags((f) => ({ ...f, [key]: value }));
+  };
+  const nprPreviewEnabled = devFlags.npr;
+  const nprOutlineEnabled = devFlags.nprOutline;
+  const source2ShaderHintsEnabled = devFlags.source2;
+  const nprDebugEnabled = devFlags.nprDebug;
+  const effectPreviewEnabled = useMemo(
+    () => previewFlag('grimoire.preview.effects', USE_EFFECT_PREVIEW),
+    []
+  );
 
   // The pose GLB has no weapon mesh, so a weapons-only paint has nothing to show
   // here, and intensity 0 is "no paint". Otherwise fetch the pattern as an
@@ -638,6 +758,11 @@ export default function HeroPoseViewer({
               setClips(gltf.animations ?? []);
               setRigged(true);
               setScene(gltf.scene);
+              // Cloth-sim sidecar (colliders) for the rigged path. Best-effort:
+              // a model with no cloth returns null and the sim simply no-ops.
+              getHeroClothModel(heroName, skinSources).then((fe) => {
+                if (!cancelled) setClothModel(fe);
+              });
               return; // rigged path won.
             }
           } catch {
@@ -668,6 +793,7 @@ export default function HeroPoseViewer({
         loaded = gltf.scene;
         setRigged(false);
         setClips([]);
+        setClothModel(null); // static path has no skeleton; nothing to simulate.
         setScene(gltf.scene);
       } catch {
         if (!cancelled) {
@@ -687,6 +813,41 @@ export default function HeroPoseViewer({
     // identical stack (visible viewer churn on unrelated toggles).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroName, sourceKey, fallbackSkinMetaKey]);
+
+  useEffect(() => {
+    if (!scene || !nprDebugEnabled) return;
+    console.info('[HeroPoseViewer] NPR material summary', heroName, summarizeNprScene(scene));
+  }, [scene, heroName, nprDebugEnabled]);
+
+  // Ambient FX overlay (skin-independent): only the curated heroes have one, so
+  // getHeroEffectInfo cheaply returns hasEffect=false for everyone else. The
+  // bundle is built on demand, then the descriptor JSON is fetched over the
+  // grimoire-hero: scheme and handed to the renderer.
+  useEffect(() => {
+    if (!effectPreviewEnabled) return;
+    let cancelled = false;
+    setEffect(null);
+    (async () => {
+      try {
+        let info = await getHeroEffectInfo(heroName);
+        if (cancelled || !info.entry) return; // no curated effect for this hero.
+        if (!info.hasEffect) {
+          info = await exportHeroEffect(heroName);
+          if (cancelled || !info.hasEffect) return;
+        }
+        const res = await fetch(effectDescriptorUrl(info.key));
+        if (!res.ok) return;
+        const descriptor = (await res.json()) as FxDescriptor;
+        if (cancelled) return;
+        setEffect({ descriptor, baseUrl: effectTextureBaseUrl(info.key) });
+      } catch {
+        // Effects are a non-essential overlay; a failure leaves the plain pose.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [heroName, effectPreviewEnabled]);
 
   if (failed) {
     return (
@@ -732,21 +893,63 @@ export default function HeroPoseViewer({
         <directionalLight position={[3, 5, 4]} intensity={1.1} color="#fff3e0" />
         <directionalLight position={[-4, 2, -3]} intensity={0.4} color="#cfe0ff" />
         {rigged ? (
-          <RiggedModel scene={scene} clips={clips} interaction={interaction} />
+          <RiggedModel
+            scene={scene}
+            clips={clips}
+            interaction={interaction}
+            clothModel={clothModel}
+            effect={effect}
+          />
         ) : (
-          <PosedModel scene={scene} interaction={interaction} />
+          <PosedModel scene={scene} interaction={interaction} effect={effect} />
         )}
-        {USE_NPR_PREVIEW && scene && (
+        {source2ShaderHintsEnabled && scene && (
+          <Source2MaterialHints scene={scene} enabled={source2ShaderHintsEnabled} debug={nprDebugEnabled} />
+        )}
+        {nprPreviewEnabled && scene && (
           <NprMaterials
             scene={scene}
-            enabled={USE_NPR_PREVIEW && !trippySprite}
-            outline={USE_NPR_OUTLINE}
+            enabled={nprPreviewEnabled && !trippySprite}
+            outline={nprOutlineEnabled}
             tint={null /* wire to a recolor color once the Locker recolor surface exists */}
           />
         )}
         {trippySprite && <TrippyPaint scene={scene} sprite={trippySprite} />}
         <Controls interaction={interaction} />
       </Canvas>
+      <button
+        type="button"
+        onClick={() => {
+          const next = !interaction.current.paused;
+          interaction.current.paused = next;
+          setSpinPaused(next);
+        }}
+        className="absolute bottom-3 left-3 z-10 rounded bg-black/60 px-3 py-1.5 text-xs text-white hover:bg-black/80"
+      >
+        {spinPaused ? 'Resume spin' : 'Pause spin'}
+      </button>
+      {import.meta.env.DEV && (
+        <div className="absolute right-3 top-3 z-10 flex flex-col gap-1 rounded bg-black/60 p-2 text-xs text-white">
+          {(
+            [
+              ['source2', 'grimoire.preview.source2Shaders', 'Source2 shaders'],
+              ['npr', 'grimoire.preview.npr', 'NPR cel'],
+              ['nprOutline', 'grimoire.preview.nprOutline', 'NPR outline'],
+              ['nprDebug', 'grimoire.preview.nprDebug', 'Debug log'],
+            ] as const
+          ).map(([key, storageKey, label]) => (
+            <label key={key} className="flex cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={devFlags[key]}
+                onChange={(e) => setDevFlag(key, storageKey, e.target.checked)}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+      )}
+      {rigged && clothModel && <ClothTuner />}
     </div>
   );
 }
