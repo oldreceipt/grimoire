@@ -5,7 +5,7 @@ materials, and animated rig). The deep research + phased roadmap live in
 [`3d-preview-fidelity-plan.md`](./3d-preview-fidelity-plan.md); this doc is the
 "where things actually are and how to continue" companion.
 
-Last updated: 2026-06-16.
+Last updated: 2026-06-19.
 
 ## PRs open
 
@@ -29,6 +29,14 @@ PRs (see "PRs open" below).
 ## Repos, branches, commits
 
 Two sibling repos under `C:\Users\USER\`:
+
+- **Latest shader-preview checkpoint** (2026-06-19):
+  - grimoire: `492957e` `Add unified Deadlock material preview path`, pushed to
+    `oldreceipt/feat/npr-cel-shader`.
+  - vpkmerge: `75f8091` `Add Source 2 preview metadata to GLB extras`, pushed to
+    `oldreceipt/feat/source2-preview-metadata-backup`.
+  - The Grimoire commit is default-off: `unifiedMaterial`, `celV2`, and NPR
+    preview all remain opt-in dev flags.
 
 - **grimoire** (this repo) - branch `feat/3d-preview-fidelity` (off `main`):
   - `693a141` IBL + filmic tonemap + vertex colors
@@ -84,9 +92,48 @@ branch**: `cargo build --release --manifest-path ..\vpkmerge\Cargo.toml -p vpkme
   already baked into base color by vpkmerge, so `uTintColor` defaults to white
   (driven only by a future recolor override). Typecheck + lint green; an
   independent verifier confirmed the shader compiles against the installed CSM
-  6.4.0. REMAINING before flipping `USE_NPR_PREVIEW = true`: a runtime smoke test
-  (the GLSL can only be validated by running the app on a real hero) + visual
-  tuning of `DEFAULT_NPR_TUNING` against in-game screenshots. Task #7.
+  6.4.0. Electron smoke on 2026-06-19 loaded Abrams with
+  `grimoire.preview.npr=1` and logged 8 meshes, 7 morphic materials, 7 NPR
+  materials, and 6 tint/rim masks; canvas pixels were nonblank. REMAINING before
+  flipping `USE_NPR_PREVIEW = true`: visual tuning of `DEFAULT_NPR_TUNING`
+  against in-game screenshots. Task #7.
+- **NPR dev smoke gates** (2026-06-19): no code edit is needed to try the shader
+  locally. In DevTools, set `localStorage.setItem('grimoire.preview.npr', '1')`
+  and reload the Locker hero view. Optional:
+  `grimoire.preview.nprDebug=1` logs mesh/material counts plus how many materials
+  have morphic extras, NPR flags, tint/rim masks, and outline tint vectors;
+  `grimoire.preview.nprOutline=1` enables the inverted-hull shell. Defaults
+  remain off.
+- **Unified Deadlock material path** (built, OFF): `src/lib/deadlockMaterial.ts`
+  builds one owned clone per Source 2 material, applies blend/glass/sheen/unlit/
+  self-illum state once, then wraps that clone with the NPR CSM. This removes the
+  order dependency between the old mutating Source 2 hint pass and the NPR wrap.
+  Enable with:
+
+  ```js
+  localStorage.setItem('grimoire.preview.unifiedMaterial', '1')
+  ```
+
+  Current design decision: translucent/goo materials stay alpha-blended. The
+  Viscous spike showed physical transmission makes the goo shell vanish into the
+  background rather than read as saturated green mass. Transmission is reserved for
+  real glass only.
+- **Cel v2 direct-diffuse banding** (built, OFF): the experimental
+  `grimoire.preview.celV2` flag quantizes `reflectedLight.directDiffuse` at
+  `lights_fragment_end`. This leaves IBL, rim, and self-illum less damaged than
+  the older final-color posterize. Try it independently from unified mode:
+
+  ```js
+  localStorage.setItem('grimoire.preview.celV2', '1')
+  ```
+
+- **New GLB metadata contract** (requires fresh export): vpkmerge GLBs now expose
+  `extras.morphic.blend_mode`, `extras.morphic.self_illum_valid`, and broader
+  Source 2 preview texture slots. Grimoire has fallbacks for old GLBs, but the
+  good path needs re-exported cache entries.
+- **Ambient FX preview default** is now OFF (`USE_EFFECT_PREVIEW = false`) because
+  this shader pass deliberately avoids effects rendering. Opt in only when working
+  that separate axis: `localStorage.setItem('grimoire.preview.effects', '1')`.
 - **NPR solid-color outline** (built, `USE_NPR_OUTLINE = false`): inverted-hull
   shell in `buildOutlineShell`, gated on the presence of `g_vSolidOutlineTint`.
   The skinned-shell binding is unverified; dump a real hero's `extras.morphic` and
@@ -117,9 +164,22 @@ Prereqs that bit us this session:
   `C:\Program Files (x86)\Steam\steamapps\common\Deadlock\game\citadel\pak01_dir.vpk`).
 
 Cache versions (in `electron/main/services/heroPoseModels.ts`): bump these to force
-a re-export when the export pipeline changes. `POSE_CACHE_VERSION = '6'` (static),
-`RIGGED_CACHE_VERSION = '1'` (rigged). Cached glbs live in
-`userData/hero-poses/<key>/{model.glb, model-rigged.glb}`.
+a re-export when the export pipeline changes. As of this handoff,
+`POSE_CACHE_VERSION = '11'` (static) and `RIGGED_CACHE_VERSION = '4'` (rigged).
+Cached glbs live in `userData/hero-poses/<key>/{model.glb, model-rigged.glb}`.
+The Settings "Local preview cache" action deletes `hero-poses`, which also forces
+the next hero preview to call `exportHeroPose`.
+
+For the 2026-06-19 shader metadata work, clearing preview cache is required unless
+the cache version is bumped again. Rerunning Grimoire alone will reuse an existing
+`hasModel:true` cache entry. In dev, Grimoire resolves the exporter in this order:
+`VPKMERGE_BINARY`, then `..\vpkmerge\target\release\vpkmerge.exe`, then
+`..\vpkmerge\target\debug\vpkmerge.exe`, then the bundled downloaded binary.
+Rebuild vpkmerge release before regenerating GLBs:
+
+```
+cargo build --release --manifest-path ..\vpkmerge\Cargo.toml -p vpkmerge-cli
+```
 
 ## Key files
 
@@ -176,9 +236,16 @@ findings), this file.
 
 ## Open follow-ups (task list)
 
-- **#7 NPR cel/rim/tint shader** - DONE (implemented, flagged OFF; see "What's
-  built but gated" above). Remaining: runtime smoke test + visual tuning, then flip
+- **#7 NPR cel/rim/tint shader** - implemented, flagged OFF, with localStorage
+  smoke gates and material-summary logging. `pnpm typecheck` and `pnpm lint` are
+  green on 2026-06-19; Electron smoke on Abrams produced the expected NPR summary
+  and nonblank canvas pixels. Remaining: tune against screenshots, then flip
   `USE_NPR_PREVIEW = true`.
+- **#7b unified material builder** - implemented, flagged OFF. Validate on Viscous
+  plus at least two other shader-heavy heroes before making it default. Do not
+  delete the legacy two-pass material path yet.
+- **#7c cel v2 direct-diffuse banding** - implemented, flagged OFF. Compare against
+  old NPR on Viscous, Inferno glow, and one mostly-opaque hero before keeping it.
 - **#8 mis-routed pure-normal materials** - content-discriminator fix in `glb.rs`
   (see gotcha above). Headless-verifiable.
 - **#10 g_tRoughness wiring + toon outline pass** - recover ghost's authored
