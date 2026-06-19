@@ -45,6 +45,9 @@ icon-32.png
 .codex-run/
 reports/
 
+# Local dev helper: register a prebuilt VPK as a named local mod
+scripts/import-local-mod.mjs
+
 # Project summary (LaTeX source + build artifacts)
 docs/grimoire-project-summary.*
 
