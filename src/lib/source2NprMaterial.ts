@@ -56,6 +56,8 @@ export const SOURCE2_PREVIEW_TEXTURE_SLOTS = [
  */
 export interface MorphicExtras {
   shader: string;
+  blend_mode?: 'opaque' | 'blend_zwrite' | 'blend' | 'additive';
+  self_illum_valid?: boolean;
   ints?: Record<string, number | number[]>;
   floats?: Record<string, number | number[]>;
   vectors?: Record<string, number[]>;
@@ -155,7 +157,7 @@ export const DEFAULT_NPR_TUNING: NprTuning = {
 // unbound sampler). Module-shared, app-lifetime, never disposed. When
 // uHasTintMask == 0 the shader ignores its value anyway.
 let WHITE_FALLBACK: THREE.DataTexture | null = null;
-function whiteFallback(): THREE.DataTexture {
+export function whiteFallback(): THREE.DataTexture {
   if (!WHITE_FALLBACK) {
     WHITE_FALLBACK = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
     WHITE_FALLBACK.colorSpace = THREE.NoColorSpace;
@@ -171,20 +173,20 @@ function scalar(v: number | number[] | undefined, d = 0): number {
   return v;
 }
 
-function getMorphic(mat: THREE.Material): MorphicExtras | undefined {
+export function getMorphic(mat: THREE.Material): MorphicExtras | undefined {
   return (mat.userData as { morphic?: MorphicExtras }).morphic;
 }
 
-function flag(morphic: MorphicExtras, name: string): boolean {
+export function flag(morphic: MorphicExtras, name: string): boolean {
   return scalar(morphic.ints?.[name], 0) !== 0;
 }
 
-function vectorColor(v: number[] | undefined, fallback: THREE.Color): THREE.Color {
+export function vectorColor(v: number[] | undefined, fallback: THREE.Color): THREE.Color {
   if (!v) return fallback.clone();
   return new THREE.Color(v[0] ?? fallback.r, v[1] ?? fallback.g, v[2] ?? fallback.b);
 }
 
-function firstNumber(morphic: MorphicExtras, names: string[], fallback: number): number {
+export function firstNumber(morphic: MorphicExtras, names: string[], fallback: number): number {
   for (const name of names) {
     const f = scalar(morphic.floats?.[name], Number.NaN);
     if (Number.isFinite(f)) return f;
@@ -200,7 +202,7 @@ function textureSize(tex: THREE.Texture | undefined): { width: number; height: n
   return { width: image.width, height: image.height };
 }
 
-function isMeaningfulMask(tex: THREE.Texture | undefined): tex is THREE.Texture {
+export function isMeaningfulMask(tex: THREE.Texture | undefined): tex is THREE.Texture {
   const size = textureSize(tex);
   return !!size && size.width > 4 && size.height > 4;
 }
@@ -379,7 +381,8 @@ export function summarizeNprScene(scene: THREE.Object3D): NprSceneSummary {
  */
 export function applySource2MaterialHints(
   scene: THREE.Object3D,
-  debug = false
+  debug = false,
+  filter: (mat: THREE.Material, morphic: MorphicExtras) => boolean = () => true
 ): Source2MaterialHintsResult {
   const restore: Array<() => void> = [];
   const seen = new Set<THREE.Material>();
@@ -406,6 +409,7 @@ export function applySource2MaterialHints(
       seen.add(mat);
       const morphic = getMorphic(mat);
       if (!morphic) return;
+      if (!filter(mat, morphic)) return;
       const standard = mat as THREE.MeshStandardMaterial;
       if (!standard.isMeshStandardMaterial && !(standard as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial) {
         return;
@@ -449,7 +453,8 @@ export function applySource2MaterialHints(
       const sheen = flag(morphic, 'F_SHEEN');
       const backfaces = flag(morphic, 'F_RENDER_BACKFACES');
       const selfIllumMap = morphic.resolvedTextures?.g_tSelfIllumMask;
-      const hasSelfIllumMap = isMeaningfulMask(selfIllumMap);
+      const hasSelfIllumMap =
+        (morphic.self_illum_valid ?? isMeaningfulMask(selfIllumMap)) && selfIllumMap !== undefined;
       const selfIllumScale = firstNumber(
         morphic,
         ['g_flSelfIllumScale1', 'g_flSelfIllumScale'],
@@ -605,7 +610,7 @@ export function applySource2MaterialHints(
 // re-routes <begin_vertex> (transformed = csm_Position) and would reorder relative
 // to <skinning_vertex> / <morphtarget_vertex>, risking the rigged spine. Keep this
 // to varying passthrough only.
-const NPR_VERTEX = /* glsl */ `
+export const NPR_VERTEX = /* glsl */ `
 varying vec2 vNprUv;
 void main() {
   #ifdef USE_UV
@@ -622,7 +627,7 @@ void main() {
 // the post-light patch (NPR_PATCH_MAP, injected after <opaque_fragment>, same
 // main() scope) reads for the rim. The cel + rim math itself MUST live in the
 // patch, because the lit color does not exist yet at this point.
-const NPR_FRAGMENT = /* glsl */ `
+export const NPR_FRAGMENT = /* glsl */ `
 uniform vec3  uKeyDir;
 uniform float uBands;
 uniform float uStepSharpness;
@@ -632,6 +637,7 @@ uniform float uRimPower;
 uniform vec3  uRimColor;
 uniform float uRimMaskDefault;
 uniform float uNprStrength;
+uniform float uCelV2;
 uniform vec3  uTintColor;
 uniform sampler2D uTintRimMask;
 uniform float uHasTintMask;
@@ -671,8 +677,23 @@ void main() {
 // csm_FragColor, so CSM does not inject its own opaque_fragment mix (it only does
 // so when the user fragment uses csm_FragColor), and csm_UnlitFac stays 0. ACES
 // tonemaps our result downstream exactly like the PBR path.
-const NPR_PATCH_MAP: CSMPatchMap = {
+export const NPR_PATCH_MAP: CSMPatchMap = {
   '*': {
+    '#include <lights_fragment_end>': {
+      type: 'fs',
+      value: /* glsl */ `
+      #include <lights_fragment_end>
+      if (uCelV2 > 0.5) {
+        vec3 nprDirect = reflectedLight.directDiffuse;
+        float nprDirectLum = dot(nprDirect, vec3(0.2126, 0.7152, 0.0722));
+        float nprDirectQ = celQuantize(clamp(nprDirectLum, 0.0, 1.0), uBands, uStepSharpness);
+        vec3 nprDirectCel = nprDirect * (
+          nprDirectLum > 1e-4 ? clamp(nprDirectQ / nprDirectLum, 0.0, 4.0) : 1.0
+        );
+        reflectedLight.directDiffuse = mix(nprDirect, nprDirectCel, uNprStrength);
+      }
+    `,
+    },
     '#include <opaque_fragment>': /* glsl */ `
       #include <opaque_fragment>
       {
@@ -687,9 +708,12 @@ const NPR_PATCH_MAP: CSMPatchMap = {
 
         // Posterize luminance while preserving hue so the IBL color shaping
         // survives. Clamp the rescale so near-black pixels do not amplify noise.
-        float nprLum = dot(nprLit, vec3(0.2126, 0.7152, 0.0722));
-        float nprQ = celQuantize(clamp(nprLum, 0.0, 1.0), uBands, uStepSharpness);
-        vec3 nprCel = nprLit * (nprLum > 1e-4 ? clamp(nprQ / nprLum, 0.0, 4.0) : 1.0);
+        vec3 nprCel = nprLit;
+        if (uCelV2 <= 0.5) {
+          float nprLum = dot(nprLit, vec3(0.2126, 0.7152, 0.0722));
+          float nprQ = celQuantize(clamp(nprLum, 0.0, 1.0), uBands, uStepSharpness);
+          nprCel = nprLit * (nprLum > 1e-4 ? clamp(nprQ / nprLum, 0.0, 4.0) : 1.0);
+        }
 
         // Rim: fresnel edge, gated to the lit hemisphere, modulated by mask G (or
         // the default when no mask).
@@ -780,6 +804,7 @@ export function wrapMaterialWithNpr(
     uRimColor: { value: tuning.rimColor.clone() },
     uRimMaskDefault: { value: 1.0 },
     uNprStrength: { value: tuning.nprStrength },
+    uCelV2: { value: 0.0 },
     uTintColor: { value: tintColor },
     uTintRimMask: { value: tintMask ?? whiteFallback() },
     uHasTintMask: { value: tintMask ? 1.0 : 0.0 },

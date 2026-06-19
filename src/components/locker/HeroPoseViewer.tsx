@@ -28,8 +28,10 @@ import {
   unwrapNprBase,
   summarizeNprScene,
   applySource2MaterialHints,
+  getMorphic,
   type NprWrapResult,
 } from '../../lib/source2NprMaterial';
+import { buildDeadlockMaterial, type DeadlockMaterialResult } from '../../lib/deadlockMaterial';
 import type { HeroPoseSkinSource } from '../../types/portrait';
 import type { TrippySpriteResult } from '../../types/mod';
 import type { TrippyPreview } from '../../stores/trippyPreviewStore';
@@ -87,6 +89,16 @@ const USE_NPR_OUTLINE: boolean = false;
 // CSM so shader experiments can be toggled without touching the default path.
 const USE_SOURCE2_SHADER_HINTS: boolean = false;
 
+// Unified single build pass (deadlockMaterial.buildDeadlockMaterial): collapses
+// the Source2 hints + NPR CSM two-pass into ONE pass on an owned clone of each
+// material, so the GLTF base is never mutated. Default off; runs side-by-side
+// with the old two-pass until validated. When on, the old path is BYPASSED.
+const USE_UNIFIED_MATERIAL: boolean = false;
+
+// Phase 5 shader experiment: quantize accumulated direct diffuse at
+// lights_fragment_end, leaving IBL unbanded. Dev opt-in for visual A/B.
+const USE_CEL_V2: boolean = false;
+
 // Ambient particle FX overlay (the effects-preview axis). Default off: current
 // shader work deliberately avoids effects rendering, which needs separate CP /
 // child-system plumbing. Dev opt-in: localStorage grimoire.preview.effects=1.
@@ -125,6 +137,23 @@ function riggedMeshUrlFor(key: string, mtimeMs: number | null): string {
 /** Free a loaded scene's GPU resources (geometry, materials, textures,
  *  skeletons). */
 function disposeScene(root: THREE.Object3D): void {
+  const disposedMaterials = new Set<THREE.Material>();
+  const disposeMaterial = (m: THREE.Material | null | undefined): void => {
+    if (!m || disposedMaterials.has(m)) return;
+    disposedMaterials.add(m);
+    const sm = m as THREE.MeshStandardMaterial;
+    [sm.map, sm.normalMap, sm.roughnessMap, sm.metalnessMap, sm.emissiveMap, sm.aoMap].forEach(
+      (t) => t?.dispose()
+    );
+    const resolved = getMorphic(m)?.resolvedTextures;
+    if (resolved) {
+      Object.values(resolved).forEach((t) => t.dispose());
+    }
+    const csmBase = (m as { __csm?: { baseMaterial?: THREE.Material } }).__csm?.baseMaterial;
+    if (csmBase && csmBase !== m) disposeMaterial(csmBase);
+    m.dispose();
+  };
+
   root.traverse((obj) => {
     const skinned = obj as THREE.SkinnedMesh;
     if (skinned.isSkinnedMesh && skinned.skeleton) {
@@ -136,11 +165,7 @@ function disposeScene(root: THREE.Object3D): void {
     mesh.geometry?.dispose();
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const m of mats) {
-      const sm = m as THREE.MeshStandardMaterial;
-      [sm.map, sm.normalMap, sm.roughnessMap, sm.metalnessMap, sm.emissiveMap, sm.aoMap].forEach(
-        (t) => t?.dispose()
-      );
-      m?.dispose();
+      disposeMaterial(m);
     }
   });
 }
@@ -530,18 +555,39 @@ function NprMaterials({
   enabled,
   outline,
   tint,
+  unified,
+  source2Active,
+  celV2,
 }: {
   scene: THREE.Object3D;
   enabled: boolean;
   outline: boolean;
   tint: THREE.Color | null;
+  /** When true, build each material via the unified single pass
+   *  (buildDeadlockMaterial) instead of the old applySource2MaterialHints +
+   *  wrapMaterialWithNpr two-pass. */
+  unified: boolean;
+  /** Forces legacy wraps to rebuild after the mutating Source2 hint pass changes. */
+  source2Active: boolean;
+  celV2: boolean;
 }) {
-  // Live handle to the wraps so the tint effect can poke uniforms without a rebuild.
-  const wrapsRef = useRef<Map<THREE.Material, NprWrapResult>>(new Map());
+  // Live handle to the builds so the tint effect + uTime ticker can poke uniforms
+  // without a rebuild. Both paths expose { material, uniforms } so the per-frame /
+  // tint effects below are path-agnostic.
+  const buildsRef = useRef<
+    Map<THREE.Material, { material: THREE.Material; uniforms: Record<string, THREE.IUniform> }>
+  >(new Map());
 
   useEffect(() => {
     if (!enabled) return;
-    const wraps = new Map<THREE.Material, NprWrapResult>();
+    const builds = new Map<
+      THREE.Material,
+      { material: THREE.Material; uniforms: Record<string, THREE.IUniform> }
+    >();
+    // Per-build teardown (dispose the owned CSM/clone/masks). On the unified path
+    // this is the build's own dispose(); on the legacy path it mirrors the old
+    // CSM + ownedTextures dispose.
+    const disposers: Array<() => void> = [];
     const restore: Array<() => void> = [];
 
     scene.traverse((obj) => {
@@ -552,30 +598,46 @@ function NprMaterials({
       const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       list.forEach((mat, i) => {
         if (!mat || !isNprMaterial(mat)) return;
-        // Idempotency: a CSM stamps `__csm` on the instance it copies from, so a
-        // StrictMode double-invoke never double-wraps.
-        if ((mat as { __csm?: unknown }).__csm) return;
+        // Idempotency: legacy CSM stamps `__csm` on the base it wraps. Unified
+        // wraps an owned clone, so per-pass dedup is handled by the builds map.
+        if (!unified && (mat as { __csm?: unknown }).__csm) return;
 
-        let w = wraps.get(mat);
-        if (!w) {
-          const built = wrapMaterialWithNpr(mat, undefined, tint);
-          if (!built) return;
-          w = built;
-          wraps.set(mat, w);
+        let b = builds.get(mat);
+        if (!b) {
+          if (unified) {
+            // ONE pass: state + CSM on an owned clone; base is never mutated.
+            const built: DeadlockMaterialResult = buildDeadlockMaterial(mat, undefined, tint);
+            built.uniforms.uCelV2.value = celV2 ? 1.0 : 0.0;
+            b = { material: built.material, uniforms: built.uniforms };
+            builds.set(mat, b);
+            disposers.push(built.dispose);
+          } else {
+            const built: NprWrapResult | null = wrapMaterialWithNpr(mat, undefined, tint);
+            if (!built) return;
+            built.uniforms.uCelV2.value = celV2 ? 1.0 : 0.0;
+            b = { material: built.material, uniforms: built.uniforms };
+            builds.set(mat, b);
+            disposers.push(() => {
+              built.material.dispose();
+              built.ownedTextures.forEach((t) => t.dispose());
+            });
+          }
         }
-        const csm = w.material;
+        const next = b.material;
         if (Array.isArray(mesh.material)) {
           const arr = mesh.material;
-          arr[i] = csm;
+          arr[i] = next;
           restore.push(() => {
             arr[i] = mat;
-            unwrapNprBase(mat);
+            // Legacy path mutates the base in place (onBeforeCompile / emissive),
+            // so it must be reversed. The unified path never touched the base.
+            if (!unified) unwrapNprBase(mat);
           });
         } else {
-          mesh.material = csm;
+          mesh.material = next;
           restore.push(() => {
             mesh.material = mat;
-            unwrapNprBase(mat);
+            if (!unified) unwrapNprBase(mat);
           });
         }
       });
@@ -586,42 +648,46 @@ function NprMaterials({
       }
     });
 
-    wrapsRef.current = wraps;
+    buildsRef.current = builds;
 
     return () => {
-      // Restore originals first, then dispose only what this wrap created (the CSM
-      // wrappers and the mask clones). The parent loader effect's disposeScene then
-      // disposes the restored originals, so there is no double-free.
+      // Restore the original mesh.material references first, then dispose only what
+      // this effect created. The parent loader effect's disposeScene then disposes
+      // the restored originals, so there is no double-free.
       restore.forEach((fn) => fn());
-      wraps.forEach((w) => {
-        w.material.dispose();
-        w.ownedTextures.forEach((t) => t.dispose());
-      });
-      wraps.clear();
-      wrapsRef.current = new Map();
+      disposers.forEach((fn) => fn());
+      builds.clear();
+      buildsRef.current = new Map();
     };
     // `tint` is intentionally excluded: the separate effect below applies it by
-    // mutating uniforms, so a recolor never tears down and rebuilds the wraps.
+    // mutating uniforms, so a recolor never tears down and rebuilds the builds.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scene, enabled, outline]);
+  }, [scene, enabled, outline, unified, source2Active]);
 
   // Drive uTime for the self-illum UV scroll (viscous_head's liquid glow).
   useFrame((state) => {
     if (!enabled) return;
-    wrapsRef.current.forEach((w) => {
-      if (w.uniforms.uTime) w.uniforms.uTime.value = state.clock.elapsedTime;
+    buildsRef.current.forEach((b) => {
+      if (b.uniforms.uTime) b.uniforms.uTime.value = state.clock.elapsedTime;
     });
   });
 
   // Live tint (ability-recolor preview): mutate uniforms only, no rebuild.
   useEffect(() => {
     if (!enabled) return;
-    wrapsRef.current.forEach((w) => {
-      const u = w.uniforms.uTintColor.value as THREE.Color;
+    buildsRef.current.forEach((b) => {
+      const u = b.uniforms.uTintColor.value as THREE.Color;
       if (tint) u.copy(tint);
       else u.setRGB(1, 1, 1);
     });
   }, [tint, enabled]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    buildsRef.current.forEach((b) => {
+      if (b.uniforms.uCelV2) b.uniforms.uCelV2.value = celV2 ? 1.0 : 0.0;
+    });
+  }, [celV2, enabled]);
 
   return null;
 }
@@ -630,17 +696,23 @@ function Source2MaterialHints({
   scene,
   enabled,
   debug,
+  skipNpr,
 }: {
   scene: THREE.Object3D;
   enabled: boolean;
   debug: boolean;
+  skipNpr: boolean;
 }) {
   useEffect(() => {
     if (!enabled) return;
-    const hints = applySource2MaterialHints(scene, debug);
+    const hints = applySource2MaterialHints(
+      scene,
+      debug,
+      skipNpr ? (mat) => !isNprMaterial(mat) : undefined
+    );
     if (debug) console.info('[source2hints] summary', hints.stats);
     return () => hints.restore();
-  }, [scene, enabled, debug]);
+  }, [scene, enabled, debug, skipNpr]);
 
   return null;
 }
@@ -680,6 +752,8 @@ export default function HeroPoseViewer({
     npr: previewFlag('grimoire.preview.npr', USE_NPR_PREVIEW),
     nprOutline: previewFlag('grimoire.preview.nprOutline', USE_NPR_OUTLINE),
     source2: previewFlag('grimoire.preview.source2Shaders', USE_SOURCE2_SHADER_HINTS),
+    unified: previewFlag('grimoire.preview.unifiedMaterial', USE_UNIFIED_MATERIAL),
+    celV2: previewFlag('grimoire.preview.celV2', USE_CEL_V2),
     nprDebug: previewFlag('grimoire.preview.nprDebug', false),
   }));
   const setDevFlag = (key: keyof typeof devFlags, storageKey: string, value: boolean) => {
@@ -688,7 +762,11 @@ export default function HeroPoseViewer({
   };
   const nprPreviewEnabled = devFlags.npr;
   const nprOutlineEnabled = devFlags.nprOutline;
-  const source2ShaderHintsEnabled = devFlags.source2;
+  const unifiedEnabled = devFlags.unified;
+  const celV2Enabled = devFlags.celV2;
+  // Unified owns NPR material state; keep the old hint pass only for non-NPR
+  // morphic materials so glass/translucent/additive hints are not lost there.
+  const source2ShaderHintsEnabled = devFlags.source2 || unifiedEnabled;
   const nprDebugEnabled = devFlags.nprDebug;
   const effectPreviewEnabled = useMemo(
     () => previewFlag('grimoire.preview.effects', USE_EFFECT_PREVIEW),
@@ -912,14 +990,22 @@ export default function HeroPoseViewer({
           <PosedModel scene={scene} interaction={interaction} effect={effect} />
         )}
         {source2ShaderHintsEnabled && scene && (
-          <Source2MaterialHints scene={scene} enabled={source2ShaderHintsEnabled} debug={nprDebugEnabled} />
+          <Source2MaterialHints
+            scene={scene}
+            enabled={source2ShaderHintsEnabled}
+            debug={nprDebugEnabled}
+            skipNpr={unifiedEnabled && !trippySprite}
+          />
         )}
-        {nprPreviewEnabled && scene && (
+        {(nprPreviewEnabled || unifiedEnabled) && scene && (
           <NprMaterials
             scene={scene}
-            enabled={nprPreviewEnabled && !trippySprite}
+            enabled={(nprPreviewEnabled || unifiedEnabled) && !trippySprite}
             outline={nprOutlineEnabled}
             tint={null /* wire to a recolor color once the Locker recolor surface exists */}
+            unified={unifiedEnabled}
+            source2Active={source2ShaderHintsEnabled}
+            celV2={celV2Enabled}
           />
         )}
         {trippySprite && <TrippyPaint scene={scene} sprite={trippySprite} />}
@@ -943,6 +1029,8 @@ export default function HeroPoseViewer({
               ['source2', 'grimoire.preview.source2Shaders', 'Source2 shaders'],
               ['npr', 'grimoire.preview.npr', 'NPR cel'],
               ['nprOutline', 'grimoire.preview.nprOutline', 'NPR outline'],
+              ['unified', 'grimoire.preview.unifiedMaterial', 'Unified material'],
+              ['celV2', 'grimoire.preview.celV2', 'Cel v2'],
               ['nprDebug', 'grimoire.preview.nprDebug', 'Debug log'],
             ] as const
           ).map(([key, storageKey, label]) => (
