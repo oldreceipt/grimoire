@@ -425,6 +425,86 @@ export async function readImageDataUrl(imagePath: string): Promise<string> {
   return window.electronAPI.readImageDataUrl(imagePath);
 }
 
+export async function getLockerModImages(): Promise<Record<string, string>> {
+  return window.electronAPI.getLockerModImages();
+}
+
+export async function setLockerModImage(skinKey: string, source: string): Promise<string> {
+  return window.electronAPI.setLockerModImage(skinKey, source);
+}
+
+export async function removeLockerModImage(skinKey: string): Promise<void> {
+  return window.electronAPI.removeLockerModImage(skinKey);
+}
+
+export async function getLockerModImageFlags(): Promise<Record<string, boolean>> {
+  return window.electronAPI.getLockerModImageFlags();
+}
+
+export async function setLockerModImageHideName(skinKey: string, hide: boolean): Promise<void> {
+  return window.electronAPI.setLockerModImageHideName(skinKey, hide);
+}
+
+export async function fetchLockerImageDataUrl(url: string): Promise<string> {
+  return window.electronAPI.fetchLockerImageDataUrl(url);
+}
+
+export async function getLockerModBackgrounds(): Promise<Record<string, string>> {
+  return window.electronAPI.getLockerModBackgrounds();
+}
+
+export async function setLockerModBackground(skinKey: string, source: string): Promise<string> {
+  return window.electronAPI.setLockerModBackground(skinKey, source);
+}
+
+export async function removeLockerModBackground(skinKey: string): Promise<void> {
+  return window.electronAPI.removeLockerModBackground(skinKey);
+}
+
+export async function getLockerModBackgroundFlags(): Promise<Record<string, boolean>> {
+  return window.electronAPI.getLockerModBackgroundFlags();
+}
+
+export async function setLockerModBackgroundHideName(skinKey: string, hide: boolean): Promise<void> {
+  return window.electronAPI.setLockerModBackgroundHideName(skinKey, hide);
+}
+
+export async function getLockerModThumbnails(): Promise<Record<string, string>> {
+  return window.electronAPI.getLockerModThumbnails();
+}
+
+export async function setLockerModThumbnail(skinKey: string, source: string): Promise<string> {
+  return window.electronAPI.setLockerModThumbnail(skinKey, source);
+}
+
+export async function removeLockerModThumbnail(skinKey: string): Promise<void> {
+  return window.electronAPI.removeLockerModThumbnail(skinKey);
+}
+
+export async function getLockerModThumbnailFlags(): Promise<Record<string, boolean>> {
+  return window.electronAPI.getLockerModThumbnailFlags();
+}
+
+export async function setLockerModThumbnailHideName(skinKey: string, hide: boolean): Promise<void> {
+  return window.electronAPI.setLockerModThumbnailHideName(skinKey, hide);
+}
+
+export async function getLockerModImageEdit(
+  variant: LockerImageVariant,
+  skinKey: string
+): Promise<LockerImageEdit | null> {
+  return window.electronAPI.getLockerModImageEdit(variant, skinKey);
+}
+
+export async function setLockerModImageEdit(
+  variant: LockerImageVariant,
+  skinKey: string,
+  source: string,
+  crop: CropRect
+): Promise<void> {
+  return window.electronAPI.setLockerModImageEdit(variant, skinKey, source, crop);
+}
+
 export async function mergeMods(args: MergeModsArgs): Promise<Mod> {
   return window.electronAPI.mergeMods(args);
 }
@@ -706,7 +786,7 @@ export function conflictPairKey(a: string, b: string): string {
 // Profile wire types are single-sourced in types/electron.ts; re-exported
 // here to preserve this module's existing import surface.
 export type { Profile, ProfileMod, ProfileCrosshairSettings } from '../types/electron';
-import type { Profile, ProfileCrosshairSettings, PerformanceConfigStatus, EditorCandidate } from '../types/electron';
+import type { Profile, ProfileCrosshairSettings, PerformanceConfigStatus, EditorCandidate, LockerImageVariant, LockerImageEdit, CropRect } from '../types/electron';
 
 export async function getProfiles(): Promise<Profile[]> {
   return window.electronAPI.getProfiles();

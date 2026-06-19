@@ -52,6 +52,8 @@ import type {
     MultiVpkPickData,
     SyncProgressData,
     UpdateStatus,
+    LockerImageVariant,
+    CropRect,
 } from '../../src/types/electron';
 import type { DeadworksConnectProgress } from '../../src/types/deadworks';
 import type {
@@ -226,6 +228,40 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('read-glb-file', glbPath),
     readImageDataUrl: (imagePath: string) =>
         ipcRenderer.invoke('read-image-data-url', imagePath),
+    getLockerModImages: () => ipcRenderer.invoke('get-locker-mod-images'),
+    setLockerModImage: (skinKey: string, source: string) =>
+        ipcRenderer.invoke('set-locker-mod-image', skinKey, source),
+    removeLockerModImage: (skinKey: string) =>
+        ipcRenderer.invoke('remove-locker-mod-image', skinKey),
+    getLockerModImageFlags: () => ipcRenderer.invoke('get-locker-mod-image-flags'),
+    setLockerModImageHideName: (skinKey: string, hide: boolean) =>
+        ipcRenderer.invoke('set-locker-mod-image-hide-name', skinKey, hide),
+    fetchLockerImageDataUrl: (url: string) =>
+        ipcRenderer.invoke('fetch-locker-image-data-url', url),
+    getLockerModBackgrounds: () => ipcRenderer.invoke('get-locker-mod-backgrounds'),
+    setLockerModBackground: (skinKey: string, source: string) =>
+        ipcRenderer.invoke('set-locker-mod-background', skinKey, source),
+    removeLockerModBackground: (skinKey: string) =>
+        ipcRenderer.invoke('remove-locker-mod-background', skinKey),
+    getLockerModBackgroundFlags: () => ipcRenderer.invoke('get-locker-mod-background-flags'),
+    setLockerModBackgroundHideName: (skinKey: string, hide: boolean) =>
+        ipcRenderer.invoke('set-locker-mod-background-hide-name', skinKey, hide),
+    getLockerModThumbnails: () => ipcRenderer.invoke('get-locker-mod-thumbnails'),
+    setLockerModThumbnail: (skinKey: string, source: string) =>
+        ipcRenderer.invoke('set-locker-mod-thumbnail', skinKey, source),
+    removeLockerModThumbnail: (skinKey: string) =>
+        ipcRenderer.invoke('remove-locker-mod-thumbnail', skinKey),
+    getLockerModThumbnailFlags: () => ipcRenderer.invoke('get-locker-mod-thumbnail-flags'),
+    setLockerModThumbnailHideName: (skinKey: string, hide: boolean) =>
+        ipcRenderer.invoke('set-locker-mod-thumbnail-hide-name', skinKey, hide),
+    getLockerModImageEdit: (variant: LockerImageVariant, skinKey: string) =>
+        ipcRenderer.invoke('get-locker-mod-image-edit', variant, skinKey),
+    setLockerModImageEdit: (
+        variant: LockerImageVariant,
+        skinKey: string,
+        source: string,
+        crop: CropRect
+    ) => ipcRenderer.invoke('set-locker-mod-image-edit', variant, skinKey, source, crop),
     mergeMods: (args: MergeModsArgs) => ipcRenderer.invoke('merge-mods', args),
     unmergeMod: (mergedModId: string) => ipcRenderer.invoke('unmerge-mod', mergedModId),
     extractMergeSource: (mergedModId: string, sourceFileName: string) =>

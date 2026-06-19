@@ -201,6 +201,35 @@ interface AppState {
   // Presence can show the viewed hero. Renderer-only, never persisted.
   lockerHeroName: string | null;
 
+  // Issue #208: per-mod (per-skin) Locker view images (display override).
+  // Map is { skinKey -> data URL }, loaded lazily when the Locker opens. Keyed
+  // by getLockerSkinKey(mod). A skin without an entry falls back to its
+  // GameBanana thumbnail; a hero card falls back to the hero render.
+  lockerModImages: Record<string, string>;
+
+  // Per-skin "hide the hero name label" flags for the Locker image override.
+  // Map is { skinKey -> true } (sparse: only hidden skins are present), loaded
+  // alongside lockerModImages. Used when the art already shows the hero's name.
+  lockerHideHeroName: Record<string, boolean>;
+
+  // Issue #208: per-skin hero-detail backdrop images (framed to 16:9). Map is
+  // { skinKey -> data URL }. Independent of the card image; a skin without an
+  // entry falls back to the hero render in the focus view.
+  lockerModBackgrounds: Record<string, string>;
+
+  // Per-skin "hide the hero name logo" flags for the focus-view backdrop, the
+  // backdrop counterpart of lockerHideHeroName. Sparse { skinKey -> true }.
+  lockerBgHideHeroName: Record<string, boolean>;
+
+  // Per-skin grid thumbnail images (framed 3:4) for the main Locker hero-grid
+  // card. Map is { skinKey -> data URL }. Independent of the card image; the
+  // grid card falls back to the card image, then the hero render.
+  lockerModThumbnails: Record<string, string>;
+
+  // Per-skin "hide the hero name label" flags for the grid thumbnail, the
+  // thumbnail counterpart of lockerHideHeroName. Sparse { skinKey -> true }.
+  lockerThumbHideHeroName: Record<string, boolean>;
+
   // Actions
   loadSettings: () => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
@@ -241,6 +270,20 @@ interface AppState {
   setBrowseSession: (cache: BrowseSessionCache | null) => void;
   setInstalledScrollTop: (scrollTop: number) => void;
   setLockerHeroName: (name: string | null) => void;
+  loadLockerModImages: () => Promise<void>;
+  /** `source` is a `data:` URL (custom upload) or an `http(s)` gallery URL. */
+  setLockerModImage: (skinKey: string, source: string) => Promise<void>;
+  removeLockerModImage: (skinKey: string) => Promise<void>;
+  /** Hide (or show) the hero name label for this skin's Locker card. */
+  setLockerModImageHideName: (skinKey: string, hide: boolean) => Promise<void>;
+  setLockerModBackground: (skinKey: string, source: string) => Promise<void>;
+  removeLockerModBackground: (skinKey: string) => Promise<void>;
+  /** Hide (or show) the hero name logo over this skin's focus-view backdrop. */
+  setLockerModBackgroundHideName: (skinKey: string, hide: boolean) => Promise<void>;
+  setLockerModThumbnail: (skinKey: string, source: string) => Promise<void>;
+  removeLockerModThumbnail: (skinKey: string) => Promise<void>;
+  /** Hide (or show) the hero name label over this skin's grid thumbnail. */
+  setLockerModThumbnailHideName: (skinKey: string, hide: boolean) => Promise<void>;
 }
 
 // The main process throws this exact phrase from every "out of enabled slots"
@@ -268,6 +311,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   browseSession: null,
   installedScrollTop: 0,
   lockerHeroName: null,
+  lockerModImages: {},
+  lockerHideHeroName: {},
+  lockerModBackgrounds: {},
+  lockerBgHideHeroName: {},
+  lockerModThumbnails: {},
+  lockerThumbHideHeroName: {},
 
   // Load settings from backend
   loadSettings: async () => {
@@ -297,6 +346,108 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (err) {
       set({ settingsError: String(err), settingsLoading: false });
     }
+  },
+
+  // Issue #208: per-mod (per-skin) Locker view image overrides (display only).
+  loadLockerModImages: async () => {
+    try {
+      const [images, flags, backgrounds, bgFlags, thumbnails, thumbFlags] = await Promise.all([
+        api.getLockerModImages(),
+        api.getLockerModImageFlags(),
+        api.getLockerModBackgrounds(),
+        api.getLockerModBackgroundFlags(),
+        api.getLockerModThumbnails(),
+        api.getLockerModThumbnailFlags(),
+      ]);
+      set({
+        lockerModImages: images,
+        lockerHideHeroName: flags,
+        lockerModBackgrounds: backgrounds,
+        lockerBgHideHeroName: bgFlags,
+        lockerModThumbnails: thumbnails,
+        lockerThumbHideHeroName: thumbFlags,
+      });
+    } catch {
+      // Non-fatal: skins just fall back to their GameBanana thumbnail.
+    }
+  },
+  setLockerModImage: async (skinKey: string, source: string) => {
+    const dataUrl = await api.setLockerModImage(skinKey, source);
+    set((state) => ({
+      lockerModImages: { ...state.lockerModImages, [skinKey]: dataUrl },
+    }));
+  },
+  removeLockerModImage: async (skinKey: string) => {
+    await api.removeLockerModImage(skinKey);
+    set((state) => {
+      const next = { ...state.lockerModImages };
+      delete next[skinKey];
+      // The flag is metadata about the image; removing one clears the other.
+      const nextFlags = { ...state.lockerHideHeroName };
+      delete nextFlags[skinKey];
+      return { lockerModImages: next, lockerHideHeroName: nextFlags };
+    });
+  },
+  setLockerModImageHideName: async (skinKey: string, hide: boolean) => {
+    await api.setLockerModImageHideName(skinKey, hide);
+    set((state) => {
+      const nextFlags = { ...state.lockerHideHeroName };
+      if (hide) nextFlags[skinKey] = true;
+      else delete nextFlags[skinKey];
+      return { lockerHideHeroName: nextFlags };
+    });
+  },
+  setLockerModBackground: async (skinKey: string, source: string) => {
+    const dataUrl = await api.setLockerModBackground(skinKey, source);
+    set((state) => ({
+      lockerModBackgrounds: { ...state.lockerModBackgrounds, [skinKey]: dataUrl },
+    }));
+  },
+  removeLockerModBackground: async (skinKey: string) => {
+    await api.removeLockerModBackground(skinKey);
+    set((state) => {
+      const next = { ...state.lockerModBackgrounds };
+      delete next[skinKey];
+      // The flag is metadata about the backdrop; removing one clears the other.
+      const nextFlags = { ...state.lockerBgHideHeroName };
+      delete nextFlags[skinKey];
+      return { lockerModBackgrounds: next, lockerBgHideHeroName: nextFlags };
+    });
+  },
+  setLockerModBackgroundHideName: async (skinKey: string, hide: boolean) => {
+    await api.setLockerModBackgroundHideName(skinKey, hide);
+    set((state) => {
+      const nextFlags = { ...state.lockerBgHideHeroName };
+      if (hide) nextFlags[skinKey] = true;
+      else delete nextFlags[skinKey];
+      return { lockerBgHideHeroName: nextFlags };
+    });
+  },
+  setLockerModThumbnail: async (skinKey: string, source: string) => {
+    const dataUrl = await api.setLockerModThumbnail(skinKey, source);
+    set((state) => ({
+      lockerModThumbnails: { ...state.lockerModThumbnails, [skinKey]: dataUrl },
+    }));
+  },
+  removeLockerModThumbnail: async (skinKey: string) => {
+    await api.removeLockerModThumbnail(skinKey);
+    set((state) => {
+      const next = { ...state.lockerModThumbnails };
+      delete next[skinKey];
+      // The flag is metadata about the thumbnail; removing one clears the other.
+      const nextFlags = { ...state.lockerThumbHideHeroName };
+      delete nextFlags[skinKey];
+      return { lockerModThumbnails: next, lockerThumbHideHeroName: nextFlags };
+    });
+  },
+  setLockerModThumbnailHideName: async (skinKey: string, hide: boolean) => {
+    await api.setLockerModThumbnailHideName(skinKey, hide);
+    set((state) => {
+      const nextFlags = { ...state.lockerThumbHideHeroName };
+      if (hide) nextFlags[skinKey] = true;
+      else delete nextFlags[skinKey];
+      return { lockerThumbHideHeroName: nextFlags };
+    });
   },
 
   // Auto-detect Deadlock installation

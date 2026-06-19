@@ -425,6 +425,27 @@ export interface SaltIngestStatus {
     lastError: string | null;
 }
 
+/** Which Locker surface a per-skin image override applies to. Maps 1:1 to the
+ *  storage dirs in lockerModImages.ts (issue #208). */
+export type LockerImageVariant = 'card' | 'thumbnail' | 'background';
+
+/** A viewport-independent crop rectangle in source-image fractions (each 0..1):
+ *  sx/sy = top-left, sw/sh = width/height. Persisted alongside the original
+ *  source so the crop editor can be reopened on the exact framing. */
+export interface CropRect {
+    sx: number;
+    sy: number;
+    sw: number;
+    sh: number;
+}
+
+/** The persisted editable state for a per-skin Locker image override: the
+ *  ORIGINAL (pre-crop) source as a data URL plus the normalized crop rect. */
+export interface LockerImageEdit {
+    source: string;
+    crop: CropRect;
+}
+
 export interface ElectronAPI {
     // Host platform ('win32', 'linux', ...), captured in the preload. The
     // renderer uses it to decide whether to draw the custom Windows title
@@ -568,6 +589,54 @@ export interface ElectronAPI {
     previewSoulContainerGlb: (args: PreviewSoulContainerGlbArgs) => Promise<SoulContainerPreview>;
     readGlbFile: (glbPath: string) => Promise<string>;
     readImageDataUrl: (imagePath: string) => Promise<string>;
+    /** Issue #208: per-mod (per-skin) Locker view images (display override).
+     *  Map is { skinKey -> data URL }; `source` is a `data:` URL (custom upload)
+     *  or an `http(s)` gallery URL to download. Setter returns the new data URL. */
+    getLockerModImages: () => Promise<Record<string, string>>;
+    setLockerModImage: (skinKey: string, source: string) => Promise<string>;
+    removeLockerModImage: (skinKey: string) => Promise<void>;
+    /** Per-skin display flags for the Locker image override. Map is
+     *  { skinKey -> true } for skins whose hero name label should be hidden
+     *  (the art already shows the name). Cleared when the image is removed. */
+    getLockerModImageFlags: () => Promise<Record<string, boolean>>;
+    setLockerModImageHideName: (skinKey: string, hide: boolean) => Promise<void>;
+    /** Fetch a remote gallery image as a data URL (no storage) to seed the crop
+     *  editor; a renderer canvas can't read pixels from a cross-origin image. */
+    fetchLockerImageDataUrl: (url: string) => Promise<string>;
+    /** Issue #208: per-skin hero-detail backdrop images (framed to 16:9). Same
+     *  shape as the card images; the backdrop falls back to the card image when
+     *  a skin has no background override. */
+    getLockerModBackgrounds: () => Promise<Record<string, string>>;
+    setLockerModBackground: (skinKey: string, source: string) => Promise<string>;
+    removeLockerModBackground: (skinKey: string) => Promise<void>;
+    /** Per-skin backdrop hide-name flags (sparse { skinKey -> true }); hides the
+     *  hero name logo in the focus view when the backdrop art already shows it. */
+    getLockerModBackgroundFlags: () => Promise<Record<string, boolean>>;
+    setLockerModBackgroundHideName: (skinKey: string, hide: boolean) => Promise<void>;
+    /** Per-skin grid thumbnail images (framed 3:4) for the main Locker hero-grid
+     *  card. Independent of the skin-panel card image; the grid card falls back
+     *  to the card image, then the hero render, when a skin has no thumbnail. */
+    getLockerModThumbnails: () => Promise<Record<string, string>>;
+    setLockerModThumbnail: (skinKey: string, source: string) => Promise<string>;
+    removeLockerModThumbnail: (skinKey: string) => Promise<void>;
+    /** Per-skin grid-thumbnail hide-name flags (sparse { skinKey -> true }). */
+    getLockerModThumbnailFlags: () => Promise<Record<string, boolean>>;
+    setLockerModThumbnailHideName: (skinKey: string, hide: boolean) => Promise<void>;
+    /** Full-fidelity crop persistence (issue #208 follow-up): the ORIGINAL source
+     *  (data URL) + a viewport-independent crop rect for a surface, so reopening
+     *  the crop editor restores the exact framing and lets the user zoom out / pan
+     *  to recover area cropped outside the last baked frame. Returns null when a
+     *  skin has no stored edit (legacy overrides predate this). */
+    getLockerModImageEdit: (
+        variant: LockerImageVariant,
+        skinKey: string
+    ) => Promise<LockerImageEdit | null>;
+    setLockerModImageEdit: (
+        variant: LockerImageVariant,
+        skinKey: string,
+        source: string,
+        crop: CropRect
+    ) => Promise<void>;
     mergeMods: (args: MergeModsArgs) => Promise<Mod>;
     unmergeMod: (mergedModId: string) => Promise<UnmergeModResult>;
     extractMergeSource: (mergedModId: string, sourceFileName: string) => Promise<ExtractMergeSourceResult>;
