@@ -46,7 +46,7 @@ import type {
     GameBananaCommentsResponse,
     GameBananaArtistLink,
 } from './gamebanana';
-import type { HeroPortrait, CustomCardSlot, SoulModelInfo, HeroPoseInfo, HeroPoseSkinSource } from './portrait';
+import type { HeroPortrait, CustomCardSlot, SoulModelInfo, HeroPoseInfo, HeroPoseSkinSource, HeroEffectInfo } from './portrait';
 import type {
     DeadworksServer,
     DeadworksContentItem,
@@ -529,6 +529,12 @@ export interface ElectronAPI {
         skinSources?: HeroPoseSkinSource[],
         fallbackSkinMetaKey?: string
     ) => Promise<HeroPoseInfo>;
+    getHeroClothModel: (
+        heroName: string,
+        skinSources?: HeroPoseSkinSource[]
+    ) => Promise<unknown>;
+    getHeroEffectInfo: (heroName: string) => Promise<HeroEffectInfo>;
+    exportHeroEffect: (heroName: string) => Promise<HeroEffectInfo>;
     getPreviewCacheSize: () => Promise<{ bytes: number }>;
     clearPreviewCache: () => Promise<{ bytesFreed: number }>;
     applyHeroSound: (
