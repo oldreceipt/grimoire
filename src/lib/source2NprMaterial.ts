@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import CustomShaderMaterial, { type CSMPatchMap } from 'three-custom-shader-material/vanilla';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+// Shared blend-mode resolver (the cycle-free leaf of the source2Preview core).
+import { resolveBlendMode } from './source2Preview/blendMode';
 
 /**
  * Source 2 NPR (cel / rim / tint) restyle for the Locker hero preview.
@@ -137,6 +139,12 @@ export interface NprTuning {
    * Calibration knob: 1.0 = authored chroma, higher = punchier color.
    */
   selfIllumSat: number;
+  /** Lower edge for optional self-illum mask shaping on noisy real masks. */
+  selfIllumMaskLow: number;
+  /** Upper edge for optional self-illum mask shaping on noisy real masks. */
+  selfIllumMaskHigh: number;
+  /** Source 2 authored jitter amplitudes are normalized controls, not Three model units. */
+  jitterStrength: number;
   keyDir: THREE.Vector3;
 }
 
@@ -275,6 +283,9 @@ export const DEFAULT_NPR_TUNING: NprTuning = {
   transPower: 2.0,
   selfIllumCap: 1.5,
   selfIllumSat: 1.6,
+  selfIllumMaskLow: 0.005,
+  selfIllumMaskHigh: 0.08,
+  jitterStrength: 0.3,
   keyDir: new THREE.Vector3(3, 5, 4).normalize(),
 };
 
@@ -315,12 +326,17 @@ export function vectorColor(v: number[] | undefined, fallback: THREE.Color): THR
   return new THREE.Color(v[0] ?? fallback.r, v[1] ?? fallback.g, v[2] ?? fallback.b);
 }
 
+export function vector3(v: number[] | undefined, fallback = new THREE.Vector3(0, 0, 0)): THREE.Vector3 {
+  if (!v) return fallback.clone();
+  return new THREE.Vector3(v[0] ?? fallback.x, v[1] ?? fallback.y, v[2] ?? fallback.z);
+}
+
 export function transmissiveTint(morphic: MorphicExtras): THREE.Color {
   return vectorColor(
     morphic.vectors?.TextureNprTramsissiveColor1 ??
-      morphic.vectors?.TextureNprTransmissiveColor1 ??
-      morphic.vectors?.g_vNprTransmissiveColor1 ??
-      morphic.vectors?.g_vNprTransmissiveColor,
+    morphic.vectors?.TextureNprTransmissiveColor1 ??
+    morphic.vectors?.g_vNprTransmissiveColor1 ??
+    morphic.vectors?.g_vNprTransmissiveColor,
     new THREE.Color(1, 1, 1)
   );
 }
@@ -700,6 +716,15 @@ export function summarizeNprScene(scene: THREE.Object3D): NprSceneSummary {
  * Cheap Source 2 material hints for shader families GLTFLoader cannot represent
  * fully. This deliberately mutates only standard/physical material properties
  * and returns a restore handle so it can be gated independently from the NPR CSM.
+ *
+ * This is the FLAG-GATED richer-material pass (glass transmission, opacity
+ * scaling, alpha masks, self-illum emissive, sheen, jitter). It also sets a
+ * draw-state subset (side / transparent / blending / depthWrite) that is
+ * intertwined with that work. The authoritative ALWAYS-ON owner of the same
+ * draw-state subset -- plus the mesh-level renderOrder this cannot set -- is
+ * `src/lib/source2Preview/` (`resolveSource2DrawState`); the two produce the
+ * same values and compose (this pass and the always-on pass each operate on the
+ * GLTF base material and restore it). Keep them in sync if either changes.
  */
 export function applySource2MaterialHints(
   scene: THREE.Object3D,
@@ -770,12 +795,7 @@ export function applySource2MaterialHints(
       };
 
       const glass = isTrueGlassMaterial(morphic, mat);
-      const fallbackBlendMode = flag(morphic, 'F_ADDITIVE_BLEND')
-        ? 'additive'
-        : flag(morphic, 'F_TRANSLUCENT') || flag(morphic, 'F_ADVANCED_TRANSLUCENCY')
-          ? 'blend_zwrite'
-          : 'opaque';
-      const blendMode = morphic.blend_mode ?? fallbackBlendMode;
+      const blendMode = resolveBlendMode(morphic);
       const translucent = blendMode === 'blend_zwrite' || blendMode === 'blend';
       const additive = blendMode === 'additive';
       const alphaBlend = !glass && (translucent || additive);
@@ -956,6 +976,21 @@ export function applySource2MaterialHints(
 // to <skinning_vertex> / <morphtarget_vertex>, risking the rigged spine. Keep this
 // to varying passthrough only.
 export const NPR_VERTEX = /* glsl */ `
+uniform float uTime;
+uniform float uHasJitter;
+uniform sampler2D uJitterMap;
+uniform float uHasJitterMask;
+uniform float uJitterSpeedA;
+uniform float uJitterSpeedB;
+uniform float uJitterStrength;
+uniform vec3  uJitterFreqA;
+uniform vec3  uJitterFreqB;
+uniform vec3  uJitterAmpXA;
+uniform vec3  uJitterAmpXB;
+uniform vec3  uJitterAmpYA;
+uniform vec3  uJitterAmpYB;
+uniform vec3  uJitterAmpZA;
+uniform vec3  uJitterAmpZB;
 varying vec2 vNprUv;
 varying vec2 vNprUv2;
 varying vec3 vNprSourcePosition;
@@ -1001,9 +1036,13 @@ uniform float uHasSelfIllum;
 uniform vec2  uSelfIllumScroll;
 uniform vec3  uSelfIllumTint;
 uniform float uSelfIllumScale;
+uniform float uSelfIllumPulse;
 uniform float uSelfIllumAlbedoFactor;
 uniform float uSelfIllumCap;
 uniform float uSelfIllumSat;
+uniform float uSelfIllumMaskShaping;
+uniform float uSelfIllumMaskLow;
+uniform float uSelfIllumMaskHigh;
 uniform vec3  uAlbedoCSB;
 uniform float uHasAlbedoCSB;
 uniform sampler2D uNprTransmissiveColor;
@@ -1020,6 +1059,20 @@ uniform vec2  uDetailUvOffset;
 uniform vec2  uDetailUvScale;
 uniform float uDetailUvRotation;
 uniform float uDetailUvChannel;
+uniform float uHasJitter;
+uniform sampler2D uJitterMap;
+uniform float uHasJitterMask;
+uniform float uJitterSpeedA;
+uniform float uJitterSpeedB;
+uniform float uJitterStrength;
+uniform vec3  uJitterFreqA;
+uniform vec3  uJitterFreqB;
+uniform vec3  uJitterAmpXA;
+uniform vec3  uJitterAmpXB;
+uniform vec3  uJitterAmpYA;
+uniform vec3  uJitterAmpYB;
+uniform vec3  uJitterAmpZA;
+uniform vec3  uJitterAmpZB;
 uniform float uHasHighlight;
 uniform vec3  uHighlightTint;
 uniform float uHighlightCoverage;
@@ -1140,6 +1193,17 @@ export const NPR_PATCH_MAP: CSMPatchMap = {
       type: 'vs',
       value: /* glsl */ `
       #include <displacementmap_vertex>
+      if (uHasJitter > 0.5) {
+        float jitterMask = uHasJitterMask > 0.5 ? texture2D(uJitterMap, vNprUv).r : 1.0;
+        vec3 jitterWaveA = sin(transformed * uJitterFreqA + vec3(uTime * uJitterSpeedA * 6.2831853));
+        vec3 jitterWaveB = sin(transformed * uJitterFreqB + vec3(uTime * uJitterSpeedB * 6.2831853));
+        vec3 jitterOffset = vec3(
+          dot(jitterWaveA, uJitterAmpXA) + dot(jitterWaveB, uJitterAmpXB),
+          dot(jitterWaveA, uJitterAmpYA) + dot(jitterWaveB, uJitterAmpYB),
+          dot(jitterWaveA, uJitterAmpZA) + dot(jitterWaveB, uJitterAmpZB)
+        );
+        transformed += jitterOffset * jitterMask * uJitterStrength;
+      }
       vNprSourcePosition = transformed;
     `,
     },
@@ -1201,37 +1265,38 @@ export const NPR_PATCH_MAP: CSMPatchMap = {
           nprOut = mix(nprOut, nprOut + clamp(uHighlightTint, vec3(0.0), vec3(4.0)), highlightAmount);
         }
 
-        // Self-illum (NPR plan D5/F2): scale-first, additive glow. Color is the
-        // tint<->albedo blend per g_flSelfIllumAlbedoFactor1 (familiar eyes glow
-        // their cyan tint at factor 0; viscous_head glows its green albedo at
-        // factor 1; inferno body mixes fire albedo + tint). diffuseColor.rgb holds
-        // the per-texel BASE albedo (unlit) here - correct for emission, which is
-        // view/shadow-independent. uHasSelfIllum is now scale-driven;
-        // a placeholder mask resolves to solid white (full coverage) on the CPU
-        // side. The GLB-baked base emissive is zeroed so this is the sole glow owner.
+        // Self-illum has to be added here, after Three has built gl_FragColor.
+        // CSM's emissive hook initializes totalEmissiveRadiance before the custom
+        // fragment body runs, so mutating csm_Emissive there compiles but is too
+        // late to affect outgoingLight in MeshStandard/Physical.
         if (uHasSelfIllum > 0.5) {
           vec2 siUv = fract(vNprUv + uSelfIllumScroll * uTime);
-          float siMask = texture2D(uSelfIllumMap, siUv).r;
-          vec3 siColor = mix(uSelfIllumTint, diffuseColor.rgb, uSelfIllumAlbedoFactor);
-          // Chroma boost: a pale authored tint (familiar eyes cyan [0.27,0.88,1] is
-          // luma-heavy) ACES-washes to white even when capped, because its red channel
-          // stays high. Push saturation about the luma axis so the off-hue channel drops
-          // and it reads as its color; a neutral/white tint (luma == channels) is left as
-          // is. Clamp >= 0 since over-saturation can drive a channel negative.
+          float rawSiMask = texture2D(uSelfIllumMap, siUv).r;
+          float siMask = rawSiMask;
+          if (uSelfIllumMaskShaping > 0.5) {
+            float baseMax = max(max(csm_DiffuseColor.r, csm_DiffuseColor.g), csm_DiffuseColor.b);
+            float baseMin = min(min(csm_DiffuseColor.r, csm_DiffuseColor.g), csm_DiffuseColor.b);
+            float baseChroma = baseMax - baseMin;
+            float baseWarmth = csm_DiffuseColor.r - max(csm_DiffuseColor.g, csm_DiffuseColor.b);
+            float baseLuma = dot(csm_DiffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
+            float warmLine = smoothstep(0.0002, 0.003, baseWarmth);
+            float brightLine = smoothstep(0.006, 0.028, baseLuma) * smoothstep(0.0008, 0.006, baseChroma);
+            float detailGate = smoothstep(0.0008, 0.01, length(fwidth(csm_DiffuseColor.rgb)));
+            float headRegion = smoothstep(70.0, 78.0, vNprSourcePosition.z) *
+              (1.0 - smoothstep(8.0, 16.0, abs(vNprSourcePosition.x)));
+            float inkGate = max(warmLine, brightLine) * detailGate * (1.0 - headRegion);
+            siMask = clamp(rawSiMask * rawSiMask * 8192.0 * inkGate, 0.0, 1.0);
+          }
+          vec3 siColor = mix(uSelfIllumTint, csm_DiffuseColor.rgb, uSelfIllumAlbedoFactor);
           float siLuma = dot(siColor, vec3(0.2126, 0.7152, 0.0722));
           siColor = max(mix(vec3(siLuma), siColor, uSelfIllumSat), 0.0);
           vec3 siAdd = siColor * (siMask * uSelfIllumScale);
           if (uHasDetail > 0.5 && uDetailBlendMode > 0.5 && uDetailBlendMode < 1.5) {
             siAdd += nprDetail * (uDetailBlendFactor * siMask * uSelfIllumScale);
           }
-          // Hue-preserving cap: a high authored self-illum scale (familiar eyes cyan
-          // at 2.6, inferno at 10) pushes a saturated tint into HDR where the
-          // downstream ACES tonemap desaturates it to white (the in-game glow leans on
-          // HDR + bloom the preview lacks). Scale the whole additive down by its peak
-          // channel so the tint HUE survives the tonemap - trades unreachable HDR
-          // brightness for a readable color. Subtler glows (peak <= cap) are untouched.
           float siPeak = max(max(siAdd.r, siAdd.g), siAdd.b);
           if (siPeak > uSelfIllumCap) siAdd *= uSelfIllumCap / siPeak;
+          siAdd *= uSelfIllumPulse;
           nprOut += siAdd;
         }
 
@@ -1297,6 +1362,14 @@ export function wrapMaterialWithNpr(
     detailMap.wrapT = THREE.RepeatWrapping;
     detailMap.needsUpdate = true;
   }
+  const legacyJitterMask = morphic.resolvedTextures?.g_tJitterMask;
+  const jitterMap = isMeaningfulMask(legacyJitterMask) ? legacyJitterMask.clone() : null;
+  if (jitterMap) {
+    jitterMap.wrapS = THREE.RepeatWrapping;
+    jitterMap.wrapT = THREE.RepeatWrapping;
+    jitterMap.needsUpdate = true;
+  }
+  const hasJitter = flag(morphic, 'F_JITTER_VERTICES');
 
   // The GLB exporter bakes viscous_head's emissive (texture + green factor) into the
   // base; the lit pass would emit it before our patch runs -> double-green. When the
@@ -1332,11 +1405,15 @@ export function wrapMaterialWithNpr(
     uSelfIllumScroll: { value: new THREE.Vector2(siScroll?.[0] ?? 0, siScroll?.[1] ?? 0) },
     uSelfIllumTint: { value: siTint },
     uSelfIllumScale: { value: siScale },
+    uSelfIllumPulse: { value: 1.0 },
     // Parity with the unified path: the shared GLSL references these uniforms, so
     // the legacy wrap must declare them too or the material fails to compile.
     uSelfIllumAlbedoFactor: { value: firstNumber(morphic, ['g_flSelfIllumAlbedoFactor1'], 0) },
     uSelfIllumCap: { value: tuning.selfIllumCap },
     uSelfIllumSat: { value: tuning.selfIllumSat },
+    uSelfIllumMaskShaping: { value: 0.0 },
+    uSelfIllumMaskLow: { value: tuning.selfIllumMaskLow },
+    uSelfIllumMaskHigh: { value: tuning.selfIllumMaskHigh },
     uAlbedoCSB: { value: albedoCsb(morphic).vec },
     uHasAlbedoCSB: { value: albedoCsb(morphic).has },
     uNprTransmissiveColor: { value: transmissiveMap ?? whiteFallback() },
@@ -1353,6 +1430,20 @@ export function wrapMaterialWithNpr(
     uDetailUvScale: { value: detail.uvScale },
     uDetailUvRotation: { value: detail.uvRotation },
     uDetailUvChannel: { value: detail.uvChannel },
+    uHasJitter: { value: hasJitter ? 1.0 : 0.0 },
+    uJitterMap: { value: jitterMap ?? whiteFallback() },
+    uHasJitterMask: { value: jitterMap ? 1.0 : 0.0 },
+    uJitterSpeedA: { value: firstNumber(morphic, ['g_flJitterSpeedA1', 'g_flJitterSpeedA'], 0) },
+    uJitterSpeedB: { value: firstNumber(morphic, ['g_flJitterSpeedB1', 'g_flJitterSpeedB'], 0) },
+    uJitterStrength: { value: tuning.jitterStrength },
+    uJitterFreqA: { value: vector3(morphic.vectors?.g_vJitterFrequenciesA1 ?? morphic.vectors?.g_vJitterFrequenciesA) },
+    uJitterFreqB: { value: vector3(morphic.vectors?.g_vJitterFrequenciesB1 ?? morphic.vectors?.g_vJitterFrequenciesB) },
+    uJitterAmpXA: { value: vector3(morphic.vectors?.g_vJitterAmplitudesXA1 ?? morphic.vectors?.g_vJitterAmplitudesXA) },
+    uJitterAmpXB: { value: vector3(morphic.vectors?.g_vJitterAmplitudesXB1 ?? morphic.vectors?.g_vJitterAmplitudesXB) },
+    uJitterAmpYA: { value: vector3(morphic.vectors?.g_vJitterAmplitudesYA1 ?? morphic.vectors?.g_vJitterAmplitudesYA) },
+    uJitterAmpYB: { value: vector3(morphic.vectors?.g_vJitterAmplitudesYB1 ?? morphic.vectors?.g_vJitterAmplitudesYB) },
+    uJitterAmpZA: { value: vector3(morphic.vectors?.g_vJitterAmplitudesZA1 ?? morphic.vectors?.g_vJitterAmplitudesZA) },
+    uJitterAmpZB: { value: vector3(morphic.vectors?.g_vJitterAmplitudesZB1 ?? morphic.vectors?.g_vJitterAmplitudesZB) },
     uHasHighlight: { value: 0.0 },
     uHighlightTint: { value: new THREE.Color(0, 0, 0) },
     uHighlightCoverage: { value: 0.0 },
@@ -1377,6 +1468,7 @@ export function wrapMaterialWithNpr(
   const ownedTextures = tintMask ? [tintMask] : [];
   if (transmissiveMap) ownedTextures.push(transmissiveMap);
   if (detailMap) ownedTextures.push(detailMap);
+  if (jitterMap) ownedTextures.push(jitterMap);
   return { material: csm as unknown as THREE.Material, uniforms, ownedTextures };
 }
 
@@ -1399,122 +1491,10 @@ export function unwrapNprBase(mat: THREE.Material): void {
     delete m.__nprPrevEmissiveIntensity;
   }
   if (!m.__csm) return;
-  mat.onBeforeCompile = m.__csm.prevOnBeforeCompile ?? (() => {});
+  mat.onBeforeCompile = m.__csm.prevOnBeforeCompile ?? (() => { });
   delete m.__csm;
   // CSM set customProgramCacheKey as an own property; drop it to fall back to the
   // prototype default (it is non-optional on Material, hence the record cast).
   delete (mat as unknown as Record<string, unknown>).customProgramCacheKey;
   mat.needsUpdate = true;
-}
-
-export interface NprOutlineParams {
-  /** True when the mesh is outline-eligible (real outline tint present, not disabled). */
-  enabled: boolean;
-  /** Why disabled: '' when enabled, else the gate that closed it. */
-  reason: '' | 'no-outline-tint' | 'disabled-flag';
-  /** Shell color: g_vSolidOutlineTint + g_vSolidOutlineAdditive. */
-  tint: THREE.Color;
-  /** Inverted-hull push distance in object space, clamped to OUTLINE_*_THICKNESS. */
-  thickness: number;
-}
-
-// Inverted-hull thickness bounds (object space). The default matches the small
-// shell the in-game outline reads as; the max keeps a pathological authored value
-// (e.g. one in engine units) from inflating into a giant shell that detaches from
-// the body. We deliberately do NOT convert engine units (that would be guessing a
-// Source 2 constant); we only bound the value to a visually safe range.
-export const OUTLINE_DEFAULT_THICKNESS = 0.02;
-export const OUTLINE_MIN_THICKNESS = 0.002;
-export const OUTLINE_MAX_THICKNESS = 0.05;
-
-/**
- * Pure outline eligibility + parameters from a material's morphic extras (F8).
- * Split out of buildOutlineShell so eligibility / tint / thickness are testable
- * without constructing a real mesh + skeleton. Eligibility keys on the PRESENCE of
- * g_vSolidOutlineTint (the real outline data confirmed in vpkmerge fixtures);
- * F_DISABLE_NPR_OUTLINE opts out. Thickness is clamped (see OUTLINE_*_THICKNESS).
- */
-export function outlineParams(morphic: MorphicExtras): NprOutlineParams {
-  const tintVec = morphic.vectors?.g_vSolidOutlineTint;
-  if (!tintVec) {
-    return {
-      enabled: false,
-      reason: 'no-outline-tint',
-      tint: new THREE.Color(0, 0, 0),
-      thickness: OUTLINE_DEFAULT_THICKNESS,
-    };
-  }
-  const addVec = morphic.vectors?.g_vSolidOutlineAdditive;
-  const tint = new THREE.Color(
-    (tintVec[0] ?? 0) + (addVec?.[0] ?? 0),
-    (tintVec[1] ?? 0) + (addVec?.[1] ?? 0),
-    (tintVec[2] ?? 0) + (addVec?.[2] ?? 0)
-  );
-  if (scalar(morphic.ints?.F_DISABLE_NPR_OUTLINE, 0) === 1) {
-    return { enabled: false, reason: 'disabled-flag', tint, thickness: OUTLINE_DEFAULT_THICKNESS };
-  }
-  const raw =
-    scalar(morphic.floats?.g_flOverrideNprOutlineThickness, OUTLINE_DEFAULT_THICKNESS) ||
-    OUTLINE_DEFAULT_THICKNESS;
-  const thickness = Math.min(Math.max(raw, OUTLINE_MIN_THICKNESS), OUTLINE_MAX_THICKNESS);
-  return { enabled: true, reason: '', tint, thickness };
-}
-
-/**
- * Build the inverted-hull solid-color outline shell for a mesh, or null when the
- * mesh is not outline-eligible. Faithful to Source 2's method (vpkmerge strips
- * the engine shells from the export, so they are regenerated here). The shell is
- * added as a child of `mesh` so it inherits the mesh transform; for a SkinnedMesh
- * it binds the SAME skeleton + bindMatrix so it deforms with the body. Returns a
- * teardown that removes the shell and disposes ONLY the outline material
- * (geometry + skeleton are shared with the real mesh).
- *
- * Gated behind USE_NPR_OUTLINE in the viewer (default off): the skinned-shell
- * binding is the highest-risk piece, so it ships independently of ramp/rim/tint.
- * Eligibility keys on the PRESENCE of g_vSolidOutlineTint (the real outline data
- * confirmed in vpkmerge fixtures); F_DISABLE_NPR_OUTLINE, when present, opts out.
- */
-export function buildOutlineShell(mesh: THREE.Mesh): (() => void) | null {
-  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-  const base = mats[0];
-  const morphic = base ? getMorphic(base) : undefined;
-  if (!morphic) return null;
-  const params = outlineParams(morphic);
-  if (!params.enabled) return null;
-
-  const outlineMat = new CustomShaderMaterial({
-    baseMaterial: new THREE.MeshBasicMaterial({ side: THREE.BackSide }),
-    vertexShader: /* glsl */ `
-      uniform float uThickness;
-      void main() { csm_Position = position + normal * uThickness; }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uOutlineTint;
-      void main() { csm_FragColor = vec4(uOutlineTint, 1.0); }
-    `,
-    uniforms: {
-      uThickness: { value: params.thickness },
-      uOutlineTint: { value: params.tint },
-    },
-  });
-
-  const skinned = mesh as THREE.SkinnedMesh;
-  let shell: THREE.Mesh;
-  if (skinned.isSkinnedMesh) {
-    const s = new THREE.SkinnedMesh(mesh.geometry, outlineMat as unknown as THREE.Material);
-    // Same skeleton + bindMatrix so the shell deforms with the body. The hull is
-    // expanded in object space before skinning, so it follows the bones.
-    s.bind(skinned.skeleton, skinned.bindMatrix);
-    shell = s;
-  } else {
-    shell = new THREE.Mesh(mesh.geometry, outlineMat as unknown as THREE.Material);
-  }
-  shell.frustumCulled = false;
-  mesh.add(shell);
-
-  return () => {
-    mesh.remove(shell);
-    // Geometry + skeleton are SHARED with the real mesh; dispose only the material.
-    outlineMat.dispose();
-  };
 }

@@ -11,6 +11,7 @@ import {
   flag,
   firstNumber,
   vectorColor,
+  vector3,
   transmissiveTint,
   isMeaningfulMask,
   isTrueGlassMaterial,
@@ -25,8 +26,8 @@ import {
   highlightLayer,
 } from './source2NprMaterial';
 import { compileScalarExpr, peakScalar } from './dynamicScalar';
-
-type Source2BlendMode = NonNullable<MorphicExtras['blend_mode']>;
+// Shared blend-mode resolver (the cycle-free leaf of the source2Preview core).
+import { resolveBlendMode } from './source2Preview/blendMode';
 
 /**
  * Unified Deadlock NPR material builder (the Phase 0/1 single build pass).
@@ -90,9 +91,9 @@ export interface DeadlockMaterialResult {
   /**
    * When self-illum scale is a Tier-1 dynamic expression (e.g. inferno body's
    * 0.5*sin(3*time())+0.5), the compiled per-frame fn the ticker calls each frame
-   * to drive uSelfIllumScale. Null for a static scale.
+   * to drive uSelfIllumPulse. Null for a static scale.
    */
-  selfIllumScaleFn: ((t: number) => number) | null;
+  selfIllumPulseFn: ((t: number) => number) | null;
 }
 
 /**
@@ -109,14 +110,6 @@ function needsPhysical(morphic: MorphicExtras, base: THREE.Material): boolean {
     return true;
   }
   return false;
-}
-
-function fallbackBlendMode(morphic: MorphicExtras): Source2BlendMode {
-  if (flag(morphic, 'F_ADDITIVE_BLEND')) return 'additive';
-  if (flag(morphic, 'F_TRANSLUCENT') || flag(morphic, 'F_ADVANCED_TRANSLUCENCY')) {
-    return 'blend_zwrite';
-  }
-  return 'opaque';
 }
 
 // Above this a self-illum scale counts as "on" for a material with a REAL
@@ -150,19 +143,17 @@ const F6_HIGHLIGHT_ENABLED = false;
 /**
  * Resolve a material's self-illum scale into { value at t=0, peak, fn }.
  *
- * A dynamic g_flSelfIllumScale1 (inferno body pulses 0.5*sin(3*time())+0.5) is the
- * literal in-game scale, but at that magnitude (peaks ~1) the additive glow is too
- * dim to READ in the no-bloom preview: inferno's tattoos vanished under the unified
- * path while the legacy path - which just used the static fallback (10) - showed them
- * clearly. So anchor the glow BRIGHTNESS to the static fallback (legacy-matching) and
- * use the pulse only as a 0..1 animation envelope; the selfIllumCap then tames the
- * static "full blast" both paths share. An un-parseable / attribute-driven expr falls
- * back to the static value (NOT 0) so the glow still shows rather than gating off.
+ * A dynamic g_flSelfIllumScale1 (inferno body uses 20*sin(10*time())+22) is the
+ * authored animation envelope. The no-bloom preview keeps the static fallback as
+ * brightness and uses the dynamic value only as a normalized pulse; driving the
+ * full peak through a post-light additive pass washes the skin instead of matching
+ * the localized in-game tattoo glow.
  */
 function selfIllumScale(morphic: MorphicExtras): {
   value: number;
   peak: number;
-  fn: ((t: number) => number) | null;
+  pulseValue: number;
+  pulseFn: ((t: number) => number) | null;
 } {
   const staticScale = firstNumber(morphic, ['g_flSelfIllumScale1', 'g_flSelfIllumScale'], 0);
   const dyn = morphic.dynamic_params?.g_flSelfIllumScale1;
@@ -171,15 +162,14 @@ function selfIllumScale(morphic: MorphicExtras): {
       const pulse = compileScalarExpr(dyn.source);
       if (pulse) {
         const pk = peakScalar(pulse) || 1;
-        const base = staticScale > 0 ? staticScale : pk;
-        // pulse(t)/pk is a 0..1 envelope; `base` sets the legacy-matching brightness.
-        const fn = (t: number) => (base * pulse(t)) / pk;
-        return { value: fn(0), peak: base, fn };
+        const value = staticScale > 0 ? staticScale : pk;
+        const pulseFn = (t: number) => Math.max(0, pulse(t)) / pk;
+        return { value, peak: value, pulseValue: pulseFn(0), pulseFn };
       }
     }
-    return { value: staticScale, peak: staticScale, fn: null };
+    return { value: staticScale, peak: staticScale, pulseValue: 1, pulseFn: null };
   }
-  return { value: staticScale, peak: staticScale, fn: null };
+  return { value: staticScale, peak: staticScale, pulseValue: 1, pulseFn: null };
 }
 
 /**
@@ -263,7 +253,7 @@ export function buildDeadlockMaterial(
 
   // --- Material-state flags (ported from applySource2MaterialHints). --------
   const glass = isTrueGlassMaterial(morphic, base);
-  const blendMode = morphic.blend_mode ?? fallbackBlendMode(morphic);
+  const blendMode = resolveBlendMode(morphic);
   const alphaBlend = !glass && (blendMode === 'blend_zwrite' || blendMode === 'blend' || blendMode === 'additive');
   const additive = blendMode === 'additive';
   const unlit = flag(morphic, 'F_UNLIT');
@@ -345,7 +335,8 @@ export function buildDeadlockMaterial(
   // self_illum_valid is the exporter's ">4x4 real mask" call (mirrors the legacy
   // hints path, which the unified builder previously forgot to honor).
   const hasRealSelfIllumMask = morphic.self_illum_valid ?? isMeaningfulMask(selfIllumMap);
-  const hasSelfIllum = si.peak > (hasRealSelfIllumMask ? SI_SCALE_EPS : PLACEHOLDER_SI_SCALE);
+  const placeholderSelfIllumThreshold = additive ? SI_SCALE_EPS : PLACEHOLDER_SI_SCALE;
+  const hasSelfIllum = si.peak > (hasRealSelfIllumMask ? SI_SCALE_EPS : placeholderSelfIllumThreshold);
   if (unlit && clone.emissive) {
     clone.emissive.copy(clone.color ?? new THREE.Color(1, 1, 1));
     clone.emissiveIntensity = Math.max(clone.emissiveIntensity ?? 1, 1.2);
@@ -408,18 +399,22 @@ export function buildDeadlockMaterial(
     transmissiveMap.needsUpdate = true;
   }
 
-  // A meaningful mask localizes + scrolls the glow; a placeholder (4x4) mask means
-  // "illuminate everywhere", so leave illumMap null and let the uniform fall back
-  // to solid white (full coverage) - the fix for familiar eyes / inferno body
-  // whose glow is not mask-localized.
+  // A real self-illum mask localizes + scrolls the glow; a genuine placeholder
+  // (4x4) mask means "illuminate everywhere", so leave illumMap null and let the
+  // uniform fall back to solid white (full coverage), e.g. familiar eyes. Bind the
+  // mask whenever the exporter flagged it real (self_illum_valid, folded into
+  // hasRealSelfIllumMask) and it resolved, NOT only when isMeaningfulMask passes:
+  // Infernus's body mask IS the tattoo pattern, so it must localize to the tattoos
+  // rather than glow the whole skin (incl. the face).
   let illumMap: THREE.Texture | null = null;
-  if (hasSelfIllum && isMeaningfulMask(selfIllumMap)) {
+  if (hasSelfIllum && selfIllumMap && hasRealSelfIllumMask) {
     // Scroll wraps via fract(), so the sampler must repeat or the seam smears.
     illumMap = ownClone(selfIllumMap);
     illumMap.wrapS = THREE.RepeatWrapping;
     illumMap.wrapT = THREE.RepeatWrapping;
     illumMap.needsUpdate = true;
   }
+  const shapeSelfIllumMask = !!illumMap && !!si.pulseFn;
   const siScroll =
     morphic.vectors?.g_vSelfIllumScrollSpeed1 ?? morphic.vectors?.g_vSelfIllumScrollSpeed;
   // Default tint WHITE: a scale-driven glow with albedoFactor 0 and no authored
@@ -432,7 +427,17 @@ export function buildDeadlockMaterial(
   );
   // Blend tint<->albedo per g_flSelfIllumAlbedoFactor1 (0 = tint, 1 = surface
   // albedo). The albedo side is sampled GPU-side from diffuseColor.
-  const siAlbedoFactor = firstNumber(morphic, ['g_flSelfIllumAlbedoFactor1'], 0);
+  //
+  // Additive self-illum overlays (e.g. inferno_armglow / inferno_headglow) carry
+  // their glow in the BASE COLOR (inferno_glow, a gradient on black) and bind only
+  // a flat 4x4 placeholder self-illum mask. With the default factor 0 the glow is a
+  // solid white tint gated by a white mask, so the whole overlay mesh floods - it
+  // buries the crisp tattoos the opaque body draws from its own real emissive mask.
+  // Default these to albedo: the gradient's black regions then add nothing under
+  // additive blend, so the overlay only brightens where its texture is lit, matching
+  // the in-game additive pass. An explicitly authored factor still wins.
+  const siAlbedoFactorDefault = additive && !hasRealSelfIllumMask ? 1 : 0;
+  const siAlbedoFactor = firstNumber(morphic, ['g_flSelfIllumAlbedoFactor1'], siAlbedoFactorDefault);
   const csb = albedoCsb(morphic);
   const detail = detailLayer(morphic);
   const highlight = F6_HIGHLIGHT_ENABLED && isNpr ? highlightLayer(morphic) : null;
@@ -443,6 +448,13 @@ export function buildDeadlockMaterial(
     detailMap.wrapT = THREE.RepeatWrapping;
     detailMap.needsUpdate = true;
   }
+  const jitterMap = jitterMask && isMeaningfulMask(jitterMask) ? ownClone(jitterMask) : null;
+  if (jitterMap) {
+    jitterMap.wrapS = THREE.RepeatWrapping;
+    jitterMap.wrapT = THREE.RepeatWrapping;
+    jitterMap.needsUpdate = true;
+  }
+  const hasJitter = flag(morphic, 'F_JITTER_VERTICES');
 
   const uniforms: Record<string, THREE.IUniform> = {
     uKeyDir: { value: tuning.keyDir.clone() },
@@ -467,9 +479,13 @@ export function buildDeadlockMaterial(
     uSelfIllumScroll: { value: new THREE.Vector2(siScroll?.[0] ?? 0, siScroll?.[1] ?? 0) },
     uSelfIllumTint: { value: siTint },
     uSelfIllumScale: { value: si.value },
+    uSelfIllumPulse: { value: si.pulseValue },
     uSelfIllumAlbedoFactor: { value: siAlbedoFactor },
     uSelfIllumCap: { value: tuning.selfIllumCap },
     uSelfIllumSat: { value: tuning.selfIllumSat },
+    uSelfIllumMaskShaping: { value: shapeSelfIllumMask ? 1.0 : 0.0 },
+    uSelfIllumMaskLow: { value: tuning.selfIllumMaskLow },
+    uSelfIllumMaskHigh: { value: tuning.selfIllumMaskHigh },
     uAlbedoCSB: { value: csb.vec },
     uHasAlbedoCSB: { value: csb.has },
     uNprTransmissiveColor: { value: transmissiveMap ?? whiteFallback() },
@@ -486,6 +502,20 @@ export function buildDeadlockMaterial(
     uDetailUvScale: { value: detail.uvScale },
     uDetailUvRotation: { value: detail.uvRotation },
     uDetailUvChannel: { value: detail.uvChannel },
+    uHasJitter: { value: hasJitter ? 1.0 : 0.0 },
+    uJitterMap: { value: jitterMap ?? whiteFallback() },
+    uHasJitterMask: { value: jitterMap ? 1.0 : 0.0 },
+    uJitterSpeedA: { value: firstNumber(morphic, ['g_flJitterSpeedA1', 'g_flJitterSpeedA'], 0) },
+    uJitterSpeedB: { value: firstNumber(morphic, ['g_flJitterSpeedB1', 'g_flJitterSpeedB'], 0) },
+    uJitterStrength: { value: tuning.jitterStrength },
+    uJitterFreqA: { value: vector3(morphic.vectors?.g_vJitterFrequenciesA1 ?? morphic.vectors?.g_vJitterFrequenciesA) },
+    uJitterFreqB: { value: vector3(morphic.vectors?.g_vJitterFrequenciesB1 ?? morphic.vectors?.g_vJitterFrequenciesB) },
+    uJitterAmpXA: { value: vector3(morphic.vectors?.g_vJitterAmplitudesXA1 ?? morphic.vectors?.g_vJitterAmplitudesXA) },
+    uJitterAmpXB: { value: vector3(morphic.vectors?.g_vJitterAmplitudesXB1 ?? morphic.vectors?.g_vJitterAmplitudesXB) },
+    uJitterAmpYA: { value: vector3(morphic.vectors?.g_vJitterAmplitudesYA1 ?? morphic.vectors?.g_vJitterAmplitudesYA) },
+    uJitterAmpYB: { value: vector3(morphic.vectors?.g_vJitterAmplitudesYB1 ?? morphic.vectors?.g_vJitterAmplitudesYB) },
+    uJitterAmpZA: { value: vector3(morphic.vectors?.g_vJitterAmplitudesZA1 ?? morphic.vectors?.g_vJitterAmplitudesZA) },
+    uJitterAmpZB: { value: vector3(morphic.vectors?.g_vJitterAmplitudesZB1 ?? morphic.vectors?.g_vJitterAmplitudesZB) },
     uHasHighlight: { value: highlight?.has ?? 0.0 },
     uHighlightTint: { value: highlight?.tint ?? new THREE.Color(0, 0, 0) },
     uHighlightCoverage: { value: highlight?.coverage ?? 0.0 },
@@ -519,6 +549,6 @@ export function buildDeadlockMaterial(
     uniforms,
     ownedTextures,
     dispose,
-    selfIllumScaleFn: si.fn,
+    selfIllumPulseFn: si.pulseFn,
   };
 }

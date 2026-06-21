@@ -4,9 +4,6 @@
 const USE_RIGGED_PREVIEW: boolean = false;
 
 export interface HeroPoseDevFlags {
-  npr: boolean;
-  nprOutline: boolean;
-  source2: boolean;
   unified: boolean;
   celV2: boolean;
   cloth: boolean;
@@ -16,8 +13,6 @@ export interface HeroPoseDevFlags {
 }
 
 export interface HeroPoseRenderFeatures {
-  nprPreviewEnabled: boolean;
-  nprOutlineEnabled: boolean;
   unifiedEnabled: boolean;
   celV2Enabled: boolean;
   clothPreviewEnabled: boolean;
@@ -29,25 +24,28 @@ export interface HeroPoseRenderFeatures {
   nprMaterialsEnabled: boolean;
 }
 
+// `unified` is the single material-styling driver: it builds each material via
+// buildDeadlockMaterial (Source 2 hints + NPR cel/rim/tint collapsed into one
+// pass). The standalone Source 2 / NPR toggles were removed; both renderers now
+// mount iff unified is on. Turn unified off to compare against the raw GLB.
 export function resolveHeroPoseRenderFeatures(
   flags: HeroPoseDevFlags,
   trippySpriteActive: boolean
 ): HeroPoseRenderFeatures {
   const clothPreviewEnabled = flags.cloth;
   const unifiedEnabled = flags.unified;
-  const source2ShaderHintsEnabled = flags.source2 || unifiedEnabled;
 
   return {
-    nprPreviewEnabled: flags.npr,
-    nprOutlineEnabled: flags.nprOutline,
     unifiedEnabled,
     celV2Enabled: flags.celV2,
     clothPreviewEnabled,
     bloomEnabled: flags.bloom,
     riggedPreviewEnabled: USE_RIGGED_PREVIEW || clothPreviewEnabled,
-    source2ShaderHintsEnabled,
+    source2ShaderHintsEnabled: unifiedEnabled,
     nprDebugEnabled: flags.nprDebug,
     source2SkipNpr: unifiedEnabled && !trippySpriteActive,
-    nprMaterialsEnabled: (flags.npr || unifiedEnabled) && !trippySpriteActive,
+    // Trippy/tattoo paint replaces the material maps, but unified still owns the
+    // Source 2 shader path: self-illum masks, CelV2, and pulse uniforms live there.
+    nprMaterialsEnabled: unifiedEnabled,
   };
 }

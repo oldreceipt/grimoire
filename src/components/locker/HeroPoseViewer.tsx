@@ -37,7 +37,6 @@ import {
   isNprMaterial,
   isSelfIllumMaterial,
   wrapMaterialWithNpr,
-  buildOutlineShell,
   unwrapNprBase,
   summarizeNprScene,
   applySource2MaterialHints,
@@ -48,6 +47,7 @@ import {
   type MorphicDynamicExpr,
 } from '../../lib/source2NprMaterial';
 import { buildDeadlockMaterial, type DeadlockMaterialResult } from '../../lib/deadlockMaterial';
+import { compileSource2DrawState, summarizeSource2Scene } from '../../lib/source2Preview';
 import { resolveHeroPoseRenderFeatures } from './heroPoseRenderFeatures';
 import type { HeroPoseSkinSource } from '../../types/portrait';
 import type { TrippySpriteResult } from '../../types/mod';
@@ -85,16 +85,6 @@ const IBL_FACES = [
 
 const USE_CLOTH: boolean = false;
 
-// Source 2 NPR cel/rim/tint restyle layered on top of the PMREM IBL + ACES
-// tonemap output (not a replacement pass). Gated per-material on userData.morphic
-// + F_USE_NPR_LIGHTING, so heroes/materials without that data keep their base path.
-const USE_NPR_PREVIEW: boolean = false;
-
-// Inverted-hull solid-color outline (Source 2's method; vpkmerge strips the
-// engine shells from the export, so we regenerate them). Honors per-material
-// outline data.
-const USE_NPR_OUTLINE: boolean = false;
-
 // Bloom postprocessing gives self-illum glows their bright-core + colored-halo look.
 const USE_BLOOM: boolean = true;
 // UnrealBloomPass starting params. Threshold is in LINEAR space, so it mainly catches
@@ -104,12 +94,10 @@ const BLOOM_INTENSITY = 1;
 const BLOOM_RADIUS = 0.5;
 const BLOOM_THRESHOLD = 0.85;
 
-// Broader Source 2 material approximations for shader-heavy heroes.
-const USE_SOURCE2_SHADER_HINTS: boolean = false;
-
-// Unified single build pass (deadlockMaterial.buildDeadlockMaterial): collapses
-// the Source2 hints + NPR CSM two-pass into one pass on an owned clone of each
-// material, so the GLTF base is never mutated.
+// Unified single build pass (deadlockMaterial.buildDeadlockMaterial): the one
+// material-styling path. Collapses the Source 2 hints + NPR cel/rim/tint into one
+// pass on an owned clone of each material, so the GLTF base is never mutated. Off
+// shows the raw GLB.
 const USE_UNIFIED_MATERIAL: boolean = true;
 
 // Phase 5 shader experiment: quantize accumulated direct diffuse at
@@ -120,9 +108,6 @@ const USE_CEL_V2: boolean = true;
 const USE_EFFECT_PREVIEW: boolean = false;
 
 const RELEASE_RENDER_FLAGS = {
-  npr: USE_NPR_PREVIEW,
-  nprOutline: USE_NPR_OUTLINE,
-  source2: USE_SOURCE2_SHADER_HINTS,
   unified: USE_UNIFIED_MATERIAL,
   celV2: USE_CEL_V2,
   cloth: USE_CLOTH,
@@ -143,8 +128,8 @@ type BloomParams = {
 
 const COMPACT_LEVA_THEME = {
   sizes: {
-    rootWidth: '248px',
-    controlWidth: '104px',
+    rootWidth: '300px',
+    controlWidth: '150px',
     rowHeight: '22px',
     folderTitleHeight: '22px',
     checkboxSize: '14px',
@@ -648,7 +633,6 @@ function TrippyPaint({
 function NprMaterials({
   scene,
   enabled,
-  outline,
   tint,
   unified,
   source2Active,
@@ -656,7 +640,6 @@ function NprMaterials({
 }: {
   scene: THREE.Object3D;
   enabled: boolean;
-  outline: boolean;
   tint: THREE.Color | null;
   /** When true, build each material via the unified single pass
    *  (buildDeadlockMaterial) instead of the old applySource2MaterialHints +
@@ -675,7 +658,7 @@ function NprMaterials({
       {
         material: THREE.Material;
         uniforms: Record<string, THREE.IUniform>;
-        selfIllumScaleFn?: ((t: number) => number) | null;
+        selfIllumPulseFn?: ((t: number) => number) | null;
       }
     >
   >(new Map());
@@ -687,7 +670,7 @@ function NprMaterials({
       {
         material: THREE.Material;
         uniforms: Record<string, THREE.IUniform>;
-        selfIllumScaleFn?: ((t: number) => number) | null;
+        selfIllumPulseFn?: ((t: number) => number) | null;
       }
     >();
     // Per-build teardown (dispose the owned CSM/clone/masks). On the unified path
@@ -720,7 +703,7 @@ function NprMaterials({
             b = {
               material: built.material,
               uniforms: built.uniforms,
-              selfIllumScaleFn: built.selfIllumScaleFn,
+              selfIllumPulseFn: built.selfIllumPulseFn,
             };
             builds.set(mat, b);
             disposers.push(built.dispose);
@@ -754,11 +737,6 @@ function NprMaterials({
           });
         }
       });
-
-      if (outline) {
-        const dispose = buildOutlineShell(mesh);
-        if (dispose) restore.push(dispose);
-      }
     });
 
     buildsRef.current = builds;
@@ -775,7 +753,7 @@ function NprMaterials({
     // `tint` is intentionally excluded: the separate effect below applies it by
     // mutating uniforms, so a recolor never tears down and rebuilds the builds.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scene, enabled, outline, unified, source2Active]);
+  }, [scene, enabled, unified, source2Active]);
 
   // Drive uTime for the self-illum UV scroll (viscous_head's liquid glow).
   useFrame((state) => {
@@ -783,13 +761,13 @@ function NprMaterials({
     const t = state.clock.elapsedTime;
     buildsRef.current.forEach((b) => {
       if (b.uniforms.uTime) b.uniforms.uTime.value = t;
-      // Drive a dynamic self-illum scale (inferno body's 0.5*sin(3*time())+0.5);
-      // static scales have no fn and keep their build-time uniform value.
-      if (b.selfIllumScaleFn && b.uniforms.uSelfIllumScale) {
-        const s = b.selfIllumScaleFn(t);
+      // Drive a dynamic self-illum envelope (inferno body's 0.5*sin(3*time())+0.5).
+      // Static scales have no fn and keep uSelfIllumPulse at 1.
+      if (b.selfIllumPulseFn && b.uniforms.uSelfIllumPulse) {
+        const s = b.selfIllumPulseFn(t);
         // Guard: a future divergent expr could go NaN/Inf mid-stream; one bad
         // uniform write blows out the whole material.
-        if (Number.isFinite(s)) b.uniforms.uSelfIllumScale.value = s;
+        if (Number.isFinite(s)) b.uniforms.uSelfIllumPulse.value = s;
       }
     });
   });
@@ -810,6 +788,30 @@ function NprMaterials({
       if (b.uniforms.uCelV2) b.uniforms.uCelV2.value = celV2 ? 1.0 : 0.0;
     });
   }, [celV2, enabled]);
+
+  return null;
+}
+
+/**
+ * Always-on Source 2 draw state. Applies additive / translucent blend, backface
+ * culling, and overlay render-order to EVERY material carrying morphic extras,
+ * independent of the NPR / unified / source2 / bloom dev flags. This is the one
+ * pass that runs on the default preview path, so additive self-illum glow
+ * overlays (kept by the vpkmerge exporter) composite as `AdditiveBlending` rather
+ * than rendering an opaque white hull. Mesh-level `renderOrder` is the piece the
+ * material builders cannot set and persists across the flag-gated material swaps.
+ */
+function Source2DrawState({ scene, debug }: { scene: THREE.Object3D; debug: boolean }) {
+  useEffect(() => {
+    const compiled = compileSource2DrawState(scene);
+    if (debug) {
+      // Phase 3 round-trip inspection: blend-mode + renderOrder distribution and
+      // the overlay mesh names, so a maintainer can confirm kept glow overlays
+      // composite additively. Logging only; the compile itself is always-on.
+      console.info('[source2drawstate]', compiled.stats, summarizeSource2Scene(scene));
+    }
+    return () => compiled.restore();
+  }, [scene, debug]);
 
   return null;
 }
@@ -869,9 +871,6 @@ export default function HeroPoseViewer({
   const sourceKey = skinSources.map((source) => `${source.priority}:${source.metaKey}`).join('|');
   const [devFlags, setDevFlags] = useState<DevPreviewFlags>(() => ({
     ...RELEASE_RENDER_FLAGS,
-    npr: previewFlag('grimoire.preview.npr', USE_NPR_PREVIEW),
-    nprOutline: previewFlag('grimoire.preview.nprOutline', USE_NPR_OUTLINE),
-    source2: previewFlag('grimoire.preview.source2Shaders', USE_SOURCE2_SHADER_HINTS),
     unified: previewFlag('grimoire.preview.unifiedMaterial', USE_UNIFIED_MATERIAL),
     celV2: previewFlag('grimoire.preview.celV2', USE_CEL_V2),
     cloth: previewFlag('grimoire.preview.cloth', USE_CLOTH),
@@ -1120,6 +1119,7 @@ export default function HeroPoseViewer({
         ) : (
           <PosedModel scene={scene} interaction={interaction} effect={effect} />
         )}
+        {scene && <Source2DrawState scene={scene} debug={features.nprDebugEnabled} />}
         {features.source2ShaderHintsEnabled && scene && (
           <Source2MaterialHints
             scene={scene}
@@ -1132,7 +1132,6 @@ export default function HeroPoseViewer({
           <NprMaterials
             scene={scene}
             enabled={features.nprMaterialsEnabled}
-            outline={features.nprOutlineEnabled}
             tint={null /* wire to a recolor color once the Locker recolor surface exists */}
             unified={features.unifiedEnabled}
             source2Active={features.source2ShaderHintsEnabled}
@@ -1187,20 +1186,6 @@ function DevViewerControls({
   useControls(
     'Preview',
     () => ({
-      S2: {
-        value: devFlags.source2,
-        onChange: (value: boolean) =>
-          setDevFlag('source2', 'grimoire.preview.source2Shaders', value),
-      },
-      NPR: {
-        value: devFlags.npr,
-        onChange: (value: boolean) => setDevFlag('npr', 'grimoire.preview.npr', value),
-      },
-      Outline: {
-        value: devFlags.nprOutline,
-        onChange: (value: boolean) =>
-          setDevFlag('nprOutline', 'grimoire.preview.nprOutline', value),
-      },
       Unified: {
         value: devFlags.unified,
         onChange: (value: boolean) =>
@@ -1274,7 +1259,6 @@ function DevViewerControls({
     <Leva
       collapsed={false}
       hideCopyButton
-      oneLineLabels
       theme={COMPACT_LEVA_THEME}
       titleBar={{ title: 'Preview', drag: true, filter: false }}
     />
