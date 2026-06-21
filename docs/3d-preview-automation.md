@@ -106,20 +106,22 @@ each falling back to a module-constant default in `HeroPoseViewer.tsx`
 
 | localStorage key | default |
 |---|---|
-| `grimoire.preview.bloom` | on |
+| `grimoire.preview.unifiedMaterial` | on |
 | `grimoire.preview.celV2` | on |
-| `grimoire.preview.npr` | off |
-| `grimoire.preview.nprOutline` | off |
-| `grimoire.preview.source2Shaders` | off |
-| `grimoire.preview.unifiedMaterial` | off |
+| `grimoire.preview.bloom` | on |
 | `grimoire.preview.cloth` | off |
 | `grimoire.preview.effects` | off |
 | `grimoire.preview.nprDebug` / `.matDebug` | off |
 
+`unifiedMaterial` is the single material-styling driver (Source 2 hints + NPR
+cel/rim/tint in one `buildDeadlockMaterial` pass). The old standalone
+`source2Shaders` / `npr` / `nprOutline` flags were removed; turn `unifiedMaterial`
+off to compare the styled look against the raw GLB.
+
 Toggle one and reload to compare looks:
 
 ```bash
-node scripts/pw-drive.mjs eval "localStorage.setItem('grimoire.preview.npr','1')"
+node scripts/pw-drive.mjs eval "localStorage.setItem('grimoire.preview.unifiedMaterial','0')"
 node scripts/pw-drive.mjs eval "location.reload()"
 ```
 

@@ -20,9 +20,6 @@ beforeAll(() => {
 
 function baseFlags() {
   return {
-    npr: false,
-    nprOutline: false,
-    source2: false,
     unified: false,
     celV2: false,
     cloth: false,
@@ -122,10 +119,7 @@ describe('resolveHeroPoseRenderFeatures', () => {
   });
 
   it('lets trippy paint own material state while keeping Source 2 hints available', () => {
-    const features = resolveHeroPoseRenderFeatures(
-      { ...baseFlags(), npr: true, unified: true, source2: true },
-      true
-    );
+    const features = resolveHeroPoseRenderFeatures({ ...baseFlags(), unified: true }, true);
 
     expect(features.source2ShaderHintsEnabled).toBe(true);
     expect(features.source2SkipNpr).toBe(false);

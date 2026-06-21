@@ -3,17 +3,12 @@ import * as THREE from 'three';
 import {
   NPR_FRAGMENT,
   NPR_PATCH_MAP,
-  OUTLINE_DEFAULT_THICKNESS,
-  OUTLINE_MAX_THICKNESS,
-  OUTLINE_MIN_THICKNESS,
   applySource2MaterialHints,
-  buildOutlineShell,
   detailLayer,
   glassTransmissionTexture,
   hasDynamicAlphaOverride,
   highlightLayer,
   isTrueGlassMaterial,
-  outlineParams,
   translucentAlphaTexture,
   wrapMaterialWithNpr,
 } from './source2NprMaterial';
@@ -519,111 +514,6 @@ describe('applySource2MaterialHints glass and cloak state', () => {
     result.restore();
     expect(material.opacity).toBe(0.4);
     expect(material.alphaMap).toBe(alphaMask);
-  });
-});
-
-describe('outlineParams (F8)', () => {
-  function morphic(overrides: Partial<MorphicExtras> = {}): MorphicExtras {
-    return { shader: 'pbr.vfx', ...overrides };
-  }
-
-  it('disables when no g_vSolidOutlineTint is authored', () => {
-    const p = outlineParams(morphic());
-    expect(p.enabled).toBe(false);
-    expect(p.reason).toBe('no-outline-tint');
-  });
-
-  it('disables when F_DISABLE_NPR_OUTLINE is set, keeping the authored tint readable', () => {
-    const p = outlineParams(
-      morphic({
-        vectors: { g_vSolidOutlineTint: [0.1, 0.2, 0.3, 1] },
-        ints: { F_DISABLE_NPR_OUTLINE: 1 },
-      })
-    );
-    expect(p.enabled).toBe(false);
-    expect(p.reason).toBe('disabled-flag');
-    expect(p.tint.r).toBeCloseTo(0.1);
-  });
-
-  it('combines outline tint + additive when enabled', () => {
-    const p = outlineParams(
-      morphic({
-        vectors: {
-          g_vSolidOutlineTint: [0.1, 0.2, 0.3, 1],
-          g_vSolidOutlineAdditive: [0.05, 0, 0.1, 0],
-        },
-      })
-    );
-    expect(p.enabled).toBe(true);
-    expect(p.reason).toBe('');
-    expect(p.tint.r).toBeCloseTo(0.15);
-    expect(p.tint.b).toBeCloseTo(0.4);
-  });
-
-  it('defaults thickness when unauthored', () => {
-    const p = outlineParams(morphic({ vectors: { g_vSolidOutlineTint: [1, 1, 1, 1] } }));
-    expect(p.thickness).toBe(OUTLINE_DEFAULT_THICKNESS);
-  });
-
-  it('clamps a pathological large thickness to the safe max (no detached shell)', () => {
-    const p = outlineParams(
-      morphic({
-        vectors: { g_vSolidOutlineTint: [1, 1, 1, 1] },
-        floats: { g_flOverrideNprOutlineThickness: 5 },
-      })
-    );
-    expect(p.thickness).toBe(OUTLINE_MAX_THICKNESS);
-  });
-
-  it('clamps a sub-pixel thickness up to the safe min', () => {
-    const p = outlineParams(
-      morphic({
-        vectors: { g_vSolidOutlineTint: [1, 1, 1, 1] },
-        floats: { g_flOverrideNprOutlineThickness: 0.00001 },
-      })
-    );
-    expect(p.thickness).toBe(OUTLINE_MIN_THICKNESS);
-  });
-});
-
-describe('buildOutlineShell (F8)', () => {
-  function outlineMesh(morphic: MorphicExtras): THREE.Mesh {
-    const mat = new THREE.MeshStandardMaterial();
-    mat.userData = { morphic };
-    return new THREE.Mesh(new THREE.BoxGeometry(), mat);
-  }
-
-  it('returns null when the material is not outline-eligible', () => {
-    expect(buildOutlineShell(outlineMesh({ shader: 'pbr.vfx' }))).toBeNull();
-  });
-
-  it('returns null when F_DISABLE_NPR_OUTLINE opts out', () => {
-    const mesh = outlineMesh({
-      shader: 'pbr.vfx',
-      vectors: { g_vSolidOutlineTint: [1, 1, 1, 1] },
-      ints: { F_DISABLE_NPR_OUTLINE: 1 },
-    });
-    expect(buildOutlineShell(mesh)).toBeNull();
-  });
-
-  it('adds a shell child for an eligible mesh and removes it on teardown', () => {
-    const mesh = outlineMesh({ shader: 'pbr.vfx', vectors: { g_vSolidOutlineTint: [1, 1, 1, 1] } });
-    expect(mesh.children).toHaveLength(0);
-
-    const dispose = buildOutlineShell(mesh);
-    expect(dispose).toBeTypeOf('function');
-    expect(mesh.children).toHaveLength(1);
-
-    dispose!();
-    expect(mesh.children).toHaveLength(0);
-  });
-
-  it('shares the mesh geometry with the shell (disposes only its own material)', () => {
-    const mesh = outlineMesh({ shader: 'pbr.vfx', vectors: { g_vSolidOutlineTint: [1, 1, 1, 1] } });
-    const dispose = buildOutlineShell(mesh)!;
-    const shell = mesh.children[0] as THREE.Mesh;
-    expect(shell.geometry).toBe(mesh.geometry);
-    dispose();
   });
 });
 
