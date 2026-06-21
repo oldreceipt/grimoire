@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import CustomShaderMaterial, { type CSMPatchMap } from 'three-custom-shader-material/vanilla';
 import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
+// Shared blend-mode resolver (the cycle-free leaf of the source2Preview core).
+import { resolveBlendMode } from './source2Preview/blendMode';
 
 /**
  * Source 2 NPR (cel / rim / tint) restyle for the Locker hero preview.
@@ -779,12 +781,7 @@ export function applySource2MaterialHints(
       };
 
       const glass = isTrueGlassMaterial(morphic, mat);
-      const fallbackBlendMode = flag(morphic, 'F_ADDITIVE_BLEND')
-        ? 'additive'
-        : flag(morphic, 'F_TRANSLUCENT') || flag(morphic, 'F_ADVANCED_TRANSLUCENCY')
-          ? 'blend_zwrite'
-          : 'opaque';
-      const blendMode = morphic.blend_mode ?? fallbackBlendMode;
+      const blendMode = resolveBlendMode(morphic);
       const translucent = blendMode === 'blend_zwrite' || blendMode === 'blend';
       const additive = blendMode === 'additive';
       const alphaBlend = !glass && (translucent || additive);

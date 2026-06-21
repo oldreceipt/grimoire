@@ -22,25 +22,14 @@ import {
 import {
   ADDITIVE_OVERLAY_RENDER_ORDER,
   TRANSLUCENT_OVERLAY_RENDER_ORDER,
-  type Source2BlendMode,
   type Source2DrawStateApplication,
   type Source2DrawStatePlan,
 } from './types';
+import { resolveBlendMode } from './blendMode';
 
-/**
- * Resolve the Source 2 blend mode, preferring the explicit `blend_mode` extras
- * field and falling back to the shader flags. The fallback keeps v1 GLBs (no
- * `blend_mode`) working and mirrors the exporter's own derivation, so producer
- * and consumer cannot drift.
- */
-export function resolveBlendMode(morphic: MorphicExtras): Source2BlendMode {
-  if (morphic.blend_mode) return morphic.blend_mode;
-  if (flag(morphic, 'F_ADDITIVE_BLEND')) return 'additive';
-  if (flag(morphic, 'F_TRANSLUCENT') || flag(morphic, 'F_ADVANCED_TRANSLUCENCY')) {
-    return 'blend_zwrite';
-  }
-  return 'opaque';
-}
+// Re-export so consumers and tests can keep importing it from the draw-state
+// module; the implementation lives in the cycle-free leaf `./blendMode`.
+export { resolveBlendMode };
 
 /**
  * Pure mapping from morphic extras to the target Three.js draw state. `base` lets

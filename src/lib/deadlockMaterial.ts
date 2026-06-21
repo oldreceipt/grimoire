@@ -25,8 +25,8 @@ import {
   highlightLayer,
 } from './source2NprMaterial';
 import { compileScalarExpr, peakScalar } from './dynamicScalar';
-
-type Source2BlendMode = NonNullable<MorphicExtras['blend_mode']>;
+// Shared blend-mode resolver (the cycle-free leaf of the source2Preview core).
+import { resolveBlendMode } from './source2Preview/blendMode';
 
 /**
  * Unified Deadlock NPR material builder (the Phase 0/1 single build pass).
@@ -109,14 +109,6 @@ function needsPhysical(morphic: MorphicExtras, base: THREE.Material): boolean {
     return true;
   }
   return false;
-}
-
-function fallbackBlendMode(morphic: MorphicExtras): Source2BlendMode {
-  if (flag(morphic, 'F_ADDITIVE_BLEND')) return 'additive';
-  if (flag(morphic, 'F_TRANSLUCENT') || flag(morphic, 'F_ADVANCED_TRANSLUCENCY')) {
-    return 'blend_zwrite';
-  }
-  return 'opaque';
 }
 
 // Above this a self-illum scale counts as "on" for a material with a REAL
@@ -263,7 +255,7 @@ export function buildDeadlockMaterial(
 
   // --- Material-state flags (ported from applySource2MaterialHints). --------
   const glass = isTrueGlassMaterial(morphic, base);
-  const blendMode = morphic.blend_mode ?? fallbackBlendMode(morphic);
+  const blendMode = resolveBlendMode(morphic);
   const alphaBlend = !glass && (blendMode === 'blend_zwrite' || blendMode === 'blend' || blendMode === 'additive');
   const additive = blendMode === 'additive';
   const unlit = flag(morphic, 'F_UNLIT');
