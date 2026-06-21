@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Source 2 preview - blend-state testbed</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; background: #14110d; color: #e8e0d2;
+    font: 14px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  header { padding: 18px 22px 6px; }
+  h1 { font-size: 18px; margin: 0 0 4px; color: #ffb35c; }
+  header p { margin: 4px 0; max-width: 70ch; color: #b9ad97; }
+  .panel { padding: 14px 22px 26px; border-top: 1px solid #2a2419; }
+  .panel h2 { font-size: 15px; margin: 0 0 2px; color: #ffd9a0; }
+  .panel .src { color: #7f7460; font-size: 12px; margin: 0 0 8px; }
+  .panel .cap { max-width: 78ch; margin: 8px 0 0; color: #c8bca4; }
+  .panel .cap b { color: #ffb35c; }
+  .stage { position: relative; width: 100%; max-width: 920px; height: 260px;
+           border: 1px solid #2a2419; border-radius: 6px; overflow: hidden; }
+  .stage canvas { display: block; width: 100%; height: 100%; }
+  .lbl { position: absolute; top: 8px; padding: 2px 8px; border-radius: 4px;
+         background: rgba(0,0,0,.55); font-size: 12px; pointer-events: none; }
+  .lbl.bad  { left: 8px;  color: #ff8d6b; }
+  .lbl.good { right: 8px; color: #8de08d; }
+  .verdict { font-size: 12px; color: #7f7460; margin-top: 6px; }
+  code { color: #ffd9a0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Source 2 preview - blend-state testbed</h1>
+  <p>Standalone. Does not touch the live 3D preview. Each panel renders the
+     <b style="color:#ff8d6b">current grimoire behavior</b> (left) next to the
+     <b style="color:#8de08d">corrected behavior</b> (right) so the difference is visible.
+     three.js <code>0.184.0</code> (matches grimoire's pin).</p>
+  <p>Mirrors the blend rules in <code>src/lib/source2Preview/drawState.ts</code> and
+     <code>src/lib/deadlockMaterial.ts</code>. Read-only reproduction; no app code imported.</p>
+</header>
+
+<section class="panel" id="p-additive">
+  <h2>1. Additive blend is alpha-weighted, not pure additive</h2>
+  <p class="src">drawState.ts:62 &amp; deadlockMaterial.ts:327 set <code>THREE.AdditiveBlending</code></p>
+  <div class="stage">
+    <span class="lbl bad">AdditiveBlending (SrcAlpha &middot; src + One &middot; dst)</span>
+    <span class="lbl good">CustomBlending (One &middot; src + One &middot; dst)</span>
+  </div>
+  <p class="cap"><code>THREE.AdditiveBlending</code> is <code>blendSrc = SrcAlphaFactor</code>,
+     so the framebuffer gets <code>src.rgb * src.a + dst.rgb</code>. Where the glow texture's
+     alpha falls below 1 (its soft halo), the added light is <b>attenuated by that alpha</b>.
+     A true Source 2 additive pass adds the self-illum result regardless of geometry alpha
+     (<code>blendSrc = OneFactor</code>). Same texture, same scale, same backdrop on both sides:
+     the left halo is visibly tighter/dimmer.</p>
+  <p class="verdict">Only identical if the overlay's alpha is 1 everywhere. Not forced to <code>One</code>.</p>
+</section>
+
+<section class="panel" id="p-sort">
+  <h2>2. No intra-mesh transparency sorting</h2>
+  <p class="src">three.js sorts transparent <i>objects</i> by distance, never triangles within one mesh</p>
+  <div class="stage">
+    <span class="lbl bad">one mesh (buffer order)</span>
+    <span class="lbl good">separate meshes (depth-sorted)</span>
+  </div>
+  <p class="cap">Three overlapping translucent quads at different depths (R/G/B, opacity 0.5,
+     <code>depthWrite=false</code>). Left = one merged mesh: three draws its triangles in
+     <b>buffer order</b>, so the color stacking is wrong and flips as it rotates. Right = three
+     separate meshes: three re-sorts them back-to-front every frame, so the stacking is correct.
+     A self-overlapping translucent morphic mesh hits the left case.</p>
+  <p class="verdict">Inherent three.js limitation; the draw-state pass does nothing to mitigate it.</p>
+</section>
+
+<section class="panel" id="p-order">
+  <h2>3. renderOrder is per-mesh, not per-submaterial</h2>
+  <p class="src">drawState.ts:99-100,149-151 - "strongest overlay order among a multi-material mesh wins"</p>
+  <div class="stage">
+    <span class="lbl bad">far-layer shares a mesh with the additive overlay</span>
+    <span class="lbl good">layers are separate meshes</span>
+  </div>
+  <p class="cap">A mesh has two groups: a <b>far translucent layer</b> (cyan) and an
+     <b>additive overlay</b> that must draw last, so the whole mesh's <code>renderOrder</code> is
+     raised. That also drags the cyan layer past the separate <b>near translucent layer</b>
+     (magenta), so cyan blends over magenta - wrong. Left = shared mesh (cyan wrongly on top);
+     right = three separate meshes ordered far &rarr; near &rarr; additive (magenta correctly on top).
+     A submaterial cannot carry its own draw order.</p>
+  <p class="verdict">Bites only on a mesh that mixes an overlay submaterial with ordered transparency.</p>
+</section>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://esm.sh/three@0.184.0",
+  "three/addons/": "https://esm.sh/three@0.184.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+const stages = [];
+function makeStage(sel) {
+  const el = document.querySelector(sel + ' .stage');
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  el.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x14110d);
+  const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  cam.position.set(0, 0, 6);
+  function size() {
+    const w = el.clientWidth, h = el.clientHeight;
+    renderer.setSize(w, h, false);
+    cam.aspect = w / h; cam.updateProjectionMatrix();
+  }
+  size(); addEventListener('resize', size);
+  const s = { renderer, scene, cam, update: () => {} };
+  stages.push(s);
+  return s;
+}
+
+// Soft radial glow texture with alpha falloff (alpha < 1 in the halo).
+function glowTexture() {
+  const n = 256, c = document.createElement('canvas'); c.width = c.height = n;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(n/2, n/2, 0, n/2, n/2, n/2);
+  // Bright orange core, color stays warm but ALPHA ramps down across the halo.
+  grad.addColorStop(0.0, 'rgba(255,180,90,1.0)');
+  grad.addColorStop(0.35, 'rgba(255,150,70,0.55)');
+  grad.addColorStop(0.75, 'rgba(255,120,50,0.18)');
+  grad.addColorStop(1.0, 'rgba(255,110,40,0.0)');
+  g.fillStyle = grad; g.fillRect(0, 0, n, n);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// ---- Panel 1: additive alpha weighting ------------------------------------
+(function additive() {
+  const s = makeStage('#p-additive');
+  // Mid-gray opaque backdrop so the additive contribution is visible.
+  const back = new THREE.Mesh(
+    new THREE.PlaneGeometry(20, 20),
+    new THREE.MeshBasicMaterial({ color: 0x4a4a4a })
+  );
+  back.position.z = -2; s.scene.add(back);
+
+  const tex = glowTexture();
+  const geo = new THREE.PlaneGeometry(2.6, 2.6);
+
+  // LEFT: grimoire path - THREE.AdditiveBlending (SrcAlpha source factor).
+  const bad = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  bad.position.x = -1.7; s.scene.add(bad);
+
+  // RIGHT: true additive - CustomBlending with One source factor.
+  const good = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, depthWrite: false,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneFactor,
+  }));
+  good.position.x = 1.7; s.scene.add(good);
+  s.cam.position.z = 5;
+})();
+
+// ---- Panel 2: intra-mesh transparency sorting -----------------------------
+(function sorting() {
+  const s = makeStage('#p-sort');
+  s.cam.position.set(0, 0, 7);
+
+  const colors = [[1,0.25,0.25],[0.25,1,0.35],[0.35,0.5,1]];
+  const depths = [-0.6, 0.0, 0.6];
+
+  function quad(ci) {
+    const g = new THREE.PlaneGeometry(1.8, 1.8);
+    const col = colors[ci];
+    const c = new Float32Array(g.attributes.position.count * 3);
+    for (let i = 0; i < g.attributes.position.count; i++) c.set(col, i*3);
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+    return g;
+  }
+  const mat = () => new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, opacity: 0.5,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+
+  // LEFT: one merged mesh -> triangles drawn in buffer order, no depth sort.
+  const merged = [];
+  for (let i = 0; i < 3; i++) {
+    const g = quad(i); g.translate(0, 0, depths[i]); merged.push(g);
+  }
+  const badMesh = new THREE.Mesh(mergeGeometries(merged, false), mat());
+  const badGroup = new THREE.Group(); badGroup.add(badMesh);
+  badGroup.position.x = -2.2; s.scene.add(badGroup);
+
+  // RIGHT: separate meshes -> three sorts them back-to-front each frame.
+  const goodGroup = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const m = new THREE.Mesh(quad(i), mat()); m.position.z = depths[i];
+    goodGroup.add(m);
+  }
+  goodGroup.position.x = 2.2; s.scene.add(goodGroup);
+
+  s.update = (t) => {
+    const r = Math.sin(t * 0.6) * 0.9;
+    badGroup.rotation.y = r; goodGroup.rotation.y = r;
+  };
+})();
+
+// ---- Panel 3: per-mesh renderOrder granularity ----------------------------
+(function order() {
+  const s = makeStage('#p-order');
+  s.cam.position.set(1.2, 0.6, 6);
+  s.cam.lookAt(0, 0, 0);
+
+  const transMat = (hex) => new THREE.MeshBasicMaterial({
+    color: hex, transparent: true, opacity: 0.55,
+    depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+  });
+  const addMat = () => new THREE.MeshBasicMaterial({
+    color: 0xffcaa0, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const plane = () => new THREE.PlaneGeometry(2.2, 2.2);
+
+  // Backdrop to read the blends against.
+  for (const gx of [-2.4, 2.4]) {
+    const b = new THREE.Mesh(new THREE.PlaneGeometry(4, 4),
+      new THREE.MeshBasicMaterial({ color: 0x3a352b }));
+    b.position.set(gx, 0, -1.2); s.scene.add(b);
+  }
+
+  // We want draw order: far(cyan) -> near(magenta) -> additive(last).
+  // LEFT (grimoire): far layer + additive live on ONE mesh, so they share a
+  // renderOrder. Raise it so the additive draws last -> far layer is dragged
+  // along and now draws AFTER the (separate) near layer => cyan over magenta.
+  {
+    const far = plane(); far.translate(0, 0, -0.35);
+    const add = plane(); add.translate(0.5, -0.3, 0.0);
+    const shared = mergeGeometries([far, add], true); // groups -> 2 submaterials
+    const mesh = new THREE.Mesh(shared, [transMat(0x36c5d6), addMat()]);
+    mesh.renderOrder = 2;            // overlay must be last -> whole mesh = 2
+    mesh.position.x = -2.4; s.scene.add(mesh);
+
+    const near = new THREE.Mesh(plane(), transMat(0xd64fb0));
+    near.position.set(-2.4 + 0.0, 0.0, 0.35);
+    near.renderOrder = 1; s.scene.add(near);
+  }
+
+  // RIGHT (fixed): three separate meshes, each with its own renderOrder.
+  {
+    const far = new THREE.Mesh(plane(), transMat(0x36c5d6));
+    far.position.set(2.4, 0, -0.35); far.renderOrder = 0; s.scene.add(far);
+
+    const near = new THREE.Mesh(plane(), transMat(0xd64fb0));
+    near.position.set(2.4, 0, 0.35); near.renderOrder = 1; s.scene.add(near);
+
+    const add = new THREE.Mesh(plane(), addMat());
+    add.position.set(2.4 + 0.5, -0.3, 0.4); add.renderOrder = 2; s.scene.add(add);
+  }
+})();
+
+const clock = new THREE.Clock();
+(function loop() {
+  requestAnimationFrame(loop);
+  const t = clock.getElapsedTime();
+  for (const s of stages) { s.update(t); s.renderer.render(s.scene, s.cam); }
+})();
+</script>
+</body>
+</html>

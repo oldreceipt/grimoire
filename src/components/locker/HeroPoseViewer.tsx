@@ -658,7 +658,7 @@ function NprMaterials({
       {
         material: THREE.Material;
         uniforms: Record<string, THREE.IUniform>;
-        selfIllumScaleFn?: ((t: number) => number) | null;
+        selfIllumPulseFn?: ((t: number) => number) | null;
       }
     >
   >(new Map());
@@ -670,7 +670,7 @@ function NprMaterials({
       {
         material: THREE.Material;
         uniforms: Record<string, THREE.IUniform>;
-        selfIllumScaleFn?: ((t: number) => number) | null;
+        selfIllumPulseFn?: ((t: number) => number) | null;
       }
     >();
     // Per-build teardown (dispose the owned CSM/clone/masks). On the unified path
@@ -703,7 +703,7 @@ function NprMaterials({
             b = {
               material: built.material,
               uniforms: built.uniforms,
-              selfIllumScaleFn: built.selfIllumScaleFn,
+              selfIllumPulseFn: built.selfIllumPulseFn,
             };
             builds.set(mat, b);
             disposers.push(built.dispose);
@@ -761,13 +761,13 @@ function NprMaterials({
     const t = state.clock.elapsedTime;
     buildsRef.current.forEach((b) => {
       if (b.uniforms.uTime) b.uniforms.uTime.value = t;
-      // Drive a dynamic self-illum scale (inferno body's 0.5*sin(3*time())+0.5);
-      // static scales have no fn and keep their build-time uniform value.
-      if (b.selfIllumScaleFn && b.uniforms.uSelfIllumScale) {
-        const s = b.selfIllumScaleFn(t);
+      // Drive a dynamic self-illum envelope (inferno body's 0.5*sin(3*time())+0.5).
+      // Static scales have no fn and keep uSelfIllumPulse at 1.
+      if (b.selfIllumPulseFn && b.uniforms.uSelfIllumPulse) {
+        const s = b.selfIllumPulseFn(t);
         // Guard: a future divergent expr could go NaN/Inf mid-stream; one bad
         // uniform write blows out the whole material.
-        if (Number.isFinite(s)) b.uniforms.uSelfIllumScale.value = s;
+        if (Number.isFinite(s)) b.uniforms.uSelfIllumPulse.value = s;
       }
     });
   });

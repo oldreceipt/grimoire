@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   NPR_FRAGMENT,
   NPR_PATCH_MAP,
+  NPR_VERTEX,
   applySource2MaterialHints,
   detailLayer,
   glassTransmissionTexture,
@@ -239,6 +240,9 @@ describe('highlightLayer', () => {
     expect(typeof patch === 'object' ? patch.value : '').toContain('#include <displacementmap_vertex>');
     expect(typeof patch === 'object' ? patch.value : '').toContain('vNprSourcePosition = transformed;');
     expect(typeof patch === 'object' ? patch.value : '').not.toContain('modelMatrix');
+    expect(NPR_VERTEX).toContain('uniform float uHasJitter;');
+    expect(NPR_VERTEX).toContain('uniform sampler2D uJitterMap;');
+    expect(NPR_VERTEX).toContain('uniform float uJitterStrength;');
     expect(NPR_FRAGMENT).toContain('uniform float uHasHighlight;');
     expect(NPR_FRAGMENT).toContain('uniform vec3  uHighlightPositionSource;');
     expect(NPR_FRAGMENT).toContain('varying vec3 vNprSourcePosition;');
@@ -528,12 +532,41 @@ describe('NPR rim mask (F8)', () => {
 describe('NPR self-illum hue-preserving cap', () => {
   it('caps the self-illum additive by its peak channel so a bright tint keeps its hue', () => {
     const patch = NPR_PATCH_MAP['*']['#include <opaque_fragment>'] as string;
+
     expect(patch).toContain('float siPeak = max(max(siAdd.r, siAdd.g), siAdd.b);');
     expect(patch).toContain('siAdd *= uSelfIllumCap / siPeak;');
   });
 
+  it('applies the dynamic self-illum pulse after the cap so the cap does not flatten it', () => {
+    const patch = NPR_PATCH_MAP['*']['#include <opaque_fragment>'] as string;
+
+    expect(NPR_FRAGMENT).toContain('uniform float uSelfIllumPulse;');
+    expect(patch.indexOf('siAdd *= uSelfIllumCap / siPeak;')).toBeLessThan(
+      patch.indexOf('siAdd *= uSelfIllumPulse;')
+    );
+  });
+
   it('boosts self-illum tint chroma so a pale tint does not read white', () => {
     const patch = NPR_PATCH_MAP['*']['#include <opaque_fragment>'] as string;
+
     expect(patch).toContain('mix(vec3(siLuma), siColor, uSelfIllumSat)');
+  });
+
+  it('routes self-illum through the post-opaque NPR output so it affects visible color', () => {
+    const patch = NPR_PATCH_MAP['*']['#include <opaque_fragment>'] as string;
+
+    expect(NPR_FRAGMENT).not.toContain('csm_Emissive += siAdd;');
+    expect(patch).toContain('uHasSelfIllum');
+    expect(patch).toContain('nprOut += siAdd');
+  });
+
+  it('gates shaped self-illum to chromatic warm tattoo pixels, not the whole body mask', () => {
+    const patch = NPR_PATCH_MAP['*']['#include <opaque_fragment>'] as string;
+
+    expect(patch).toContain('float baseChroma = baseMax - baseMin;');
+    expect(patch).toContain('float baseWarmth = csm_DiffuseColor.r - max');
+    expect(patch).toContain('float detailGate = smoothstep');
+    expect(patch).toContain('float headRegion = smoothstep(70.0, 78.0, vNprSourcePosition.z)');
+    expect(patch).toContain('rawSiMask * rawSiMask * 8192.0 * inkGate');
   });
 });

@@ -118,12 +118,12 @@ describe('resolveHeroPoseRenderFeatures', () => {
     expect(features.unifiedEnabled).toBe(true);
   });
 
-  it('lets trippy paint own material state while keeping Source 2 hints available', () => {
+  it('keeps unified NPR materials mounted while trippy paint owns the material maps', () => {
     const features = resolveHeroPoseRenderFeatures({ ...baseFlags(), unified: true }, true);
 
     expect(features.source2ShaderHintsEnabled).toBe(true);
     expect(features.source2SkipNpr).toBe(false);
-    expect(features.nprMaterialsEnabled).toBe(false);
+    expect(features.nprMaterialsEnabled).toBe(true);
   });
 
   it('enables cloth and the rigged preview when the dev flag is set', () => {

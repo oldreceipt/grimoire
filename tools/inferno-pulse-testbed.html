@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Infernus self-illum pulse testbed</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: #111;
+        color: #f3f3f3;
+        font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      #hud {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        max-width: 420px;
+        padding: 10px 12px;
+        background: rgb(0 0 0 / 72%);
+        border: 1px solid rgb(255 255 255 / 14%);
+        border-radius: 6px;
+        white-space: pre-wrap;
+      }
+      #hud.pass { border-color: #36d399; }
+      #hud.fail { border-color: #fb7185; }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage" width="512" height="512"></canvas>
+    <div id="hud">loading Infernus GLB...</div>
+    <script type="module">
+      import * as THREE from 'three';
+      import { loadGltfPreview } from '/src/lib/loadGltfPreview.ts';
+      import { buildDeadlockMaterial } from '/src/lib/deadlockMaterial.ts';
+      import { compileSource2DrawState } from '/src/lib/source2Preview/compileScene.ts';
+      import { isNprMaterial, isSelfIllumMaterial } from '/src/lib/source2NprMaterial.ts';
+
+      const params = new URLSearchParams(window.location.search);
+      const glbUrl = params.get('glb') || '/__inferno/model.glb';
+      const tattooOnly = params.get('tattooOnly') === '1';
+      const capturePulse = params.get('capturePulse');
+      const onlyMaterial = params.get('onlyMaterial');
+      const debugMode = params.get('debugMode');
+      const maskLow = params.get('maskLow');
+      const maskHigh = params.get('maskHigh');
+      const selfIllumScale = params.get('selfIllumScale');
+      const selfIllumCap = params.get('selfIllumCap');
+      const disableBodySelfIllum = params.get('disableBodySelfIllum') === '1';
+      const focus = params.get('focus');
+      const cameraDir = params.get('cameraDir');
+      const canvas = document.getElementById('stage');
+      const hud = document.getElementById('hud');
+      const size = 512;
+      const tattooMaterialPattern = /inferno_body/i;
+      const hiddenMaterial = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+
+      function fail(error) {
+        window.__infernoPulseResult = {
+          pass: false,
+          error: error instanceof Error ? error.stack || error.message : String(error),
+        };
+        hud.className = 'fail';
+        hud.textContent = window.__infernoPulseResult.error;
+        window.__infernoPulseDone = true;
+      }
+
+      function materialList(material) {
+        return Array.isArray(material) ? material : [material];
+      }
+
+      function readPixels(renderer) {
+        const gl = renderer.getContext();
+        const pixels = new Uint8Array(size * size * 4);
+        gl.readPixels(0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return pixels;
+      }
+
+      function comparePixels(a, b) {
+        let changed = 0;
+        let totalDiff = 0;
+        let maxDiff = 0;
+        for (let i = 0; i < a.length; i += 4) {
+          const dr = Math.abs(a[i] - b[i]);
+          const dg = Math.abs(a[i + 1] - b[i + 1]);
+          const db = Math.abs(a[i + 2] - b[i + 2]);
+          const diff = dr + dg + db;
+          if (diff > 12) changed += 1;
+          totalDiff += diff;
+          if (diff > maxDiff) maxDiff = diff;
+        }
+        return {
+          changed,
+          maxDiff,
+          meanDiff: totalDiff / (size * size),
+        };
+      }
+
+      function frameCamera(camera, box, direction) {
+        const center = box.getCenter(new THREE.Vector3());
+        const extent = box.getSize(new THREE.Vector3());
+        const radius = Math.max(extent.x, extent.y, extent.z) * 0.5;
+        const distance = radius / Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5));
+        const target = center.clone();
+        let distanceScale = 1.35;
+        if (focus === 'tattoos') {
+          target.y += extent.y * 0.14;
+          target.x += extent.x * 0.12;
+          distanceScale = 0.72;
+        }
+        camera.position.copy(target).add(direction.clone().normalize().multiplyScalar(distance * distanceScale));
+        camera.near = Math.max(0.01, distance / 100);
+        camera.far = distance * 8;
+        camera.lookAt(target);
+        camera.updateProjectionMatrix();
+      }
+
+      function renderWithPulse(renderer, scene, camera, builds, pulse) {
+        for (const build of builds) {
+          if (build.uniforms.uSelfIllumPulse) build.uniforms.uSelfIllumPulse.value = pulse;
+          if (build.uniforms.uTime) build.uniforms.uTime.value = pulse > 0.5 ? Math.PI / 6 : Math.PI;
+        }
+        renderer.render(scene, camera);
+        return readPixels(renderer);
+      }
+
+      function setPulse(builds, pulse, time) {
+        for (const build of builds) {
+          if (build.uniforms.uSelfIllumPulse) build.uniforms.uSelfIllumPulse.value = pulse;
+          if (build.uniforms.uTime) build.uniforms.uTime.value = time;
+        }
+      }
+
+      async function main() {
+        const gltf = await loadGltfPreview(glbUrl);
+        const scene = gltf.scene;
+        compileSource2DrawState(scene);
+
+        const builds = [];
+        const tattooOnlyHidden = [];
+        scene.traverse((obj) => {
+          if (!obj.isMesh && !obj.isSkinnedMesh) return;
+          const list = materialList(obj.material);
+          const onlyMaterialRegex = onlyMaterial ? new RegExp(onlyMaterial, 'i') : null;
+          if (onlyMaterialRegex && !list.some((mat) => onlyMaterialRegex.test(mat?.name || ''))) {
+            obj.visible = false;
+          }
+          const next = list.map((mat) => {
+            const originalName = mat?.name || '';
+            const materialSelected = !onlyMaterialRegex || onlyMaterialRegex.test(originalName);
+            if (onlyMaterialRegex && !materialSelected) return hiddenMaterial;
+            if (!mat || (!isNprMaterial(mat) && !isSelfIllumMaterial(mat))) return mat;
+            const built = buildDeadlockMaterial(mat, undefined, null);
+            built.uniforms.uCelV2.value = 1.0;
+            if (disableBodySelfIllum && /inferno_body/i.test(originalName) && built.uniforms.uHasSelfIllum) {
+              built.uniforms.uHasSelfIllum.value = 0;
+            }
+            if (maskLow !== null && built.uniforms.uSelfIllumMaskLow) {
+              built.uniforms.uSelfIllumMaskLow.value = Number(maskLow);
+            }
+            if (maskHigh !== null && built.uniforms.uSelfIllumMaskHigh) {
+              built.uniforms.uSelfIllumMaskHigh.value = Number(maskHigh);
+            }
+            if (selfIllumScale !== null && built.uniforms.uSelfIllumScale) {
+              built.uniforms.uSelfIllumScale.value = Number(selfIllumScale);
+            }
+            if (selfIllumCap !== null && built.uniforms.uSelfIllumCap) {
+              built.uniforms.uSelfIllumCap.value = Number(selfIllumCap);
+            }
+            if (debugMode === 'selfIllumMask' && materialSelected) {
+              builds.push({ name: originalName, meshName: obj.name || '', ...built });
+              return new THREE.MeshBasicMaterial({ map: built.uniforms.uSelfIllumMap.value, side: THREE.DoubleSide });
+            }
+            if (tattooOnly && /glow/i.test(originalName)) return hiddenMaterial;
+            if (tattooOnly && !tattooMaterialPattern.test(originalName)) {
+              if (built.uniforms.uHasSelfIllum) built.uniforms.uHasSelfIllum.value = 0;
+              tattooOnlyHidden.push(originalName);
+            }
+            builds.push({ name: originalName, meshName: obj.name || '', ...built });
+            return built.material;
+          });
+          obj.material = Array.isArray(obj.material) ? next : next[0];
+        });
+
+        const body = builds.find((build) => /inferno_body/i.test(build.name));
+        if (!body) {
+          throw new Error(`inferno_body material was not wrapped; got ${builds.map((b) => b.name).join(', ')}`);
+        }
+        const capturedBuild = onlyMaterial
+          ? builds.find((build) => new RegExp(onlyMaterial, 'i').test(build.name))
+          : tattooOnly
+            ? builds.find((build) => tattooMaterialPattern.test(build.name))
+          : body;
+        if (!body.uniforms.uSelfIllumPulse || !body.uniforms.uSelfIllumScale) {
+          throw new Error('inferno_body is missing self-illum pulse/scale uniforms');
+        }
+
+        const renderer = new THREE.WebGLRenderer({
+          canvas,
+          antialias: false,
+          alpha: false,
+          preserveDrawingBuffer: true,
+        });
+        renderer.setSize(size, size, false);
+        renderer.setPixelRatio(1);
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.8;
+
+        const root = new THREE.Scene();
+        root.background = new THREE.Color(0x050505);
+        root.add(scene);
+        root.add(new THREE.AmbientLight(0xffffff, 0.12));
+        const key = new THREE.DirectionalLight(0xfff3e0, 1.1);
+        key.position.set(3, 5, 4);
+        root.add(key);
+        const fill = new THREE.DirectionalLight(0xcfe0ff, 0.4);
+        fill.position.set(-4, 2, -3);
+        root.add(fill);
+
+        const box = new THREE.Box3().setFromObject(scene);
+        const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
+        const directions = [
+          new THREE.Vector3(0, 0.18, 1),
+          new THREE.Vector3(1, 0.18, 0.45),
+          new THREE.Vector3(-1, 0.18, 0.45),
+          new THREE.Vector3(0, 0.18, -1),
+        ];
+
+        const results = [];
+        for (const direction of directions) {
+          frameCamera(camera, box, direction);
+          const low = renderWithPulse(renderer, root, camera, builds, 0);
+          const high = renderWithPulse(renderer, root, camera, builds, 1);
+          results.push(comparePixels(low, high));
+        }
+
+        const best = results.reduce((a, b) => (b.changed > a.changed ? b : a), results[0]);
+        const pass = best.changed > 80 && best.maxDiff > 20 && best.meanDiff > 0.02;
+        window.__infernoPulseResult = {
+          pass,
+          glbUrl,
+          tattooOnly,
+          tattooOnlyHidden,
+          wrappedMaterials: builds.map((build) => build.name),
+          body: {
+            name: body.name,
+            scale: body.uniforms.uSelfIllumScale.value,
+            pulse: body.uniforms.uSelfIllumPulse.value,
+            hasSelfIllum: body.uniforms.uHasSelfIllum.value,
+          },
+          captured: capturedBuild
+            ? {
+                name: capturedBuild.name,
+                scale: capturedBuild.uniforms.uSelfIllumScale?.value,
+                pulse: capturedBuild.uniforms.uSelfIllumPulse?.value,
+                hasSelfIllum: capturedBuild.uniforms.uHasSelfIllum?.value,
+              }
+            : null,
+          best,
+          all: results,
+        };
+        hud.className = pass ? 'pass' : 'fail';
+        hud.textContent =
+          `${pass ? 'PASS' : 'FAIL'}: ${tattooOnly ? 'tattoo-only ' : ''}real Infernus GLB framebuffer changes when pulse changes\n` +
+          `changed pixels: ${best.changed}\n` +
+          `max diff: ${best.maxDiff}\n` +
+          `mean diff: ${best.meanDiff.toFixed(3)}\n` +
+          `body scale: ${body.uniforms.uSelfIllumScale.value}\n` +
+          `animated pulse is now being forced 0..1`;
+        window.__infernoPulseDone = true;
+
+        const captureDirection = directions[Number(cameraDir ?? 1)] ?? directions[1];
+        frameCamera(camera, box, captureDirection);
+        if (capturePulse !== null) {
+          const pulse = Number(capturePulse);
+          if (!Number.isFinite(pulse)) throw new Error(`bad capturePulse: ${capturePulse}`);
+          setPulse(builds, THREE.MathUtils.clamp(pulse, 0, 1), pulse > 0.5 ? Math.PI / 6 : Math.PI);
+          renderer.render(root, camera);
+          hud.textContent =
+            `${tattooOnly ? 'TATTOOS' : 'SELF-ILLUM'} ${pulse > 0.5 ? 'HIGH' : 'LOW'} ILLUM\n` +
+            `material: ${capturedBuild?.name ?? body.name}\n` +
+            `pulse: ${THREE.MathUtils.clamp(pulse, 0, 1)}\n` +
+            `scale: ${capturedBuild?.uniforms.uSelfIllumScale?.value ?? body.uniforms.uSelfIllumScale.value}\n` +
+            `non-tattoo self-illum disabled: ${tattooOnlyHidden.length}`;
+          window.__infernoCaptureReady = true;
+          return;
+        }
+
+        const clock = new THREE.Clock();
+        function animate() {
+          const t = clock.getElapsedTime();
+          const pulse = 0.5 + 0.5 * Math.sin(t * 4.0);
+          setPulse(builds, pulse, t);
+          renderer.render(root, camera);
+          requestAnimationFrame(animate);
+        }
+        animate();
+      }
+
+      main().catch(fail);
+    </script>
+  </body>
+</html>

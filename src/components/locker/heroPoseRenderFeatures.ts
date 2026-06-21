@@ -44,6 +44,8 @@ export function resolveHeroPoseRenderFeatures(
     source2ShaderHintsEnabled: unifiedEnabled,
     nprDebugEnabled: flags.nprDebug,
     source2SkipNpr: unifiedEnabled && !trippySpriteActive,
-    nprMaterialsEnabled: unifiedEnabled && !trippySpriteActive,
+    // Trippy/tattoo paint replaces the material maps, but unified still owns the
+    // Source 2 shader path: self-illum masks, CelV2, and pulse uniforms live there.
+    nprMaterialsEnabled: unifiedEnabled,
   };
 }
