@@ -48,6 +48,7 @@ import {
   type MorphicDynamicExpr,
 } from '../../lib/source2NprMaterial';
 import { buildDeadlockMaterial, type DeadlockMaterialResult } from '../../lib/deadlockMaterial';
+import { compileSource2DrawState } from '../../lib/source2Preview';
 import { resolveHeroPoseRenderFeatures } from './heroPoseRenderFeatures';
 import type { HeroPoseSkinSource } from '../../types/portrait';
 import type { TrippySpriteResult } from '../../types/mod';
@@ -814,6 +815,24 @@ function NprMaterials({
   return null;
 }
 
+/**
+ * Always-on Source 2 draw state. Applies additive / translucent blend, backface
+ * culling, and overlay render-order to EVERY material carrying morphic extras,
+ * independent of the NPR / unified / source2 / bloom dev flags. This is the one
+ * pass that runs on the default preview path, so additive self-illum glow
+ * overlays (kept by the vpkmerge exporter) composite as `AdditiveBlending` rather
+ * than rendering an opaque white hull. Mesh-level `renderOrder` is the piece the
+ * material builders cannot set and persists across the flag-gated material swaps.
+ */
+function Source2DrawState({ scene }: { scene: THREE.Object3D }) {
+  useEffect(() => {
+    const compiled = compileSource2DrawState(scene);
+    return () => compiled.restore();
+  }, [scene]);
+
+  return null;
+}
+
 function Source2MaterialHints({
   scene,
   enabled,
@@ -1120,6 +1139,7 @@ export default function HeroPoseViewer({
         ) : (
           <PosedModel scene={scene} interaction={interaction} effect={effect} />
         )}
+        {scene && <Source2DrawState scene={scene} />}
         {features.source2ShaderHintsEnabled && scene && (
           <Source2MaterialHints
             scene={scene}
