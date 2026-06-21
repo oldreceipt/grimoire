@@ -87,6 +87,7 @@ const MODEL_ENTRY_OVERRIDES: Readonly<Record<string, string>> = {
     'Lady Geist': 'models/heroes_wip/geist/geist.vmdl_c',
     Rem: 'models/heroes_wip/familiar/familiar_wip.vmdl_c',
     Viscous: 'models/heroes_staging/viscous/viscous.vmdl_c',
+    Wraith: 'models/heroes_wip/wraith/wraith.vmdl_c'
 };
 
 /** Model codenames to try for a hero, most-specific first: any divergent
@@ -520,9 +521,9 @@ async function resolveSkinVpk(deadlockPath: string, metaKey: string): Promise<st
     const candidates = metaKey.includes('/')
         ? [join(getCitadelPath(deadlockPath), metaKey)] // enabled overflow folder
         : [
-              join(getAddonsPath(deadlockPath), metaKey), // enabled base addons
-              join(getDisabledPath(deadlockPath), metaKey), // disabled parking lot
-          ];
+            join(getAddonsPath(deadlockPath), metaKey), // enabled base addons
+            join(getDisabledPath(deadlockPath), metaKey), // disabled parking lot
+        ];
     for (const candidate of candidates) {
         try {
             await fs.access(candidate);
@@ -1058,7 +1059,7 @@ export function registerHeroPoseProtocol(): void {
             // must keep meaning "export time". Both glbs share the dir, so
             // touching the one sidecar protects the whole entry.
             const now = new Date();
-            void fs.utimes(versionFile(key), now, now).catch(() => {});
+            void fs.utimes(versionFile(key), now, now).catch(() => { });
             return net.fetch(pathToFileURL(file).toString());
         } catch {
             return new Response(null, { status: 404 });
