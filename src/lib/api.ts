@@ -4,6 +4,7 @@ import type {
   CustomCardSlot,
   HeroPoseInfo,
   HeroPoseSkinSource,
+  HeroEffectInfo,
   SoulModelInfo,
 } from '../types/portrait';
 import type {
@@ -20,6 +21,7 @@ import type {
   GameBananaArtistLink,
 } from '../types/gamebanana';
 import type { DownloadedLocale, LocaleManifest } from '../types/locales';
+import { parseFeModel, type ClothModel } from './feModel';
 
 // Re-export types for convenience
 export type {
@@ -231,6 +233,35 @@ export async function exportRiggedHeroPose(
   fallbackSkinMetaKey?: string
 ): Promise<HeroPoseInfo> {
   return window.electronAPI.exportRiggedHeroPose(heroName, skinSources, fallbackSkinMetaKey);
+}
+
+/** The hero's cloth finite-element model (PHYS.m_pFeModel) as the verlet sidecar:
+ *  collision capsules/spheres + nodes the rigged preview's cloth sim reads to
+ *  stop the cloth bones clipping through the body. Returns null on a model with
+ *  no cloth (most heroes carry one; a few don't). */
+export async function getHeroClothModel(
+  heroName: string,
+  skinSources?: HeroPoseSkinSource[]
+): Promise<ClothModel | null> {
+  try {
+    const raw = await window.electronAPI.getHeroClothModel(heroName, skinSources);
+    if (raw == null) return null;
+    const parsed = parseFeModel(raw);
+    if (!parsed) console.warn('[cloth] failed to parse FeModel payload');
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a hero's ambient FX descriptor bundle is cached/current. */
+export async function getHeroEffectInfo(heroName: string): Promise<HeroEffectInfo> {
+  return window.electronAPI.getHeroEffectInfo(heroName);
+}
+
+/** Build (or refresh) a hero's ambient FX bundle via the bundled vpkmerge. */
+export async function exportHeroEffect(heroName: string): Promise<HeroEffectInfo> {
+  return window.electronAPI.exportHeroEffect(heroName);
 }
 
 export async function applyHeroSound(
