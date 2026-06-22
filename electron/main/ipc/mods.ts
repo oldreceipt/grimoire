@@ -310,10 +310,12 @@ ipcMain.handle('get-mods', async (): Promise<Mod[]> => {
                 ) {
                     return source.gameBananaFileId === mod.gameBananaFileId;
                 }
-                return !sourceSha;
             }
 
-            return !sourceSha;
+            // Mirror Installed.tsx: a disabled VPK at the exact recorded source
+            // filename is the absorbed source (enabled mods already excluded), so
+            // fold it in unless sha/gbId proved a different mod.
+            return true;
         };
         const rendererHidden = enriched.filter((m) =>
             absorbedSources.some((source) => matchesAbsorbedSource(m, source))

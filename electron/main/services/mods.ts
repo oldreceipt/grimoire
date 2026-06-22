@@ -416,10 +416,12 @@ export async function scanMods(deadlockPath: string): Promise<Mod[]> {
                 ) {
                     return src.gameBananaFileId === hitMeta.gameBananaFileId;
                 }
-                return !sourceSha;
             }
 
-            return !sourceSha;
+            // Mirror Installed.tsx: a disabled VPK at the exact recorded source
+            // filename is the absorbed source (enabled mods already excluded), so
+            // fold it in unless sha/gbId proved a different mod.
+            return true;
         };
         for (const m of mods) {
             const merged = getModMetadata(m.metaKey)?.merged;

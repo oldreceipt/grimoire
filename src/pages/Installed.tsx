@@ -676,10 +676,14 @@ export default function Installed() {
         ) {
           return source.gameBananaFileId === mod.gameBananaFileId;
         }
-        return !sourceSha;
       }
 
-      return !sourceSha;
+      // A disabled VPK at the exact recorded source filename is physically the
+      // absorbed source (filenames are unique within a folder), and enabled
+      // mods were already excluded above, so a recycled pakNN slot can't reach
+      // here. Fold it in unless sha or gbId positively proved a different mod;
+      // a hand-placed VPK with no recorded identity must not leave a stray card.
+      return true;
     };
 
     return mods.filter(
