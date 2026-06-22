@@ -37,10 +37,30 @@
       "missing": "Manquant",
       "valid": "Valide"
     },
+    "relativeTime": {
+      "justNow": "à l'instant",
+      "minutesAgo": "il y a {{count}} min",
+      "hoursAgo": "il y a {{count}} h",
+      "daysAgo": "il y a {{count}} j",
+      "weeksAgo": "il y a {{count}} sem",
+      "monthsAgo": "il y a {{count}} mois",
+      "yearsAgo": "il y a {{count}} ans"
+    },
     "emptyValue": "(vide)",
     "none": "Aucun",
     "versus": "VS",
     "versusLower": "vs"
+  },
+  "sync": {
+    "syncing": "Synchronisation {{section}} : {{percent}}%",
+    "error": "Erreur synchronisation : {{section}}",
+    "sections": {
+      "Mod": "Mods",
+      "Sound": "Sons",
+      "Gui": "Interface",
+      "Model": "Modèles",
+      "Wip": "WiPs"
+    }
   },
   "nav": {
     "installed": "Installés",
@@ -48,12 +68,130 @@
     "discover": "Découvrir",
     "servers": "Serveurs",
     "locker": "Casier",
+    "foundry": "Forge",
     "conflicts": "Conflits",
     "profiles": "Profils",
     "crosshair": "Réticule",
     "autoexec": "Autoexec",
     "stats": "Statistiques",
     "settings": "Paramètres"
+  },
+  "foundry": {
+    "header": {
+      "title": "Forge",
+      "description": "Parcourez le catalogue d'assets du jeu, généré hors-ligne depuis vos fichiers installés."
+    },
+    "browseCatalog": "Parcourir le catalogue complet",
+    "backToHeroes": "Occultistes",
+    "heroes": {
+      "subtitle": "Choisissez un occultiste pour modifier son apparence, ses capacités, sa voix et ses icônes.",
+      "search": "Rechercher des occultistes",
+      "noMatch": "Aucun occultiste ne correspond à cette recherche."
+    },
+    "workshop": {
+      "appearance": "Apparence",
+      "abilities": "Capacités",
+      "voice": "Voix",
+      "icons": "Icônes et textures",
+      "back": "Tous les occultistes",
+      "sections": "Sections de l'atelier",
+      "abilityIcons": "Icônes de capacité et d'objet",
+      "buildTray": "Assemblage",
+      "buildTrayEmpty": "Préparez vos remplacements d'icônes, textures et sons ici, puis forgez-les en un seul mod pour {{hero}}. (Les recolorations sont directement sauvegardées dans leur propre mod local).",
+      "removeStaged": "Retirer",
+      "forge": "Forger le mod",
+      "abilitiesSoon": {
+        "title": "L'édition par capacité arrive bientôt",
+        "body": "Cette vue regroupera chaque capacité dans une ligne avec son icône, sa couleur et son son en un seul endroit. Pour l'instant, recoloriez tous les effets de capacité en une fois sous Apparence, parcourez les icônes de capacité sous Icônes et Textures, et les sons de capacité sous Voix."
+      }
+    },
+    "subtools": {
+      "heading": "Atelier",
+      "library": "Bibliothèque",
+      "sound": "Son",
+      "texture": "Texture",
+      "items": "Objets",
+      "recolor": "Recolorer",
+      "soon": "bientôt"
+    },
+    "categories": {
+      "abilityIcon": "Icônes de capacité",
+      "itemIcon": "Icônes d'objet",
+      "heroImage": "Images d'occultistes"
+    },
+    "filters": {
+      "allHeroes": "Tous les occultistes",
+      "searchPlaceholder": "Rechercher..."
+    },
+    "loading": "Création du catalogue depuis vos fichiers de jeu...",
+    "error": {
+      "title": "Impossible de lire le catalogue"
+    },
+    "empty": {
+      "noPath": {
+        "title": "Définissez votre chemin Deadlock",
+        "description": "Le Forge lit le catalogue des resources de votre jeu. Définissez le chemin Deadlock dans les Paramètres pour commencer."
+      }
+    },
+    "lightbox": {
+      "unnamed": "(sans nom)",
+      "decoding": "Décodage taille réelle...",
+      "nativeSize": "Taille d'origine"
+    },
+    "texture": {
+      "categories": {
+        "heroModel": "Modèles d'occultistes",
+        "abilityVfx": "Effets de capacité"
+      },
+      "pickHero": "Sélectionner un occultiste",
+      "scope": {
+        "title": "Choisissez un héros pour voir ses textures",
+        "description": "Les textures des modèles d'occultistes et des effets sont nombreuses, choisissez un occultiste (ou effectuez une recherche) pour affiner la liste."
+      },
+      "empty": {
+        "title": "Aucune texture ne correspond",
+        "description": "Aucune texture dans cette catégorie pour cet occultiste ou cette recherche. Essayez une autre catégorie ou un autre occultiste."
+      },
+      "count": "{{count}} textures",
+      "countCapped": "{{count}} premiers résultats affichés. Affinez votre recherche pour en voir plus."
+    },
+    "recolor": {
+      "pickHero": "Sélectionner un occultiste",
+      "scope": {
+        "title": "Choisissez un occultiste à recolorer",
+        "description": "Choisissez un occultiste pour repeindre ses effets de capacité (couleur unique, arc-en-ciel, dégradé ou psychédélique) et ses textures corps/arme. Le résultat est enregistré en tant que mod local que vous pouvez supprimer à tout moment."
+      }
+    },
+    "sound": {
+      "searchPlaceholder": "Rechercher des sons...",
+      "muteToggle": "Couper / réactiver l'écoute",
+      "loading": "Lecture des sons depuis vos fichiers de jeu...",
+      "play": "Écouter",
+      "gameplayCount": "{{count}} sons en jeu",
+      "noMatch": "Aucun son ne correspond à votre recherche.",
+      "ult": "ULT",
+      "slot": "{{n}}",
+      "unsorted": "Autre",
+      "category": {
+        "ability": "Capacités",
+        "weapon": "Arme",
+        "movement": "Mouvement",
+        "melee": "Mêlée",
+        "other": "Autre"
+      },
+      "empty": {
+        "title": "Aucun son en jeu",
+        "description": "Ce héros n'a aucun son en jeu dans vos fichiers installés."
+      },
+      "voiceLines": {
+        "title": "Lignes vocales",
+        "hint": "longue liste",
+        "loading": "Lecture des lignes vocales...",
+        "empty": "Aucune ligne vocale ne correspond à votre recherche.",
+        "count": "{{shown}} sur {{total}} lignes vocales",
+        "capped": "Affichage des {{cap}} premières. Affinez votre recherche pour en voir plus."
+      }
+    }
   },
   "autoexec": {
     "commands": {
@@ -230,7 +368,7 @@
     },
     "overview": {
       "rankedScore": "Score classé",
-      "winLoss": "{{wins}}V / {{losses}}D",
+      "winLoss": "{{wins}} V / {{losses}} D",
       "winRate": "Taux de victoire",
       "bestStreak": "Meilleure série : {{count}}",
       "rankedTrajectory": "Trajectoire classée",
@@ -478,7 +616,11 @@
       "issuesFound": "Problèmes détectés",
       "verifySteam": "Dans Steam : clic droit sur Deadlock > Propriétés > Fichiers installés > Vérifier l'intégrité des fichiers du jeu.",
       "foundNearby": "Trouvé à proximité : {{candidates}}. Renommez-en un en gameinfo.gi pour le restaurer.",
-      "fixConfiguration": "Corriger la configuration"
+      "fixConfiguration": "Corriger la configuration",
+      "openFile": "Ouvrir gameinfo.gi",
+      "openConfirmTitle": "Ouvrir gameinfo.gi ?",
+      "openConfirmMessage": "Cela ouvre le fichier gameinfo.gi de Deadlock dans votre éditeur de texte. Il contrôle le chargement des mods. L'éditer manuellement peut casser le chargement des mods ou empêcher le jeu de se lancer. En cas de problème, utilisez Corriger la Configuration. Continuez uniquement si vous savez ce que vous faites.",
+      "openFailed": "Impossible d'ouvrir gameinfo.gi : {{error}}"
     },
     "updates": {
       "releaseNotesTitle": "Voir les notes de version pour {{version}}",
@@ -563,7 +705,8 @@
       "socialDescription": "Connectez-vous avec Steam pour publier des profils et parcourir les téléchargements d'autres joueurs dans Découvrir.",
       "fixUnknownMods": "Corriger les mods inconnus",
       "deadworksServers": "Serveurs Deadworks",
-      "performanceConfig": "Configuration des performances"
+      "performanceConfig": "Configuration performance",
+      "foundry": "Forge"
     },
     "support": {
       "reportBuildFailed": "Échec de la création du rapport : {{error}}",
@@ -572,12 +715,13 @@
       "description": "Vous avez trouvé un bug ou une demande de fonctionnalité ? Ouvrez un ticket sur GitHub ou rejoignez notre Discord.",
       "githubIssues": "Tickets GitHub",
       "joinDiscord": "Rejoindre Discord",
-      "kofi": "Payez-moi un café",
+      "kofi": "Offrez-moi un café",
       "shareBugReport": "Partager un rapport de bug",
       "bugReportDescription": "Décrivez ce qui s'est mal passé, générez un rapport anonymisé, puis collez-le dans Discord ou dans un ticket GitHub. Le rapport regroupe les informations de l'application et du système d'exploitation ainsi que la fin de votre journal ; les chemins personnels, les ID Steam, les jetons d'authentification et les emails sont supprimés avant de quitter l'application.",
       "regenerateReport": "Régénérer le rapport",
       "generateReport": "Générer le rapport",
       "includeFullLog": "Inclure le journal complet (jusqu'à 5 Mo ; Discord l'attache automatiquement en tant que fichier)",
+      "verboseModTrace": "Journalisation des mods détaillés (trace les activations/désactivations/analyses dans le journal ; désactivez quand vous avez terminé)",
       "reviewBeforeSharing": "Vérifiez avant de partager. Rien n'est envoyé automatiquement.",
       "copyFailed": "Échec de la copie : sélectionnez et Ctrl+C",
       "copyReport": "Copier le rapport",
@@ -749,6 +893,12 @@
       "enabled": "Activé",
       "modType": "Type de mod"
     },
+    "sections": {
+      "enabled_one": "Activé",
+      "enabled_other": "Activés",
+      "disabled_one": "Desactivé",
+      "disabled_other": "Desactivés"
+    },
     "view": {
       "viewOptions": "Options d'affichage",
       "styleAndCardSize": "Style et taille des cartes",
@@ -802,7 +952,7 @@
       "autoDetectCancelled": "Détection automatique annulée.",
       "autoDetectPrompt": "Lancer une recherche octet par octet sur GameBanana.",
       "autoDetectOff": "La détection automatique est désactivée. Activez-la dans les Paramètres (Fonctionnalités expérimentales) si vous voulez l'essayer, mais la recherche manuelle ci-dessus est recommandée.",
-      "manualSearchIntro": "<lead>Trouvez-le sur GameBanana et liez-le.</lead> Les résultats se mettent à jour au fur et à mesure que vous tapez, ou ouvrez GameBanana (ou l'onglet Parcourir) côte à côte pour trouver le mod, puis recherchez-le ici. Le liage identifie ce fichier exact : rien n'est retéléchargé. Utilisez le bouton <banana></banana> sur n'importe quel résultat pour l'ouvrir sur GameBanana et le télécharger directement.",
+      "manualSearchIntro": "<lead>Trouvez-le sur GameBanana et associez-le.</lead> Les résultats s'actualisent au fur et à mesure que vous tapez, ou ouvrez GameBanana (ou l'onglet Parcourir) côte à côte pour trouver le mod, puis recherchez-le ici. L'association cible ce fichier exact : rien n'est retéléchargé. Utilisez le bouton <banana></banana> sur n'importe quel résultat pour l'ouvrir sur GameBanana et le télécharger directement.",
       "fromFileTree": "Depuis l'arborescence des fichiers :",
       "sectionMods": "Mods",
       "sectionSounds": "Sons",
@@ -810,7 +960,7 @@
       "noResults": "Aucun résultat. Essayez un autre nom ou section.",
       "pinExactFile": "Épingler le fichier exact (facultatif)",
       "dontPinFile": "Ne pas épingler de fichier",
-      "linkThisMod": "Lier ce mod",
+      "linkThisMod": "Associer ce mod",
       "viewFiles": "Voir les fichiers",
       "readingVpk": "Lecture du VPK...",
       "showingSample": "Affichage d'un échantillon. L'arborescence complète se charge lorsqu'elle est développée.",
@@ -881,6 +1031,7 @@
       "shareCodeCopiedToast": "Code de partage copié"
     },
     "select": {
+      "dragHint": "Glisser pour réorganiser",
       "noneSelected": "Aucun mod sélectionné",
       "countSelected_one": "{{count}} mod sélectionné",
       "countSelected_other": "{{count}} mods sélectionnés",
@@ -997,13 +1148,15 @@
       "activeBadgeTitle": "Ce conteneur d'âmes est actif et chargé en jeu",
       "disabledBadge": "Désactivé",
       "disabledBadgeTitle": "Ce mod est désactivé et non chargé dans le jeu",
-      "deleteMod": "Supprimer {{name}}"
+      "deleteMod": "Supprimer {{name}}",
+      "propEmpty": "Aucun {{type}} installé pour l'instant. Importez-en un depuis un modèle 3D (.glb) pour commencer.",
+      "typeEmpty": "Aucun {{type}} installé pour l'instant. Trouvez-en dans Parcourir et ils apparaîtront ici."
     },
     "soulImport": {
       "trigger": {
         "label": "Importer un conteneur d'âmes (GLB)",
         "ariaLabel": "Importer un conteneur d'âmes depuis un GLB",
-        "title": "Importer un conteneur d'âmes depuis un modèle 3D (.glb) : orientez-le, prévisualisez-le et créez un mod local suivi"
+        "title": "Importer un conteneur d'âmes depuis un modèle 3D (.glb) : orientez-le, prévisualisez-le et créez un mod local"
       },
       "title": "Importer un conteneur d'âmes (GLB)",
       "submit": "Générer et importer",
@@ -1084,6 +1237,36 @@
         "filterName": "binaire glTF"
       }
     },
+    "urnImport": {
+      "trigger": {
+        "label": "Importer une Urne d'âmes (GLB)",
+        "ariaLabel": "Importer une Urne d'âmes depuis un GLB",
+        "title": "Importer une Urne d'âmes depuis un modèle 3D (.glb) : orientez-la, dimensionnez-la, prévisualisez-la et créez un mod local."
+      },
+      "title": "Importer une Urne d'âmes (GLB)",
+      "dropzone": {
+        "previewEmpty": "Déposez un GLB pour le prévisualiser ajusté à l'Urne d'âmes."
+      },
+      "fields": {
+        "namePlaceholder": "Mon Urne d'âmes"
+      },
+      "size": {
+        "label": "Taille",
+        "units": "unités",
+        "hint": "Taille de l'axe le plus grand en unités Source. L'urne est plus grande qu'un orbe d'âme ; la valeur par défaut (28) est un bon point de départ. Confirmez la taille réelle en jeu."
+      },
+      "ground": {
+        "label": "Poser la base au sol (au lieu de centrer)"
+      },
+      "highPolyWarning": "Ce modèle contient {{count}} triangles, bien au-delà des {{threshold}} habituels pour une urne. Il sera compilé, mais un modèle très lourd peut réduire les performances en jeu.",
+      "conflict": {
+        "heading": "Une Urne d'âmes est déjà activée",
+        "body": "Une seule Urne d'âmes se charge en jeu à la fois (elles remplacent le même modèle). Choisissez quoi faire avec « {{name}} » :"
+      },
+      "errors": {
+        "previewFailed": "L'aperçu de l'Urne d'âmes a échoué : {{error}}"
+      }
+    },
     "colors": {
       "loading": "Chargement...",
       "intro": "Repeindre les effets de capacité de {{hero}} (particules, projectiles et l'ultime). Choisissez une couleur unique, un arc-en-ciel, un dégradé ou un motif psychédélique : un seul choix est actif à la fois.",
@@ -1107,7 +1290,7 @@
       "paint": "Peindre",
       "stop": "Stop {{n}}",
       "abilityColorPreview": "Aperçu de la couleur de capacité",
-      "noRecolorApplied": "Aucun recolorage appliqué",
+      "noRecolorApplied": "Aucune recoloration appliquée",
       "appliedStatus": "Appliqué",
       "applyColor": "Appliquer couleur",
       "applyRainbow": "Appliquer l'arc-en-ciel",
@@ -1152,7 +1335,7 @@
         "abilities": "Capacités",
         "weapons": "Effets d'arme"
       },
-      "bakingHint": "Préparation du recolorage. La première fois peut prendre un certain temps (Réencodage de chaque texture affectée) ; le même choix est instantané ensuite.",
+      "bakingHint": "Préparation... La première fois peut prendre un certain temps (Réencodage de chaque texture affectée) ; le même choix est instantané ensuite.",
       "restartHint": "Redémarrez Deadlock pour que ce changement prenne effet (les addons sont chargé au démarrage du jeu).",
       "savedHint": "Enregistré. Ce choix sera chargé la prochaine fois que vous lancerez le jeu."
     },
@@ -1173,12 +1356,11 @@
       "pitch": "Pitch",
       "db": "dB",
       "saving": "Enregistrement...",
-      "appliesOnRelease": "S'Applique à la capacité",
       "alsoAbilities": "{{slots}} aussi",
       "applied": "Appliqué",
       "use": "Utiliser",
-      "on": "Activé",
-      "off": "Désactivé"
+      "on": "On",
+      "off": "Off"
     },
     "cards": {
       "heroCard": "Portrait d'Occultiste",
@@ -1270,7 +1452,9 @@
     "pose": {
       "posing": "Pose de {{hero}}...",
       "posingWithMods": "Pose de {{hero}} avec {{count}} mods actifs...",
-      "cannotPose": "Cet occultiste ne peut pas encore être posé en 3D."
+      "cannotPose": "Cet occultiste ne peut pas encore être posé en 3D.",
+      "pauseSpin": "Suspendre la rotation",
+      "resumeSpin": "Reprendre la rotation"
     },
     "downloadSkins": {
       "browseMore": "Parcourir plus de skins"
@@ -1286,6 +1470,10 @@
       "soundCount_other": "{{count}} sons",
       "modCount_one": "{{count}} mod",
       "modCount_other": "{{count}} mods",
+      "modsActive_one": "{{count}} mod installé (actif)",
+      "modsActive_other": "{{count}} mods installés (1 actif)",
+      "modsInstalled_one": "{{count}} mod installé (aucun actif)",
+      "modsInstalled_other": "{{count}} mods installés (aucun actif)",
       "categoryCount_one": "{{count}} catégorie",
       "categoryCount_other": "{{count}} catégories",
       "fileCount_one": "{{count}} fichier",
@@ -1305,6 +1493,7 @@
       "list": "Liste",
       "noHeroCategoriesFound": "Aucune catégorie d'occultiste trouvée.",
       "global": "Global",
+      "globalEmptyHint": "Importer des Conteneurs d'âmes & Urne d'âmes",
       "unassigned": "Non attribué",
       "unassignedDescription": "Ces mods n'ont pas pu être automatiquement associés à un occultiste. Étiquetez-en un pour le déplacer dans la pile du casier de cet occultiste.",
       "noPreview": "Aucun aperçu",
@@ -1755,7 +1944,7 @@
     "launchModded": "Lancer (Moddé)",
     "launchVanilla": "Lancer (Normal)",
     "stopGame": "Arrêter le jeu",
-    "updateAvailable": "Mise à jour disponible",
+    "updateAvailable": "Mise à jour dispo",
     "updateAvailableTitle": "Mise à jour disponible. Cliquez pour voir les notes de version.",
     "tooltip": {
       "installed": "Mods actuellement dans votre dossier addons Deadlock.",
@@ -1765,6 +1954,7 @@
       "discoverNew_other": "{{count}} nouveaux profils publiés.",
       "servers": "Parcourez et rejoignez les serveurs communautaires Deadworks.",
       "locker": "Skins et cosmétiques actifs, organisisés par occultiste.",
+      "foundry": "Parcourir le catalogue du jeu : textures, icônes et occultistes.",
       "crosshair": "Éditeur de réticule personnalisé.",
       "autoexec": "Commandes console exécutées au lancement du jeu.",
       "stats": "Historique des parties et statistiques personnelles.",
@@ -1809,10 +1999,10 @@
     },
     "brand": "Grimoire",
     "previewVolume": {
-      "label": "Volume de l'aperçu",
-      "levelLabel": "Volume de l'aperçu : {{percent}}%",
-      "mute": "Couper le volume de l'aperçu",
-      "unmute": "Activer le volume d'aperçu"
+      "label": "Volume",
+      "levelLabel": "Volume : {{percent}}%",
+      "mute": "Couper le volume",
+      "unmute": "Activer le volume"
     }
   },
   "browse": {
@@ -1837,10 +2027,11 @@
     },
     "section": {
       "sounds": "Sons",
+      "wips": "WiPs",
       "label": "Section"
     },
     "search": {
-      "placeholder": "Rechercher des mods...",
+      "placeholder": "Rechercher...",
       "searching": "Recherche",
       "clear": "Effacer la recherche",
       "submit": "Rechercher"
@@ -1906,7 +2097,7 @@
       "from": "De",
       "to": "À"
     },
-    "previewVolume": "Volume de l'aperçu",
+    "previewVolume": "Volume",
     "loadMore": {
       "loadingMore": "Chargement de plus...",
       "couldntLoadMore": "Impossible de charger plus.",
@@ -1979,6 +2170,8 @@
       "previewHidden": "Aperçu NSFW masqué"
     },
     "viewOnGamebanana": "Voir sur GameBanana",
+    "copyLink": "Copier le lien",
+    "linkCopied": "Lien copié",
     "outdatedWarning": "Ce mod a été mis à jour pour la dernière fois le {{date}} et pourrait ne pas être compatible avec la version actuelle de Deadlock.",
     "deleteFile": {
       "title": "Supprimer le fichier installé ?",
@@ -2121,6 +2314,18 @@
       "error": "Erreur",
       "notApplied": "Non appliqué"
     },
+    "status": {
+      "applied": "Config performance v{{version}} appliquée.",
+      "appliedOutdated": "La config performance v{{version}} est appliquée ; v{{latest}} est disponible (réappliquez pour mettre à jour).",
+      "overrideNote_one": "Conservation de {{count}} modification.",
+      "overrideNote_other": "Conservation de {{count}} modifications.",
+      "handEditedNote": "Le fichier a été édité manuellement : \"Réappliquer\" intègre ces changements à vos modifications.",
+      "wipedRestorable": "gameinfo.gi est vide ou corrompu. Restaurez la sauvegarde Grimoire (ou vérifiez les fichiers du jeu dans Steam), puis réappliquez.",
+      "wiped": "Une mise à jour du jeu a réinitialisé gameinfo.gi et supprimé la config performance. Réappliquez pour la restaurer.",
+      "wipedRestoreNote_one": "Votre {{count}} modification sauvegardée sera également restaurée.",
+      "wipedRestoreNote_other": "Vos {{count}} modifications sauvegardées seront également restaurées.",
+      "notApplied": "La config performance n'est pas appliquée."
+    },
     "credit": "La carte semble sombre ? Réglez les ombres dans le jeu sur Moyen ou Bas. Les mises à jour du jeu effacent la configuration ; Grimoire le détecte ici pour que vous puissiez la réappliquer. Par <sqooky>Sqooky</sqooky> et <contributors>contributeurs<extlink></extlink></contributors>. Si cela vous aide, <kofi>offrez-leur un café</kofi>.",
     "restoreBackup": "Restaurer la sauvegarde",
     "reapply": "Réappliquer",
@@ -2133,7 +2338,7 @@
       "chooseTitle": "Choisir une application d'édition",
       "title": "Ouvrir gameinfo.gi avec",
       "description": "Choisissez l'éditeur pour les ajustements de configuration. Grimoire s'en souvient ; le bouton à côté de Modifier le fichier permet de le changer ultérieurement.",
-      "systemDefaultHint": "Ce avec quoi votre OS ouvre les fichiers texte",
+      "systemDefaultHint": "Ce avec quoi votre systeme ouvre les fichiers texte",
       "browse": "Rechercher une application..."
     }
   },
@@ -2142,7 +2347,6 @@
     "pitch": "Pitch (hauteur)",
     "db": "{{value}} dB",
     "saving": "Enregistrement...",
-    "appliesOnRelease": "S'applique au relâchement",
     "title": "Remplacements du casier",
     "subtitle": "Cosmétiques toujours actifs, séparés de votre ordre de chargement des mods et de la limite des 99 emplacements.",
     "tabs": {
