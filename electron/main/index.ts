@@ -1,30 +1,11 @@
-import { app, BrowserWindow, shell, session, protocol, nativeTheme, screen } from 'electron';
-import { join, resolve } from 'path';
+import { app, BrowserWindow, shell, session, nativeTheme, screen } from 'electron';
+import { promises as fs } from 'fs';
+import { dirname, join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
-import { SOUL_MODEL_SCHEME, registerSoulModelProtocol } from './services/soulContainerModels';
-import { HERO_POSE_SCHEME, registerHeroPoseProtocol, sweepHeroPoseCache } from './services/heroPoseModels';
-import { FOUNDRY_THUMB_SCHEME, registerFoundryThumbnailProtocol } from './services/foundryCatalog';
-
-// The `grimoire-soul:` and `grimoire-hero:` schemes serve GLBs (soul-container
-// models and posed hero stills) out of the user's library to the renderer's 3D
-// viewers. Must be declared privileged before app-ready so fetch/streaming work
-// under the renderer's file:// origin.
-protocol.registerSchemesAsPrivileged([
-    {
-        scheme: SOUL_MODEL_SCHEME,
-        privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
-    },
-    {
-        scheme: HERO_POSE_SCHEME,
-        privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
-    },
-    {
-        // Serves Foundry's cached texture/icon thumbnails (PNG) to the browse grid.
-        scheme: FOUNDRY_THUMB_SCHEME,
-        privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
-    },
-]);
+import { registerSoulModelProtocol } from './services/soulContainerModels';
+import { registerHeroPoseProtocol, sweepHeroPoseCache } from './services/heroPoseModels';
+import { registerFoundryThumbnailProtocol } from './services/foundryCatalog';
 
 // The app is dark-only, so pin Chromium and the OS chrome to dark regardless
 // of the system theme. On Windows this stops the native frame/menus rendering
@@ -104,8 +85,12 @@ import { backfillMissingMetadataHashes } from './services/metadata';
 import { backfillImprintedFlags } from './services/imprintMods';
 import { destroyDiscordRpc } from './services/discordRpc';
 import { startSaltIngest } from './services/saltIngest';
+import { recoverInterruptedModUpdates } from './services/modUpdate';
 
 let mainWindow: BrowserWindow | null = null;
+const updateHarnessRoot = process.env['GRIMOIRE_UPDATE_HARNESS_ROOT'];
+const updateHarnessScenario = process.env['GRIMOIRE_UPDATE_HARNESS_SCENARIO'];
+const isUpdateHarness = !!updateHarnessRoot;
 
 /** Schemes we'll hand to shell.openExternal. Restricted to web/email links
  *  so a mod description (or any other untrusted content rendered in the
@@ -359,17 +344,49 @@ function createWindow(): void {
     });
 
     // Load the renderer
+    const harnessHash = updateHarnessScenario
+        ? `/?modUpdateHarness=${encodeURIComponent(updateHarnessScenario)}`
+        : undefined;
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-        mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
+        const rendererUrl = new URL(process.env['ELECTRON_RENDERER_URL']);
+        if (harnessHash) rendererUrl.hash = harnessHash;
+        mainWindow.loadURL(rendererUrl.href);
     } else {
         const rendererPath = join(__dirname, '../renderer/index.html');
         console.log('[Main] Loading renderer from:', rendererPath);
-        mainWindow.loadFile(rendererPath);
+        mainWindow.loadFile(rendererPath, harnessHash ? { hash: harnessHash } : undefined);
     }
 
     // Open DevTools in development only
-    if (is.dev) {
+    if (is.dev && !isUpdateHarness) {
         mainWindow.webContents.openDevTools();
+    }
+
+    const screenshotPath = process.env['GRIMOIRE_UPDATE_HARNESS_SCREENSHOT'];
+    if (isUpdateHarness && screenshotPath) {
+        mainWindow.webContents.once('did-finish-load', () => {
+            const configuredDelay = Number(
+                process.env['GRIMOIRE_UPDATE_HARNESS_SCREENSHOT_DELAY_MS'] ?? '1500'
+            );
+            const delayMs = Number.isFinite(configuredDelay)
+                ? Math.max(0, Math.min(configuredDelay, 60_000))
+                : 1500;
+            setTimeout(() => {
+                void (async () => {
+                    if (!mainWindow || mainWindow.isDestroyed()) return;
+                    try {
+                        const image = await mainWindow.webContents.capturePage();
+                        await fs.mkdir(dirname(screenshotPath), { recursive: true });
+                        await fs.writeFile(screenshotPath, image.toPNG());
+                        console.log(`[Harness] Screenshot written to ${screenshotPath}`);
+                        app.quit();
+                    } catch (error) {
+                        console.error('[Harness] Failed to capture screenshot:', error);
+                        app.exit(1);
+                    }
+                })();
+            }, delayMs);
+        });
     }
 }
 
@@ -377,13 +394,13 @@ function createWindow(): void {
 // this app. The packaged NSIS installer also writes registry entries via the
 // `protocols:` block in electron-builder.yml, but the runtime call covers
 // dev/portable launches and re-asserts ownership when needed.
-if (process.defaultApp) {
+if (!isUpdateHarness && process.defaultApp) {
     if (process.argv.length >= 2) {
         app.setAsDefaultProtocolClient(GRIMOIRE_PROTOCOL, process.execPath, [
             resolve(process.argv[1]),
         ]);
     }
-} else {
+} else if (!isUpdateHarness) {
     app.setAsDefaultProtocolClient(GRIMOIRE_PROTOCOL);
 }
 
@@ -392,12 +409,12 @@ if (process.defaultApp) {
 const initialProtocolUrl = findGrimoireUrlInArgv(process.argv);
 
 // Single instance lock
-const gotTheLock = app.requestSingleInstanceLock();
+const gotTheLock = isUpdateHarness || app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
     app.quit();
 } else {
-    app.on('second-instance', (_event, argv) => {
+    if (!isUpdateHarness) app.on('second-instance', (_event, argv) => {
         // Focus the main window if a second instance is attempted
         if (mainWindow) {
             if (mainWindow.isMinimized()) mainWindow.restore();
@@ -417,9 +434,18 @@ if (!gotTheLock) {
         }
     });
 
-    app.whenReady().then(() => {
+    app.whenReady().then(async () => {
+        // A prior process may have terminated between backup and commit. Finish
+        // recovery before creating a window (and therefore before any renderer
+        // scan can observe or reconcile a half-finished filesystem state).
+        try {
+            await recoverInterruptedModUpdates();
+        } catch (error) {
+            console.error('[ModUpdate] Startup recovery failed:', error);
+        }
+
         // Set app user model id for windows
-        electronApp.setAppUserModelId('com.grimoire.modmanager');
+        if (!isUpdateHarness) electronApp.setAppUserModelId('com.grimoire.modmanager');
 
         // Serve per-mod soul-container GLBs from the user's library.
         registerSoulModelProtocol();
@@ -434,10 +460,13 @@ if (!gotTheLock) {
         // cache is also swept after each export.
         void sweepHeroPoseCache();
 
-        // Default open or close DevTools by F12 in development
-        app.on('browser-window-created', (_, window) => {
-            optimizer.watchWindowShortcuts(window);
-        });
+        // Default open or close DevTools by F12 in development. The visual
+        // harness deliberately has no inspector surface or shortcut.
+        if (!isUpdateHarness) {
+            app.on('browser-window-created', (_, window) => {
+                optimizer.watchWindowShortcuts(window);
+            });
+        }
 
         // Set Content Security Policy (production only - Vite needs inline scripts for HMR in dev)
         if (!is.dev) {
@@ -504,10 +533,10 @@ if (!gotTheLock) {
 
         // Restore a previously-persisted social session (no-op if none, or if
         // we're on Linux without a real secret store — ADR-011).
-        void hydrateSocialSession();
+        if (!isUpdateHarness) void hydrateSocialSession();
 
         // Resume the opt-in match-salt contributor across restarts.
-        if (loadSettings().contributeMatchSalts) {
+        if (!isUpdateHarness && loadSettings().contributeMatchSalts) {
             startSaltIngest();
         }
 
@@ -520,7 +549,7 @@ if (!gotTheLock) {
 
         // Initialize auto-updater (production only). Skip the background check
         // for apt/AUR/snap installs since the package manager owns updates.
-        if (!is.dev && mainWindow) {
+        if (!is.dev && !isUpdateHarness && mainWindow) {
             initUpdater(mainWindow);
             if (getInstallSource() !== 'managed') {
                 setTimeout(() => {

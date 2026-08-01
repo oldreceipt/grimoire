@@ -31,6 +31,7 @@ import type {
 import { parseFeModel, type ClothModel } from './feModel';
 import { showToast } from '../stores/toastStore';
 import i18n from '../i18n';
+import type { ModUpdateProgress, ModUpdateRequest, ModUpdateResult } from '../types/modUpdate';
 
 // Sentinel that matches the Error thrown by the main process
 // (GAME_RUNNING_MOD_LOCK_MESSAGE in gameSessionMods.ts). It crosses the IPC
@@ -836,6 +837,21 @@ export async function downloadMod(
   modName?: string
 ): Promise<void> {
   return withGameRunningWarning(() => window.electronAPI.downloadMod({ modId, fileId, fileName, section, categoryId, modName }));
+}
+
+/** Replace an installed mod without exposing the destructive delete/download gap. */
+export async function updateMod(request: ModUpdateRequest): Promise<ModUpdateResult> {
+  return withGameRunningWarning(() => window.electronAPI.updateMod(request));
+}
+
+export async function cancelModUpdate(operationId: string): Promise<boolean> {
+  return window.electronAPI.cancelModUpdate(operationId);
+}
+
+export function onModUpdateProgress(
+  callback: (progress: ModUpdateProgress) => void,
+): () => void {
+  return window.electronAPI.onModUpdateProgress(callback);
 }
 
 export async function getGamebananaSections(): Promise<GameBananaSection[]> {

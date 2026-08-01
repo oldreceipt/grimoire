@@ -76,6 +76,11 @@ import type {
     ReportRequest,
     UpdateProfileRequest,
 } from '@grimoire/social-types';
+import type {
+    ModUpdateHarnessScenario,
+    ModUpdateProgress,
+    ModUpdateRequest,
+} from '../../src/types/modUpdate';
 
 // Expose the API to the renderer process
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -356,6 +361,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getModUpdates: (args: GetModUpdatesArgs) => ipcRenderer.invoke('get-mod-updates', args),
     getSubmitterLinks: (memberId: number) => ipcRenderer.invoke('get-submitter-links', memberId),
     downloadMod: (args: DownloadModArgs) => ipcRenderer.invoke('download-mod', args),
+    updateMod: (request: ModUpdateRequest) => ipcRenderer.invoke('update-mod', request),
+    cancelModUpdate: (operationId: string) => ipcRenderer.invoke('cancel-mod-update', operationId),
     getGameBananaSections: () => ipcRenderer.invoke('get-gamebanana-sections'),
     getGameBananaCategories: (args: GetCategoriesArgs) =>
         ipcRenderer.invoke('get-gamebanana-categories', args),
@@ -424,6 +431,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.on('download-error', handler);
         return () => ipcRenderer.removeListener('download-error', handler);
     },
+    onModUpdateProgress: (callback: (data: ModUpdateProgress) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, data: ModUpdateProgress) => callback(data);
+        ipcRenderer.on('mod-update-progress', handler);
+        return () => ipcRenderer.removeListener('mod-update-progress', handler);
+    },
     onModsAutoDisabled: (callback: (data: ModsAutoDisabledData) => void) => {
         const handler = (_event: Electron.IpcRendererEvent, data: ModsAutoDisabledData) => callback(data);
         ipcRenderer.on('mods-auto-disabled', handler);
@@ -435,6 +447,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getCurrentDownload: () => ipcRenderer.invoke('get-current-download'),
     removeFromQueue: (modId: number) => ipcRenderer.invoke('remove-from-queue', modId),
     cancelActiveDownload: () => ipcRenderer.invoke('cancel-active-download'),
+    runModUpdateHarnessScenario: (
+        scenario: ModUpdateHarnessScenario,
+        requests: ModUpdateRequest[]
+    ) => ipcRenderer.invoke('run-mod-update-harness-scenario', scenario, requests),
     onDownloadQueueUpdated: (callback: (data: DownloadQueueData) => void) => {
         const handler = (_event: Electron.IpcRendererEvent, data: DownloadQueueData) => callback(data);
         ipcRenderer.on('download-queue-updated', handler);

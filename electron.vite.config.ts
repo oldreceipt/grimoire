@@ -89,7 +89,10 @@ export default defineConfig(({ mode }) => {
             outDir: 'dist/main',
             rollupOptions: {
                 input: {
-                    index: resolve(__dirname, 'electron/main/index.ts'),
+                    // The bootstrap selects the disposable harness user-data
+                    // directory before index.ts imports any settings or IPC
+                    // modules that may read Electron's default userData path.
+                    index: resolve(__dirname, 'electron/main/bootstrap.ts'),
                 },
             },
         },

@@ -29,7 +29,17 @@ import type {
     GetModUpdatesArgs,
     GetCategoriesArgs,
 } from '../../../src/types/electron';
+import type {
+    ModUpdateHarnessScenario,
+    ModUpdateRequest,
+    ModUpdateResult,
+} from '../../../src/types/modUpdate';
 import { updateModNsfw } from '../services/modDatabase';
+import {
+    cancelModUpdate,
+    runModUpdateHarnessScenario,
+    runModUpdateTransaction,
+} from '../services/modUpdate';
 
 // browse-mods
 ipcMain.handle(
@@ -77,6 +87,34 @@ ipcMain.handle('download-mod', async (_, args: DownloadModArgs): Promise<void> =
     const mainWindow = getMainWindow();
     await downloadMod(deadlockPath, args, mainWindow);
 });
+
+// A mod update is one main-process transaction rather than a renderer-side
+// delete followed by a normal download. The service stages and validates the
+// replacement before it enters the mod mutation lock for the final swap.
+ipcMain.handle(
+    'update-mod',
+    async (_, request: ModUpdateRequest): Promise<ModUpdateResult> => {
+        return runModUpdateTransaction(request, getMainWindow());
+    }
+);
+
+ipcMain.handle('cancel-mod-update', (_, operationId: string): boolean => {
+    return cancelModUpdate(operationId);
+});
+
+ipcMain.handle(
+    'run-mod-update-harness-scenario',
+    async (
+        _,
+        scenario: ModUpdateHarnessScenario,
+        requests: ModUpdateRequest[]
+    ): Promise<ModUpdateResult[]> => {
+        if (!process.env['GRIMOIRE_UPDATE_HARNESS_ROOT']) {
+            throw new Error('The mod-update scenario runner is only available in the disposable harness');
+        }
+        return runModUpdateHarnessScenario(scenario, requests, getMainWindow());
+    }
+);
 
 // get-download-queue
 ipcMain.handle('get-download-queue', () => {

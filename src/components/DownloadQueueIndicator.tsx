@@ -3,6 +3,7 @@ import { Download, Loader2, X, ChevronUp, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import type { DownloadQueueItem, DownloadProgressData } from '../types/electron';
+import type { ModUpdateProgress } from '../types/modUpdate';
 import { formatBytes } from '../lib/formatBytes';
 import { rollPreparingSuffix } from '../lib/easterEggs';
 import Tx from './translation/Tx';
@@ -45,6 +46,7 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
         progress: null,
     });
     const [isExpanded, setIsExpanded] = useState(false);
+    const [activeUpdates, setActiveUpdates] = useState<Record<string, ModUpdateProgress>>({});
 
     // Speed/ETA derived from the rate of the current download's progress
     // stream. Anchored to the first sample after the active download
@@ -106,10 +108,26 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
             setQueueState((prev) => ({ ...prev, progress: null }));
         });
 
+        const updateUnsub = window.electronAPI.onModUpdateProgress((progress) => {
+            setActiveUpdates((previous) => {
+                const next = { ...previous };
+                if (progress.phase === 'preparing' || progress.phase === 'downloading' || progress.phase === 'installing') {
+                    // Delete/reinsert gives the most recently active operation
+                    // the expanded panel while retaining every concurrent one.
+                    delete next[progress.operationId];
+                    next[progress.operationId] = progress;
+                } else {
+                    delete next[progress.operationId];
+                }
+                return next;
+            });
+        });
+
         return () => {
             queueUnsub();
             progressUnsub();
             completeUnsub();
+            updateUnsub();
         };
     }, []);
 
@@ -118,27 +136,49 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
     };
 
     const handleCancelActive = async () => {
+        const updates = Object.values(activeUpdates);
+        const activeUpdate = updates[updates.length - 1];
+        if (!queueState.currentDownload && activeUpdate) {
+            await window.electronAPI.cancelModUpdate(activeUpdate.operationId);
+            return;
+        }
         await window.electronAPI.cancelActiveDownload();
     };
 
-    const totalItems = queueState.queue.length + (queueState.currentDownload ? 1 : 0);
+    const updateItems = Object.values(activeUpdates);
+    const activeUpdate = updateItems[updateItems.length - 1] ?? null;
+    const showingUpdate = !queueState.currentDownload && activeUpdate !== null;
+    const totalItems = queueState.queue.length + (queueState.currentDownload ? 1 : 0) + updateItems.length;
+    const displayedProgress = showingUpdate
+        ? typeof activeUpdate.downloaded === 'number' && typeof activeUpdate.total === 'number'
+            ? { downloaded: activeUpdate.downloaded, total: activeUpdate.total }
+            : null
+        : queueState.progress;
     const progressPercent =
-        queueState.progress && queueState.progress.total > 0
-            ? (queueState.progress.downloaded / queueState.progress.total) * 100
+        displayedProgress && displayedProgress.total > 0
+            ? (displayedProgress.downloaded / displayedProgress.total) * 100
             : 0;
     const progressPercentRounded = Math.round(progressPercent);
+    const isDeterminate = !!displayedProgress && displayedProgress.total > 0;
 
     const etaSeconds = useMemo(() => {
-        if (!queueState.progress || speed <= 0) return 0;
+        if (showingUpdate || !queueState.progress || speed <= 0) return 0;
         const remaining = queueState.progress.total - queueState.progress.downloaded;
         return remaining / speed;
-    }, [queueState.progress, speed]);
+    }, [queueState.progress, showingUpdate, speed]);
 
     if (totalItems === 0) return null;
 
     const currentFileName =
-        queueState.currentDownload?.fileName ?? t('downloadQueue.preparing') + preparingSuffix;
-    const currentTooltip = queueState.currentDownload?.modName ?? currentFileName;
+        queueState.currentDownload?.fileName ?? activeUpdate?.displayName ?? t('downloadQueue.preparing') + preparingSuffix;
+    const currentTooltip = queueState.currentDownload?.modName ?? activeUpdate?.displayName ?? currentFileName;
+    const currentPhase = showingUpdate
+        ? activeUpdate.phase === 'downloading'
+            ? isDeterminate ? `${progressPercentRounded}%` : 'Downloading'
+            : activeUpdate.phase === 'installing' ? 'Installing' : 'Preparing'
+        : isDeterminate ? `${progressPercentRounded}%` : t('downloadQueue.preparing');
+    const hasCancellableCurrent = !!queueState.currentDownload ||
+        (showingUpdate && (activeUpdate.phase === 'preparing' || activeUpdate.phase === 'downloading'));
 
     return (
         <div className={`pointer-events-auto ${className}`}>
@@ -157,8 +197,8 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
                         title={t('downloadQueue.showDetails')}
                     >
                         <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-accent/15">
-                            {queueState.currentDownload ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+                            {(queueState.currentDownload || activeUpdate) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none text-accent" />
                             ) : (
                                 <Download className="h-3.5 w-3.5 text-accent" />
                             )}
@@ -168,8 +208,8 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
                                 {currentFileName}
                             </div>
                             <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-text-secondary">
-                                <span className="tabular-nums">{progressPercentRounded}%</span>
-                                {speed > 0 && (
+                                <span className="tabular-nums">{currentPhase}</span>
+                                {!showingUpdate && speed > 0 && (
                                     <>
                                         <span className="opacity-50">·</span>
                                         <span className="tabular-nums">{formatSpeed(speed)}</span>
@@ -185,7 +225,7 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
                         </div>
                         <ChevronUp className="h-4 w-4 flex-shrink-0 text-text-secondary opacity-0 transition-opacity group-hover:opacity-100" />
                     </button>
-                    {queueState.currentDownload && (
+                    {hasCancellableCurrent && (
                         <button
                             type="button"
                             onClick={(e) => {
@@ -204,8 +244,8 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
                         className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] bg-white/5"
                     >
                         <span
-                            className="block h-full bg-accent transition-[width] duration-200 ease-out"
-                            style={{ width: `${progressPercent}%` }}
+                            className="block h-full bg-accent transition-[width] duration-200 ease-out motion-reduce:transition-none"
+                            style={{ width: isDeterminate ? `${progressPercent}%` : '0%' }}
                         />
                     </span>
                 </div>
@@ -235,10 +275,10 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
                         </button>
                     </div>
 
-                    {queueState.currentDownload && (
+                    {(queueState.currentDownload || activeUpdate) && (
                         <div className="px-4 py-3 border-b border-white/5">
                             <div className="flex items-center gap-2">
-                                <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-accent" />
+                                <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin motion-reduce:animate-none text-accent" />
                                 <p
                                     className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary"
                                     title={currentTooltip}
@@ -246,9 +286,9 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
                                     {currentFileName}
                                 </p>
                                 <span className="text-xs tabular-nums text-accent font-semibold">
-                                    {progressPercentRounded}%
+                                    {currentPhase}
                                 </span>
-                                <button
+                                {hasCancellableCurrent && <button
                                     type="button"
                                     onClick={() => void handleCancelActive()}
                                     className="rounded-md p-1 text-text-secondary transition-colors hover:bg-red-500/10 hover:text-red-300 cursor-pointer"
@@ -256,18 +296,26 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
                                     title={t('downloadQueue.cancelDownload')}
                                 >
                                     <X className="h-3.5 w-3.5" />
-                                </button>
+                                </button>}
                             </div>
-                            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
+                            <div
+                                className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5"
+                                role="progressbar"
+                                aria-label="Download progress"
+                                aria-valuemin={isDeterminate ? 0 : undefined}
+                                aria-valuemax={isDeterminate ? 100 : undefined}
+                                aria-valuenow={isDeterminate ? progressPercent : undefined}
+                                aria-valuetext={currentPhase}
+                            >
                                 <div
-                                    className="h-full rounded-full bg-gradient-to-r from-accent/80 to-accent transition-[width] duration-200 ease-out"
-                                    style={{ width: `${progressPercent}%` }}
+                                    className={`h-full rounded-full bg-gradient-to-r from-accent/80 to-accent transition-[width] duration-200 ease-out motion-reduce:transition-none ${isDeterminate ? '' : 'w-1/3 motion-safe:animate-pulse'}`}
+                                    style={isDeterminate ? { width: `${progressPercent}%` } : undefined}
                                 />
                             </div>
                             <div className="mt-2 flex items-center justify-between text-[11px] text-text-secondary tabular-nums">
                                 <span>
-                                    {queueState.progress
-                                        ? `${formatBytes(queueState.progress.downloaded)} / ${formatBytes(queueState.progress.total)}`
+                                    {displayedProgress
+                                        ? `${formatBytes(displayedProgress.downloaded)} / ${formatBytes(displayedProgress.total)}`
                                         : '—'}
                                 </span>
                                 <span className="flex items-center gap-2">
@@ -280,6 +328,12 @@ export default function DownloadQueueIndicator({ className = '' }: DownloadQueue
                                     )}
                                 </span>
                             </div>
+                        </div>
+                    )}
+
+                    {updateItems.length > 1 && (
+                        <div className="border-b border-white/5 px-4 py-2 text-xs text-text-secondary">
+                            {updateItems.length} mod updates active
                         </div>
                     )}
 

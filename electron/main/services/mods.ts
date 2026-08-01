@@ -68,7 +68,7 @@ type CollisionMetadataOwner = 'enabled' | 'disabled';
  * the vpk stayed"). A short backoff clears the common case; a genuinely locked
  * file (game actually running on it) still throws after the last attempt.
  */
-async function renameWithRetry(from: string, to: string, attempts = 5): Promise<void> {
+export async function renameWithRetry(from: string, to: string, attempts = 5): Promise<void> {
     for (let i = 0; ; i++) {
         try {
             await fs.rename(from, to);
@@ -161,7 +161,7 @@ function parseVpkPriority(filename: string): number | null {
  * and `addons{N}/<file>` for overflow mods, which keeps IDs unique when the same
  * pakNN_dir.vpk name exists in more than one addon folder.
  */
-function generateModId(metaKey: string): string {
+export function generateModId(metaKey: string): string {
     return createHash('md5').update(metaKey).digest('hex').slice(0, 16);
 }
 

@@ -69,6 +69,7 @@ interface Props {
     /** True while an update run is in progress (shared with the page-level
      *  Update-all button) so this modal mirrors the same disabled/progress UX. */
     isUpdating?: boolean;
+    isInstalling?: boolean;
     updateProgress?: { done: number; total: number } | null;
     onClose: () => void;
 }
@@ -135,6 +136,7 @@ export default function VariantPickerModal({
     variantsWithUpdate,
     onUpdateGroup,
     isUpdating = false,
+    isInstalling = false,
     updateProgress = null,
     onClose,
 }: Props) {
@@ -190,7 +192,7 @@ export default function VariantPickerModal({
     const cancelRename = () => setEditing(null);
 
     const commitRename = async (v: Mod) => {
-        if (!editing || editing.id !== v.id || pending) return;
+        if (!editing || editing.id !== v.id || pending || isInstalling) return;
         const next = editing.draft.trim();
         if (next === variantDisplayName(v)) {
             setEditing(null);
@@ -206,7 +208,7 @@ export default function VariantPickerModal({
     };
 
     const pick = async (target: Mod) => {
-        if (pending) return;
+        if (pending || isInstalling) return;
         setPending(target.id);
         try {
             await onToggle(target);
@@ -216,7 +218,7 @@ export default function VariantPickerModal({
     };
 
     const handleDelete = async (variant: Mod) => {
-        if (pending || editing) return;
+        if (pending || editing || isInstalling) return;
         setPending(`delete:${variant.id}`);
         try {
             await onDeleteVariant(variant);
@@ -226,7 +228,7 @@ export default function VariantPickerModal({
     };
 
     const move = async (variant: Mod, direction: 'up' | 'down') => {
-        if (pending) return;
+        if (pending || isInstalling) return;
         setPending(`move:${variant.id}:${direction}`);
         try {
             await onMoveVariant(variant, direction);
@@ -307,7 +309,7 @@ export default function VariantPickerModal({
                 <button
                     type="button"
                     onClick={overlay ? undefined : () => pick(v)}
-                    disabled={overlay || !!pending || isEditing}
+                    disabled={overlay || !!pending || isEditing || isInstalling}
                     className="flex-1 min-w-0 text-left cursor-pointer disabled:cursor-default disabled:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
                     title={isActive ? 'Disable this file' : 'Enable this file'}
                     aria-pressed={isActive}
@@ -394,7 +396,7 @@ export default function VariantPickerModal({
                         <button
                             type="button"
                             onClick={() => commitRename(v)}
-                            disabled={!!pending}
+                            disabled={!!pending || isInstalling}
                             className="p-1.5 text-accent hover:bg-accent/10 rounded transition-colors cursor-pointer disabled:opacity-50"
                             title={t('common.actions.save')}
                             aria-label={t('variantPicker.saveFileName')}
@@ -408,7 +410,7 @@ export default function VariantPickerModal({
                         <button
                             type="button"
                             onClick={cancelRename}
-                            disabled={!!pending}
+                            disabled={!!pending || isInstalling}
                             className="p-1.5 text-text-secondary hover:text-text-primary hover:bg-white/5 rounded transition-colors cursor-pointer disabled:opacity-50"
                             title={t('common.actions.cancel')}
                             aria-label={t('profiles.actions.cancelRename')}
@@ -423,7 +425,7 @@ export default function VariantPickerModal({
                                 <button
                                     type="button"
                                     onClick={() => move(v, 'up')}
-                                    disabled={overlay || !!pending || !canMoveUp}
+                                    disabled={overlay || !!pending || !canMoveUp || isInstalling}
                                     className="p-0.5 text-text-secondary hover:text-accent hover:bg-accent/10 rounded transition-colors cursor-pointer disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-text-secondary"
                                     title={canMoveUp ? 'Move up' : 'Already first in load order'}
                                     aria-label={t('variantPicker.moveFileUp')}
@@ -437,7 +439,7 @@ export default function VariantPickerModal({
                                 <button
                                     type="button"
                                     onClick={() => move(v, 'down')}
-                                    disabled={overlay || !!pending || !canMoveDown}
+                                    disabled={overlay || !!pending || !canMoveDown || isInstalling}
                                     className="p-0.5 text-text-secondary hover:text-accent hover:bg-accent/10 rounded transition-colors cursor-pointer disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-text-secondary"
                                     title={canMoveDown ? 'Move down' : 'Already last in load order'}
                                     aria-label={t('variantPicker.moveFileDown')}
@@ -453,7 +455,7 @@ export default function VariantPickerModal({
                         <button
                             type="button"
                             onClick={() => startRename(v)}
-                            disabled={overlay || !!pending}
+                            disabled={overlay || !!pending || isInstalling}
                             className="flex-shrink-0 p-1.5 text-text-secondary hover:text-accent hover:bg-accent/10 rounded transition-colors cursor-pointer disabled:cursor-default disabled:opacity-50"
                             title={v.variantLabel ? 'Rename file' : 'Give this file a name'}
                             aria-label={t('variantPicker.renameFile')}
@@ -463,7 +465,7 @@ export default function VariantPickerModal({
                         <button
                             type="button"
                             onClick={() => handleDelete(v)}
-                            disabled={overlay || !!pending}
+                            disabled={overlay || !!pending || isInstalling}
                             className="flex-shrink-0 p-1.5 text-text-secondary hover:text-state-danger hover:bg-red-500/10 rounded transition-colors cursor-pointer disabled:cursor-default disabled:opacity-50"
                             title={`Delete ${primaryTitle}`}
                             aria-label={`Delete ${primaryTitle}`}
@@ -493,7 +495,7 @@ export default function VariantPickerModal({
         const activeIndex = activeVariant
             ? sectionVariants.findIndex((variant) => variant.id === activeVariant.id)
             : -1;
-        const sectionCanReorder = sectionVariants.length > 1 && !editing && !pending;
+        const sectionCanReorder = sectionVariants.length > 1 && !editing && !pending && !isInstalling;
 
         return (
             <DndContext
@@ -548,7 +550,7 @@ export default function VariantPickerModal({
                                     <button
                                         type="button"
                                         onClick={onOpenModDetails}
-                                        disabled={isUpdating}
+                                        disabled={isUpdating || isInstalling}
                                         title={t('variantPicker.openModPage')}
                                         className="group inline-flex max-w-full min-w-0 items-center gap-1.5 text-left text-text-primary transition-colors hover:text-accent disabled:cursor-default disabled:opacity-60"
                                     >
@@ -571,6 +573,7 @@ export default function VariantPickerModal({
                                 size="sm"
                                 icon={Download}
                                 isLoading={isUpdating}
+                                disabled={isInstalling}
                                 onClick={() => void onUpdateGroup()}
                                 title={
                                     isUpdating

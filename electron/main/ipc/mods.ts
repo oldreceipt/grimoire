@@ -319,6 +319,11 @@ ipcMain.handle('get-mods', async (): Promise<Mod[]> => {
     if (!deadlockPath) {
         return [];
     }
+    // Keep the complete scan/enrichment/reconciliation pass behind the same
+    // lock as final update swaps. Otherwise a generic refresh can observe the
+    // tiny old->backup / incoming->final gap and prune the old metadata row or
+    // momentarily remove its card from the Installed grid.
+    return runExclusiveModMutation(async () => {
     const mods = await scanMods(deadlockPath);
     // Self-heal users whose metadata.json still carries orphan entries from
     // pre-fix deletes (issue #26). Skip while dev mode is active: the dev
@@ -391,6 +396,7 @@ ipcMain.handle('get-mods', async (): Promise<Mod[]> => {
         }
     }
     return enriched;
+    });
 });
 
 // enable-mod

@@ -61,6 +61,12 @@ import type {
     DeadworksRelayStats,
 } from './deadworks';
 import type { DmmMigrationRequest, DmmMigrationReport } from '../lib/dmmMigration';
+import type {
+    ModUpdateHarnessScenario,
+    ModUpdateProgress,
+    ModUpdateRequest,
+    ModUpdateResult,
+} from './modUpdate';
 
 export interface BrowseModsArgs {
     page: number;
@@ -416,6 +422,8 @@ export interface MultiVpkPickData {
     vpkLabels?: Record<string, string>;
     /** filename → file size in bytes. */
     vpkFileSizes?: Record<string, number>;
+    /** Update-only: one installed source label per required replacement slot. */
+    replacementSourceLabels?: string[];
 }
 
 export interface SyncProgressData {
@@ -857,6 +865,9 @@ export interface ElectronAPI {
     getModUpdates: (args: GetModUpdatesArgs) => Promise<GameBananaModUpdatesResponse>;
     getSubmitterLinks: (memberId: number) => Promise<GameBananaArtistLink[]>;
     downloadMod: (args: DownloadModArgs) => Promise<void>;
+    /** Rollback-safe replacement of one installed GameBanana card. */
+    updateMod: (request: ModUpdateRequest) => Promise<ModUpdateResult>;
+    cancelModUpdate: (operationId: string) => Promise<boolean>;
     getGameBananaSections: () => Promise<GameBananaSection[]>;
     getGameBananaCategories: (args: GetCategoriesArgs) => Promise<GameBananaCategoryNode[]>;
     getCollection: (args: { collectionId: number }) => Promise<GameBananaCollection>;
@@ -904,6 +915,7 @@ export interface ElectronAPI {
     onDownloadExtracting: (callback: (data: DownloadEventData) => void) => () => void;
     onDownloadComplete: (callback: (data: DownloadEventData) => void) => () => void;
     onDownloadError: (callback: (data: DownloadErrorData) => void) => () => void;
+    onModUpdateProgress: (callback: (data: ModUpdateProgress) => void) => () => void;
     onModsAutoDisabled: (callback: (data: ModsAutoDisabledData) => void) => () => void;
 
     // Download Queue
@@ -912,6 +924,11 @@ export interface ElectronAPI {
     removeFromQueue: (modId: number) => Promise<boolean>;
     cancelActiveDownload: () => Promise<boolean>;
     onDownloadQueueUpdated: (callback: (data: DownloadQueueData) => void) => () => void;
+    /** Development-only deterministic update scenario runner. */
+    runModUpdateHarnessScenario?: (
+        scenario: ModUpdateHarnessScenario,
+        requests: ModUpdateRequest[]
+    ) => Promise<ModUpdateResult[]>;
 
     // GameBanana 1-Click protocol handler
     onOneClickInstall: (callback: (data: OneClickInstallData) => void) => () => void;

@@ -29,6 +29,21 @@ interface Props {
 export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props) {
     const { t } = useTranslation();
     const [selected, setSelected] = useState<Set<string>>(() => new Set(data.vpkFileNames));
+    const replacementSources = data.replacementSourceLabels ?? [];
+    const [replacementMapping, setReplacementMapping] = useState<string[]>(() => {
+        const unused = new Set(data.vpkFileNames);
+        return replacementSources.map((source, index) => {
+            const normalized = source.trim().toLowerCase();
+            const labelMatch = data.vpkFileNames.find((name) =>
+                unused.has(name) && data.vpkLabels?.[name]?.trim().toLowerCase() === normalized);
+            const choice = labelMatch ?? [...unused][0] ?? data.vpkFileNames[index] ?? '';
+            unused.delete(choice);
+            return choice;
+        });
+    });
+    const isReplacementMapping = replacementSources.length > 1;
+    const mappingValid = replacementMapping.length === replacementSources.length &&
+        replacementMapping.every(Boolean) && new Set(replacementMapping).size === replacementMapping.length;
 
     const allSelected = selected.size === data.vpkFileNames.length;
     const toggle = (vpk: string) => {
@@ -68,10 +83,12 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                     <p className="text-sm text-text-secondary">
                         <span className="font-medium text-text-primary">{data.modName}</span> contains{' '}
                         {data.vpkFileNames.length} <code className="font-mono text-text-primary/90 bg-black/30 px-1 py-0.5 rounded">.vpk</code> files.
-                        {t('multiVpk.uncheckHint')}
+                        {isReplacementMapping
+                            ? ' Choose which downloaded VPK replaces each installed variant.'
+                            : t('multiVpk.uncheckHint')}
                     </p>
 
-                    <div className="flex items-center justify-between pb-2 border-b border-border/60">
+                    {!isReplacementMapping && <div className="flex items-center justify-between pb-2 border-b border-border/60">
                         <span className="text-xs uppercase tracking-wide text-text-secondary">
                             {selected.size} of {data.vpkFileNames.length} selected
                         </span>
@@ -82,10 +99,30 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                         >
                             {allSelected ? t('multiVpk.deselectAll') : t('multiVpk.selectAll')}
                         </button>
-                    </div>
+                    </div>}
 
                     <div className="max-h-64 overflow-y-auto space-y-1.5 pr-1">
-                        {data.vpkFileNames.map((vpk) => {
+                        {isReplacementMapping ? replacementSources.map((source, index) => (
+                            <label key={`${source}-${index}`} className="block rounded-lg border border-border bg-bg-tertiary p-2.5">
+                                <span className="mb-1.5 block text-xs font-medium text-text-primary">{source}</span>
+                                <select
+                                    value={replacementMapping[index] ?? ''}
+                                    onChange={(event) => setReplacementMapping((previous) => {
+                                        const next = [...previous];
+                                        next[index] = event.target.value;
+                                        return next;
+                                    })}
+                                    className="w-full rounded border border-border bg-bg-primary px-2 py-1.5 text-sm text-text-primary"
+                                    aria-label={`Replacement VPK for ${source}`}
+                                >
+                                    {data.vpkFileNames.map((name) => (
+                                        <option key={name} value={name}>
+                                            {data.vpkLabels?.[name] ? `${data.vpkLabels[name]} — ${name}` : name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        )) : data.vpkFileNames.map((vpk) => {
                             const isChecked = selected.has(vpk);
                             const label = data.vpkLabels?.[vpk];
                             const size = data.vpkFileSizes?.[vpk];
@@ -125,6 +162,11 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                             );
                         })}
                     </div>
+                    {isReplacementMapping && !mappingValid && (
+                        <p role="alert" className="text-sm text-warning">
+                            Each installed variant needs a different replacement VPK.
+                        </p>
+                    )}
                 </div>
 
                 <div className="flex justify-end gap-3 p-5 border-t border-border">
@@ -135,12 +177,14 @@ export default function MultiVpkPickerModal({ data, onConfirm, onCancel }: Props
                         {t('multiVpk.cancelInstall')}
                     </button>
                     <button
-                        onClick={() => onConfirm(Array.from(selected))}
-                        disabled={selected.size === 0}
+                        onClick={() => onConfirm(isReplacementMapping ? replacementMapping : Array.from(selected))}
+                        disabled={isReplacementMapping ? !mappingValid : selected.size === 0}
                         className="px-4 py-2 border border-accent/40 bg-accent/10 hover:bg-accent/20 hover:border-accent/60 text-text-primary rounded-lg font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                         <Check className="w-4 h-4" />
-                        {selected.size > 0 ? t('multiVpk.installCount', { count: selected.size }) : t('multiVpk.install')}
+                        {isReplacementMapping
+                            ? `Replace ${replacementSources.length} variants`
+                            : selected.size > 0 ? t('multiVpk.installCount', { count: selected.size }) : t('multiVpk.install')}
                     </button>
                 </div>
         </Modal>

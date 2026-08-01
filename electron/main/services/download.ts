@@ -385,13 +385,14 @@ async function processQueue(): Promise<void> {
  * Download a file with progress reporting
  * Includes timeouts to prevent indefinite hangs (P1 fix #5)
  */
-async function downloadFile(
+export async function downloadFile(
     url: string,
     destPath: string,
     onProgress: (downloaded: number, total: number) => void,
     connectionTimeoutMs = 30000,
     responseTimeoutMs = 600000, // 10 minutes for large files
-    onResponseFilename?: (filename: string) => void
+    onResponseFilename?: (filename: string) => void,
+    signal?: AbortSignal
 ): Promise<void> {
     return new Promise((resolve, reject) => {
         const protocol = url.startsWith('https') ? https : http;
@@ -406,8 +407,19 @@ async function downloadFile(
         const finalize = (err: Error | null) => {
             if (settled) return;
             settled = true;
+            signal?.removeEventListener('abort', abortFromSignal);
             if (err) reject(err);
             else resolve();
+        };
+
+        const abortFromSignal = () => {
+            if (userCancelled) return;
+            userCancelled = true;
+            clearTimeout(connectionTimeoutId);
+            try { request.destroy(); } catch { /* already gone */ }
+            try { fileStream?.destroy(); } catch { /* already gone */ }
+            if (existsSync(destPath)) fs.unlink(destPath).catch(() => { });
+            finalize(new Error('CANCELLED_BY_USER'));
         };
 
         const request = protocol.get(url, (response) => {
@@ -429,7 +441,7 @@ async function downloadFile(
                             return;
                         }
                     }
-                    downloadFile(redirectUrl, destPath, onProgress, connectionTimeoutMs, responseTimeoutMs, onResponseFilename)
+                    downloadFile(redirectUrl, destPath, onProgress, connectionTimeoutMs, responseTimeoutMs, onResponseFilename, signal)
                         .then(resolve)
                         .catch(reject);
                     return;
@@ -480,14 +492,14 @@ async function downloadFile(
             stream.on('finish', () => {
                 clearInterval(checkStall);
                 stream.close();
-                currentCancelHandler = null;
+                if (!signal) currentCancelHandler = null;
                 finalize(null);
             });
 
             stream.on('error', async (err) => {
                 clearInterval(checkStall);
                 stream.close();
-                currentCancelHandler = null;
+                if (!signal) currentCancelHandler = null;
                 if (existsSync(destPath)) {
                     await fs.unlink(destPath).catch(() => { });
                 }
@@ -508,7 +520,7 @@ async function downloadFile(
 
         request.on('error', (err) => {
             clearTimeout(connectionTimeoutId);
-            currentCancelHandler = null;
+            if (!signal) currentCancelHandler = null;
             if (connectionTimedOut || responseTimedOut) return;
             if (userCancelled) {
                 finalize(new Error('CANCELLED_BY_USER'));
@@ -522,7 +534,7 @@ async function downloadFile(
         // may leave the write stream in a state where neither 'finish' nor
         // 'error' fires, so the outer promise stays pending. Tear both down
         // and reject explicitly.
-        currentCancelHandler = () => {
+        const cancelThisDownload = () => {
             if (userCancelled) return;
             userCancelled = true;
             clearTimeout(connectionTimeoutId);
@@ -538,6 +550,16 @@ async function downloadFile(
             }
             finalize(new Error('CANCELLED_BY_USER'));
         };
+        // Signal-owned update downloads must not claim the legacy singleton
+        // cancel slot used by the ordinary download queue. Otherwise two
+        // concurrent transfer kinds can cancel each other.
+        if (!signal) currentCancelHandler = cancelThisDownload;
+
+        if (signal?.aborted) {
+            abortFromSignal();
+        } else {
+            signal?.addEventListener('abort', abortFromSignal, { once: true });
+        }
     });
 }
 
@@ -1028,32 +1050,39 @@ export function resolveMultiVpkPick(
  * subset the user wants to install, or null if they cancelled. Modal is
  * driven by a `multi-vpk-pick` event keyed on requestId.
  */
-function awaitMultiVpkPick(
+export function awaitMultiVpkPick(
     requestId: string,
     modName: string,
     vpkFileNames: string[],
     vpkLabels: Record<string, string>,
     vpkFileSizes: Record<string, number>,
-    mainWindow: BrowserWindow | null
+    mainWindow: BrowserWindow | null,
+    signal?: AbortSignal,
+    replacementSourceLabels?: string[],
 ): Promise<{ selected: string[] } | null> {
     return new Promise((resolve) => {
         const wrappedResolve = (decision: { selected: string[] } | null) => {
-            currentCancelHandler = null;
+            if (!signal) currentCancelHandler = null;
+            signal?.removeEventListener('abort', abort);
             resolve(decision);
+        };
+        const abort = () => {
+            pendingVpkPicks.delete(requestId);
+            wrappedResolve(null);
         };
         pendingVpkPicks.set(requestId, wrappedResolve);
         // Toast cancel mid-picker resolves the same null-decision path the
         // picker modal's Cancel button uses, so the existing cleanup runs.
-        currentCancelHandler = () => {
-            pendingVpkPicks.delete(requestId);
-            wrappedResolve(null);
-        };
+        if (!signal) currentCancelHandler = abort;
+        if (signal?.aborted) abort();
+        else signal?.addEventListener('abort', abort, { once: true });
         mainWindow?.webContents.send('multi-vpk-pick', {
             requestId,
             modName,
             vpkFileNames,
             vpkLabels,
             vpkFileSizes,
+            replacementSourceLabels,
         });
     });
 }
