@@ -103,7 +103,7 @@ import './ipc/forge';
 
 import { initUpdater, checkForUpdates, getInstallSource } from './services/updater';
 import { runStartupRecovery } from './ipc/launch';
-import { loadSettings, saveSettings } from './services/settings';
+import { loadSettings, saveSettings, type AppSettings } from './services/settings';
 import {
     configureForgeBridge,
     requestForgeEnable,
@@ -215,14 +215,13 @@ const MIN_WINDOW_HEIGHT = 600;
  * would strand the window offscreen. When the saved spot is gone (or nothing
  * was saved yet) we omit x/y so Electron centers on the primary display.
  */
-function resolveInitialBounds(): {
+function resolveInitialBounds(saved: AppSettings['windowBounds']): {
     width: number;
     height: number;
     x?: number;
     y?: number;
     isMaximized: boolean;
 } {
-    const saved = loadSettings().windowBounds;
     if (!saved) {
         return { width: DEFAULT_WINDOW_WIDTH, height: DEFAULT_WINDOW_HEIGHT, isMaximized: false };
     }
@@ -254,8 +253,8 @@ function resolveInitialBounds(): {
 }
 
 function createWindow(): void {
-    const initial = resolveInitialBounds();
-    const oledMode = loadSettings().oledMode;
+    const settings = loadSettings();
+    const initial = resolveInitialBounds(settings.windowBounds);
     mainWindow = new BrowserWindow({
         width: initial.width,
         height: initial.height,
@@ -266,7 +265,7 @@ function createWindow(): void {
         minHeight: MIN_WINDOW_HEIGHT,
         title: 'Grimoire',
         show: false, // Don't show until ready to prevent white flash
-        backgroundColor: windowBackgroundColor(oledMode),
+        backgroundColor: windowBackgroundColor(settings.oledMode),
         autoHideMenuBar: true,
         // Standard native frame on every platform. themeSource is forced to
         // 'dark' above, so Windows draws its title bar dark; the previous
@@ -278,6 +277,10 @@ function createWindow(): void {
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
+            // Lets the renderer apply the OLED theme before its first paint,
+            // instead of waiting on the async settings IPC (which flashed the
+            // default grey canvas). Read in the preload via process.argv.
+            additionalArguments: settings.oledMode ? ['--grimoire-oled'] : [],
         },
     });
 

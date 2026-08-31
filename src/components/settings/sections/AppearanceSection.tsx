@@ -35,7 +35,7 @@ export default function AppearanceSection() {
           label={<Tx k="settings.appearance.oled.title" fallback="OLED mode" />}
         />
 
-        <div className="my-5 h-px bg-border" />
+        <div className="my-5 h-px bg-white/5" />
 
         <AccentColorPicker />
 

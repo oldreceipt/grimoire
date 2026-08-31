@@ -81,7 +81,11 @@ export default function Layout() {
   useEffect(() => {
     applyBackgroundGradient(backgroundGradient);
   }, [backgroundGradient]);
+  // main.tsx seeds the OLED attribute from the preload before first paint, so
+  // hold off until settings actually arrive: applying the undefined value here
+  // would strip the seed and reintroduce the startup flash.
   useEffect(() => {
+    if (oledMode === undefined) return;
     applyOledMode(oledMode);
   }, [oledMode]);
 
