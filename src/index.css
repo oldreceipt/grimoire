@@ -130,6 +130,19 @@
   --font-mod-title: 'Reaver', serif;
 }
 
+/* OLED mode keeps the existing dark-theme contrast model while moving the
+   largest surfaces to true black. Raised and recessed surfaces remain subtly
+   separated so cards, inputs, and popovers do not collapse into one plane. */
+:root[data-oled='true'] {
+  color-scheme: dark;
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #080808;
+  --color-bg-tertiary: #141414;
+  --color-bg-sunken: #030303;
+  --color-bg-glass: #020304;
+  --color-border: #242424;
+}
+
 /* Bottom-up dark scrim for art/thumbnail overlays so foreground chrome stays
    legible over any underlying image. Pairs with `absolute inset-0`. Replaces
    the gradient that was copy-pasted across the Locker/Installed surfaces. */

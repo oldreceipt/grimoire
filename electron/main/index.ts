@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell, session, protocol, nativeTheme, screen } from 'electron';
+import { windowBackgroundColor } from '../../src/lib/oledMode';
 import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
@@ -254,6 +255,7 @@ function resolveInitialBounds(): {
 
 function createWindow(): void {
     const initial = resolveInitialBounds();
+    const oledMode = loadSettings().oledMode;
     mainWindow = new BrowserWindow({
         width: initial.width,
         height: initial.height,
@@ -264,7 +266,7 @@ function createWindow(): void {
         minHeight: MIN_WINDOW_HEIGHT,
         title: 'Grimoire',
         show: false, // Don't show until ready to prevent white flash
-        backgroundColor: '#0f0f0f', // Dark background matching app theme
+        backgroundColor: windowBackgroundColor(oledMode),
         autoHideMenuBar: true,
         // Standard native frame on every platform. themeSource is forced to
         // 'dark' above, so Windows draws its title bar dark; the previous
