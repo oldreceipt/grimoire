@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { loadSettings, saveSettings, type AppSettings } from '../services/settings';
+import { syncWindowBackgroundWithSettings } from '../services/windowBackground';
 import { detectDeadlockPath, looksLikeDeadlockPath } from '../services/deadlock';
 import { ensureDevDeadlockPath } from '../services/dev';
 import { syncForgeBridgeWithSettings } from '../services/forgeBridge';
@@ -29,6 +30,7 @@ ipcMain.handle('get-settings', (): AppSettings => {
 // set-settings
 ipcMain.handle('set-settings', (_, settings: AppSettings): void => {
     saveSettings(settings);
+    syncWindowBackgroundWithSettings();
     // Bring the DeadlockForge bridge up or down to match. Toggling it off must
     // actually close the socket, not just start refusing requests on it.
     void syncForgeBridgeWithSettings();
