@@ -19,8 +19,9 @@ import {
   downloadMod,
   createProfileFromGameBananaIds,
 } from '../lib/api';
+import { classifyGameBananaImportInput } from '../lib/bulkGameBananaImport';
 import { Button } from './common/ui';
-import { Input } from './common/forms';
+import { Textarea } from './common/forms';
 import { Modal } from './common/Modal';
 import ModThumbnail from './ModThumbnail';
 import type {
@@ -33,7 +34,6 @@ import type {
 import {
   getModThumbnail,
   getPrimaryFile,
-  parseCollectionId,
 } from '../types/gamebanana';
 
 // GameBanana game id for Deadlock — items in other games can't be installed.
@@ -163,6 +163,8 @@ export default function ImportCollectionModal({
   const [totalCount, setTotalCount] = useState(0);
   const [loadingItems, setLoadingItems] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
+  const [resolveNotice, setResolveNotice] = useState<string | null>(null);
+  const [sourceKind, setSourceKind] = useState<'collection' | 'links' | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Per-import filter: when on, NSFW items are treated as skipped (shown with
   // an "NSFW" reason, deselected, and never queued). Off by default; a one-off
@@ -352,17 +354,19 @@ export default function ImportCollectionModal({
     }
   }, [collection, installedBatchIds]);
 
-  // ───────── Fetching collection + items ─────────
+  // ───────── Resolving a collection or pasted item links ─────────
 
-  const resolveCollection = useCallback(async () => {
-    const collectionId = parseCollectionId(input);
-    if (collectionId === null) {
-      setResolveError(t('importCollection.invalidId'));
+  const resolveImport = useCallback(async () => {
+    const source = classifyGameBananaImportInput(input);
+    if (source.kind === 'invalid') {
+      setResolveError(t('importCollection.invalidInput'));
       return;
     }
 
     setResolveError(null);
+    setResolveNotice(null);
     setCollection(null);
+    setSourceKind(null);
     setRows([]);
     setSelected(new Set());
     setTotalCount(0);
@@ -371,25 +375,104 @@ export default function ImportCollectionModal({
     const token = ++loadTokenRef.current;
 
     try {
-      const meta = await getCollection(collectionId);
-      if (loadTokenRef.current !== token) return;
-      setCollection(meta);
+      let finalRows: ItemRow[];
 
-      const collected: GameBananaCollectionItem[] = [];
-      let page = 1;
-      while (page <= 100) {
-        const resp = await getCollectionItems(collectionId, page);
+      if (source.kind === 'collection') {
+        setSourceKind('collection');
+        const meta = await getCollection(source.collectionId);
         if (loadTokenRef.current !== token) return;
-        if (resp.records.length === 0) break;
-        collected.push(...resp.records);
-        setTotalCount(resp.totalCount);
-        setRows(buildRows(collected, installedIds, queuedIds));
-        if (resp.isComplete) break;
-        if (page === 1 && resp.totalCount && collected.length >= resp.totalCount) break;
-        page += 1;
+        setCollection(meta);
+
+        const collected: GameBananaCollectionItem[] = [];
+        let page = 1;
+        while (page <= 100) {
+          const resp = await getCollectionItems(source.collectionId, page);
+          if (loadTokenRef.current !== token) return;
+          if (resp.records.length === 0) break;
+          collected.push(...resp.records);
+          setTotalCount(resp.totalCount);
+          setRows(buildRows(collected, installedIds, queuedIds));
+          if (resp.isComplete) break;
+          if (page === 1 && resp.totalCount && collected.length >= resp.totalCount) break;
+          page += 1;
+        }
+
+        finalRows = buildRows(collected, installedIds, queuedIds);
+      } else {
+        const links = source.result;
+        setSourceKind('links');
+        setCollection({
+          id: 0,
+          name: t('importCollection.pastedLinksName'),
+          dateAdded: 0,
+          dateModified: 0,
+        });
+        setTotalCount(links.items.length);
+
+        const skippedParts: string[] = [];
+        if (links.duplicateCount > 0) {
+          skippedParts.push(t('importCollection.duplicatesSkipped', { count: links.duplicateCount }));
+        }
+        if (links.invalidInputs.length > 0) {
+          skippedParts.push(t('importCollection.invalidSkipped', { count: links.invalidInputs.length }));
+        }
+        if (links.overflowCount > 0) {
+          skippedParts.push(t('importCollection.overflowSkipped', { count: links.overflowCount }));
+        }
+        setResolveNotice(skippedParts.length > 0 ? skippedParts.join(' · ') : null);
+
+        const directRows: Array<ItemRow | undefined> = new Array(links.items.length);
+        await Promise.all(
+          links.items.map(async (ref, index) => {
+            let row: ItemRow;
+            const placeholder: GameBananaCollectionItem = {
+              id: ref.id,
+              modelName: ref.section,
+              name: `${ref.section} #${ref.id}`,
+              profileUrl: ref.url,
+              dateAdded: 0,
+              dateModified: 0,
+              likeCount: 0,
+              viewCount: 0,
+              hasFiles: true,
+              nsfw: false,
+            };
+
+            try {
+              const details = await getModDetails(ref.id, ref.section, { includeSubmitter: true });
+              const item: GameBananaCollectionItem = {
+                ...placeholder,
+                name: details.name,
+                hasFiles: (details.files?.length ?? 0) > 0,
+                nsfw: details.nsfw,
+                gameId: details.gameId,
+                gameName: details.gameName,
+                submitter: details.submitter,
+                previewMedia: details.previewMedia,
+                rootCategory: details.category,
+              };
+              row = { ...buildRows([item], installedIds, queuedIds)[0], details };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              row = {
+                item: placeholder,
+                selectable: false,
+                status: 'failed',
+                statusMessage: message,
+                detailsError: message,
+                pickedFileIds: [],
+              };
+            }
+
+            if (loadTokenRef.current !== token) return;
+            directRows[index] = row;
+            setRows(directRows.filter((candidate): candidate is ItemRow => candidate !== undefined));
+          })
+        );
+
+        finalRows = directRows.filter((candidate): candidate is ItemRow => candidate !== undefined);
       }
 
-      const finalRows = buildRows(collected, installedIds, queuedIds);
       if (loadTokenRef.current !== token) return;
       setRows(finalRows);
       // Pre-select every installable, not-already-handled item — the obvious
@@ -817,17 +900,18 @@ export default function ImportCollectionModal({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (!loadingItems) resolveCollection();
+              if (!loadingItems) resolveImport();
             }}
-            className="flex items-stretch gap-2"
+            className="flex items-end gap-2"
           >
-            <Input
-              type="text"
+            <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="https://gamebanana.com/collections/164637"
+              placeholder={t('importCollection.placeholder')}
               disabled={loadingItems}
-              className="flex-1"
+              rows={3}
+              className="flex-1 min-h-20 font-mono text-xs"
+              aria-label={t('importCollection.inputLabel')}
             />
             <Button type="submit" disabled={loadingItems || !input.trim()}>
               {loadingItems ? <Loader2 className="w-4 h-4 animate-spin" /> : t('importCollection.actions.fetch')}
@@ -837,6 +921,12 @@ export default function ImportCollectionModal({
             <p className="mt-2 text-xs text-state-danger flex items-center gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
               {resolveError}
+            </p>
+          )}
+          {resolveNotice && (
+            <p className="mt-2 text-xs text-state-warning flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+              {resolveNotice}
             </p>
           )}
         </div>
@@ -860,15 +950,17 @@ export default function ImportCollectionModal({
                     </p>
                   )}
                 </div>
-                <a
-                  href={`https://gamebanana.com/collections/${collection.id}`}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="text-xs text-text-secondary hover:text-accent flex items-center gap-1 flex-shrink-0"
-                >
-                  {t('importCollection.viewOnGameBanana')}
-                  <ExternalLink className="w-3 h-3" />
-                </a>
+                {sourceKind === 'collection' && (
+                  <a
+                    href={`https://gamebanana.com/collections/${collection.id}`}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-xs text-text-secondary hover:text-accent flex items-center gap-1 flex-shrink-0"
+                  >
+                    {t('importCollection.viewOnGameBanana')}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                )}
               </div>
               <div className="mt-3 text-xs text-text-secondary flex flex-wrap items-center gap-x-4 gap-y-1">
                 <span>{t('importCollection.itemsTotal', { count: totalCount })}</span>

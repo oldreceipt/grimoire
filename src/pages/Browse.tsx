@@ -3390,7 +3390,7 @@ export default function Browse() {
               </div>
             </div>
 
-            {/* Import menu: GameBanana collection or portable profile. */}
+            {/* Import menu: GameBanana content or portable profile. */}
             <div className="relative flex-shrink-0" ref={importMenuRef}>
               <button
                 type="button"
@@ -3424,8 +3424,8 @@ export default function Browse() {
                 >
                   <Library className="w-4 h-4 text-text-secondary shrink-0" />
                   <div className="flex flex-col min-w-0">
-                    <span>{t('browse.import.gamebananaCollection')}</span>
-                    <span className="text-[11px] text-text-secondary truncate">{t('browse.import.gamebananaCollectionHint')}</span>
+                    <span>{t('browse.import.gamebanana')}</span>
+                    <span className="text-[11px] text-text-secondary truncate">{t('browse.import.gamebananaHint')}</span>
                   </div>
                 </button>
                 <button

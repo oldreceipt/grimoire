@@ -2253,12 +2253,21 @@
     "shareCodePreview": "Share code preview"
   },
   "importCollection": {
-    "invalidId": "Paste a collection URL or numeric id.",
-    "pasteHint": "Paste a GameBanana collection URL or id. Items queue like any Browse download.",
+    "invalidInput": "Paste a collection URL, collection id, or supported GameBanana item links.",
+    "pasteHint": "Paste a collection URL or a list of mod, sound, and WiP links.",
+    "inputLabel": "GameBanana collection or item links",
+    "placeholder": "https://gamebanana.com/collections/164637\nor paste multiple /mods, /sounds, or /wips links",
+    "pastedLinksName": "Pasted GameBanana links",
+    "duplicatesSkipped_one": "{{count}} duplicate skipped",
+    "duplicatesSkipped_other": "{{count}} duplicates skipped",
+    "invalidSkipped_one": "{{count}} invalid entry skipped",
+    "invalidSkipped_other": "{{count}} invalid entries skipped",
+    "overflowSkipped_one": "{{count}} link over the 100-item limit skipped",
+    "overflowSkipped_other": "{{count}} links over the 100-item limit skipped",
     "scanTitle": "Fetch file lists and expand mods with variants",
     "noFiles": "No downloadable files. This mod may have been removed.",
     "variantHint": "Check a variant, or leave unchecked to use the most popular file.",
-    "title": "Import Collection",
+    "title": "Import from GameBanana",
     "actions": {
       "fetch": "Fetch",
       "useMostPopular": "Use most popular",
@@ -2267,7 +2276,7 @@
       "queue": "Queue",
       "queueCount": "Queue {{count}}"
     },
-    "noCollectionLoaded": "No collection loaded yet.",
+    "noCollectionLoaded": "Nothing loaded yet.",
     "viewOnGameBanana": "View on GameBanana",
     "itemsTotal_one": "{{count}} item total",
     "itemsTotal_other": "{{count}} items total",
@@ -2560,8 +2569,8 @@
       "submit": "Search"
     },
     "import": {
-      "gamebananaCollection": "GameBanana Collection",
-      "gamebananaCollectionHint": "Import items from a collection URL",
+      "gamebanana": "GameBanana",
+      "gamebananaHint": "Collection URL or a batch of item links",
       "grimoireProfile": "Grimoire Profile",
       "grimoireProfileHint": "Share code or .modprofile.json from the Profiles tab"
     },

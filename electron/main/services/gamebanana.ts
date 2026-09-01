@@ -228,6 +228,7 @@ interface ModDetailsRaw {
     _aPreviewMedia?: ModRaw['_aPreviewMedia'];
     _aCategory?: ModRaw['_aRootCategory'];
     _aSubmitter?: ModRaw['_aSubmitter'];
+    _aGame?: CollectionItemRaw['_aGame'];
 }
 
 interface DonationMethodRaw {
@@ -759,6 +760,7 @@ export async function fetchModDetails(
         '_sName',
         '_sText',
         '_bIsNsfw',
+        '_aGame',
         '_aCategory',
         '_aFiles',
         '_aPreviewMedia',
@@ -776,6 +778,8 @@ export async function fetchModDetails(
         name: raw._sName,
         description: raw._sText,
         nsfw: raw._bIsNsfw ?? false,
+        gameId: raw._aGame?._idRow,
+        gameName: raw._aGame?._sName,
         category: raw._aCategory
             ? {
                 id: raw._aCategory._idRow,

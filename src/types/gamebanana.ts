@@ -99,6 +99,8 @@ export interface GameBananaModDetails {
   name: string;
   description?: string;
   nsfw: boolean;
+  gameId?: number;
+  gameName?: string;
   category?: GameBananaCategory;
   files?: GameBananaFile[];
   previewMedia?: GameBananaPreviewMedia;
