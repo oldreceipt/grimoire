@@ -20,13 +20,17 @@ import {
     type Mod,
 } from '../services/mods';
 import { metaKeyFor, isValidDeadlockPath } from '../services/deadlock';
-import { getModMetadata, setModMetadata, setModMetadataWithHash, removeModMetadata, pruneOrphanMetadata, type ModMetadata } from '../services/metadata';
+import { getModMetadata, loadMetadata, saveMetadata, setModMetadata, setModMetadataWithHash, removeModMetadata, pruneOrphanMetadata, type ModMetadata } from '../services/metadata';
 import { inferHeroFromTitle } from '@grimoire/social-types/heroes';
-import { inferHeroFromVpk, classifyGlobalModFromVpk, GLOBAL_CLASSIFIER_VERSION, parseVpkDirectory, parseVpkDirectoriesAsync } from '../services/vpk';
+import { inferHeroFromVpk, classifyGlobalModFromVpk, GLOBAL_CLASSIFIER_VERSION, parseVpkDirectory, parseVpkDirectoriesAsync, invalidateVpkParseCache } from '../services/vpk';
 import { classifyAbilitySoundsFromVpk } from '../services/abilitySounds';
 import { migrateIgnoredConflictKeysForMods } from '../services/conflicts';
 import { isLockerManaged } from '../services/lockerVpk';
-import { retargetProfileModSha } from '../services/profiles';
+import { retargetProfileModSha, loadProfiles, saveProfiles } from '../services/profiles';
+import { assertCanMoveLoadedGameMod, syncRunningGameModSnapshotFromMods, syncKnownRunningGameModSnapshot } from '../services/gameSessionMods';
+import { isDeadlockRunning } from '../services/launch';
+import { replaceLocalVpkFile, validateReplacementVpk, replacementFileSha256, assertReplacementFileUnchanged } from '../services/localVpkReplacement';
+import { retargetLocalReplacementProfiles } from '../services/localReplacementProfiles';
 import {
     detectUnknownModCacheMatches,
     detectUnknownModFilters,
@@ -60,7 +64,7 @@ import {
     hasAdoptionFields,
     hasAnyImprint,
 } from '../services/imprintMods';
-import { parseAddonInfo, readEmbeddedAddonInfoText, readEmbeddedAddonInfo, carryForwardOriginalIdentity } from '../services/vpkIdentity';
+import { parseAddonInfo, readEmbeddedAddonInfoText, readEmbeddedAddonInfo, carryForwardOriginalIdentity, resolveVpkIdentity } from '../services/vpkIdentity';
 import { readEmbeddedModinfo, readLegacyGrimoireMergeMeta, hasLegacyGrimoireMergeMetaEntry } from '../services/modinfoFormat';
 import { buildHeroSoundSwapVpk, cleanupHeroSoundSwapBuild } from '../services/foundryCatalog';
 import { buildSoulContainerVpk, cleanupSoulContainerBuild, previewSoulContainerGlb } from '../services/soulContainerImport';
@@ -1392,12 +1396,110 @@ async function installedLocalVariantGroupProfile(
     };
 }
 
+function assertReplaceableLocalVpk(target: Mod | undefined, metadata: ModMetadata | undefined): asserts target is Mod {
+    if (!target || !metadata?.modName || !metadata.sha256 || metadata.gameBananaId || metadata.gameBananaFileId ||
+        metadata.merged || metadata.forgeInstall || metadata.soulImport || metadata.urnImport || metadata.soundSwap ||
+        metadata.lockerCosmetics || metadata.lockerSounds || metadata.lockerColors || metadata.lockerTrippySkins ||
+        isLockerManaged(target.metaKey)) {
+        throw new Error('This item cannot be replaced here. Select an installed local VPK');
+    }
+}
+
+ipcMain.handle('prepare-local-vpk-replacement', async (_, metaKey: string) => {
+    const deadlockPath = getActiveDeadlockPath();
+    if (!deadlockPath) throw new Error('No Deadlock path configured');
+    return runExclusiveModMutation(async () => {
+        const target = (await scanMods(deadlockPath)).find((mod) => mod.metaKey === metaKey);
+        const metadata = target && getModMetadata(target.metaKey);
+        assertReplaceableLocalVpk(target, metadata);
+        return {
+            metaKey: target.metaKey,
+            expectedSha256: metadata!.sha256!,
+            expectedFileSha256: await replacementFileSha256(target.path),
+        };
+    });
+});
+
+async function replaceCustomModSource(deadlockPath: string, args: ImportCustomModArgs): Promise<number> {
+    const requested = args.replacement!;
+    if (!requested.metaKey || !/^[0-9a-f]{64}$/i.test(requested.expectedSha256 ?? '') ||
+        !/^[0-9a-f]{64}$/i.test(requested.expectedFileSha256 ?? '')) {
+        throw new Error('Select the installed VPK again before replacing it');
+    }
+    if (!args.vpkPath?.toLowerCase().endsWith('.vpk') || args.localGroupId || args.localGroupBatchKey) {
+        throw new Error('Replacement supports one standalone VPK at a time');
+    }
+    const mods = await scanMods(deadlockPath);
+    const target = mods.find((mod) => mod.metaKey === requested.metaKey);
+    const previous = target && getModMetadata(target.metaKey);
+    assertReplaceableLocalVpk(target, previous);
+    await syncRunningGameModSnapshotFromMods(mods);
+    assertCanMoveLoadedGameMod(target);
+    const expectedSha = requested.expectedSha256.toLowerCase();
+    if (previous!.sha256!.toLowerCase() !== expectedSha) {
+        throw new Error('The installed VPK changed. Select it again before replacing it');
+    }
+    await assertReplacementFileUnchanged(target.path, requested.expectedFileSha256);
+    const oldMetadata = { ...previous };
+    let replacementMetadata: ModMetadata;
+    await replaceLocalVpkFile(args.vpkPath, target.path, {
+        validate: async (staged) => {
+            await validateReplacementVpk(staged);
+            const embedded = readEmbeddedAddonInfo(staged);
+            const record = readEmbeddedModinfo(staged);
+            if (embedded?.gamebananaId || embedded?.gamebananaFileId || record?.source?.gamebananaId ||
+                record?.source?.gamebananaFileId || record?.kind === 'merge' || hasLegacyGrimoireMergeMetaEntry(staged)) {
+                throw new Error('This VPK carries GameBanana or merged-mod identity. Import it separately');
+            }
+            const classification = classifyImportedLocalVariant(staged, undefined);
+            if (oldMetadata.localGroupId) {
+                const profile = await installedLocalVariantGroupProfile(deadlockPath, oldMetadata.localGroupId, true);
+                if (profile?.classification) assertCompatibleLocalVariantClassifications(profile.classification, classification);
+            }
+            replacementMetadata = {
+                ...oldMetadata,
+                ...(!oldMetadata.localGroupId && oldMetadata.lockerHeroSource !== 'manual' && !oldMetadata.globalType
+                    ? classification : {}),
+                sha256: (await resolveVpkIdentity(staged)).sha256,
+                abilitySounds: classifyAbilitySoundsFromVpk(staged),
+                imprinted: hasAnyImprint(staged),
+                imprintStale: false,
+            };
+            if (replacementMetadata.imprinted) {
+                replacementMetadata.imprintStale = classifyEmbedFreshnessAt(staged, oldMetadata.modName!, replacementMetadata) === 'stale';
+            }
+        },
+        beforeSwap: async () => {
+            await assertReplacementFileUnchanged(target.path, requested.expectedFileSha256);
+            // The mutation scope caches running state. Large source copies can outlive
+            // that snapshot, so query the process again at the actual swap boundary.
+            syncKnownRunningGameModSnapshot(await isDeadlockRunning(), mods);
+            assertCanMoveLoadedGameMod(target);
+        },
+        commit: () => {
+            const metadata = loadMetadata();
+            const profiles = loadProfiles();
+            const retargeted = retargetLocalReplacementProfiles(profiles, mods,
+                (key) => key === target.metaKey ? oldMetadata : metadata[key], target.metaKey, replacementMetadata.sha256!);
+            saveMetadata({ ...metadata, [target.metaKey]: replacementMetadata });
+            if (retargeted.some((profile, index) => profile.mods.some((entry, j) => entry !== profiles[index].mods[j]))) {
+                saveProfiles(retargeted);
+            }
+        },
+        rollback: () => saveMetadata({ ...loadMetadata(), [target.metaKey]: oldMetadata }),
+    });
+    invalidateVpkParseCache(target.path);
+    await clearSoulModelCache(target.metaKey).catch((error) => console.warn('[mods] Replacement preview cleanup failed:', error));
+    return 1;
+}
+
 async function importCustomModSource(
     deadlockPath: string,
     args: ImportCustomModArgs,
     thumbnailFetchTargets: AdoptedThumbnailTarget[],
     requireExistingGroup = false
 ): Promise<number> {
+    if (args.replacement) return replaceCustomModSource(deadlockPath, args);
     const {
         vpkPath,
         name,

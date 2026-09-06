@@ -1043,6 +1043,25 @@
     }
   },
   "installed": {
+    "replace": {
+      "action": "Replace VPK…",
+      "ariaBrowse": "Drop one replacement .vpk here, or press Enter to browse",
+      "addSeparately": "Add as a separate mod",
+      "changeFile": "Choose another VPK",
+      "chooseFile": "Choose replacement VPK",
+      "confirm": "Replace VPK",
+      "confirmBatch": "Apply selected actions",
+      "dropFile": "Drop one replacement .vpk here",
+      "duplicate": "Each installed file can only be replaced once per import. Choose different targets or add the other files separately.",
+      "match": "Import action",
+      "option": "Replace {{name}}",
+      "preparing": "Checking the installed VPK before replacement…",
+      "replacing": "Replacing: {{name}}",
+      "singleVpk": "Choose one .vpk file to replace this mod. Archives cannot be used for replacement.",
+      "stale": "An installed file changed or was removed. Close this dialog and select the target again.",
+      "success": "VPK replaced. Your mod settings were kept.",
+      "title": "Replace {{name}}"
+    },
     "empty": {
       "noGamePath": "Set your Deadlock path or enable dev mode.",
       "noMods": "Download mods from Browse or import a custom VPK to get started.",

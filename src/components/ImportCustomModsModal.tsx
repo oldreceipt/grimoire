@@ -16,9 +16,13 @@ import {
 import { Modal } from './common/Modal';
 import { Button, CheckboxMark, IconButton, ModalHeader, Tag } from './common/ui';
 import { Input } from './common/forms';
+import type { Mod } from '../types/mod';
+import { useAppStore } from '../stores/appStore';
+import { localReplacementCandidates, replacementTargetIsCurrent } from '../lib/localModReplacement';
 import {
   onImportCustomModsProgress,
   peekImprint,
+  prepareLocalVpkReplacement,
   readImageDataUrl,
   showOpenDialog,
   showOpenDialogMulti,
@@ -54,6 +58,10 @@ interface ImportRow {
   recognized: PeekImprintResult | null;
   status: RowStatus;
   imported: number;
+  replacement?: Mod;
+  replacementFingerprint?: NonNullable<ImportCustomModArgs['replacement']>;
+  preparingReplacement?: boolean;
+  replacementError?: string;
   error?: string;
 }
 
@@ -71,6 +79,7 @@ interface ImportCustomModsModalProps {
    *  the group when the target is still a standalone mod), which keeps uuid
    *  minting out of this dialog. */
   addToGroup?: { modName: string };
+  replacementTarget?: Mod;
 }
 
 const newRow = (path: string): ImportRow => ({
@@ -113,9 +122,11 @@ export default function ImportCustomModsModal({
   onImport,
   onFinished,
   addToGroup,
+  replacementTarget,
 }: ImportCustomModsModalProps) {
   const { t } = useTranslation();
   const platform = window.electronAPI.platform;
+  const installedMods = useAppStore((state) => state.mods);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -127,10 +138,52 @@ export default function ImportCustomModsModal({
   const [variantGroupId, setVariantGroupId] = useState<string | null>(null);
   // Row paths in submit order, so a progress event's index maps back to a row.
   const submittedPathsRef = useRef<string[]>([]);
+  const replacementRequestsRef = useRef(new Map<string, number>());
+  const nextReplacementRequestRef = useRef(0);
+  const [explicitFingerprint, setExplicitFingerprint] = useState<NonNullable<ImportCustomModArgs['replacement']> | null>(null);
+  const [explicitPreparationError, setExplicitPreparationError] = useState<string | null>(null);
+  const [explicitReviewTarget] = useState(replacementTarget);
+  const staleTargetMessageRef = useRef(t('installed.replace.stale', { defaultValue: 'An installed file changed or was removed. Close this dialog and select the target again.' }));
+
+  useEffect(() => {
+    if (!explicitReviewTarget) return;
+    let cancelled = false;
+    void prepareLocalVpkReplacement(explicitReviewTarget.metaKey).then((fingerprint) => {
+      if (cancelled) return;
+      if (fingerprint.expectedSha256 !== explicitReviewTarget.sha256) {
+        throw new Error(staleTargetMessageRef.current);
+      }
+      setExplicitFingerprint(fingerprint);
+    }).catch((reason: unknown) => {
+      if (!cancelled) setExplicitPreparationError(String(reason));
+    });
+    return () => { cancelled = true; };
+  }, [explicitReviewTarget]);
 
   const patchRow = useCallback((path: string, patch: Partial<ImportRow>) => {
     setRows((prev) => prev.map((row) => (row.path === path ? { ...row, ...patch } : row)));
   }, []);
+
+  const selectReplacement = async (path: string, target: Mod | undefined) => {
+    const request = ++nextReplacementRequestRef.current;
+    replacementRequestsRef.current.set(path, request);
+    patchRow(path, {
+      replacement: target, replacementFingerprint: undefined,
+      preparingReplacement: !!target, replacementError: undefined,
+    });
+    if (!target) return;
+    try {
+      const fingerprint = await prepareLocalVpkReplacement(target.metaKey);
+      if (replacementRequestsRef.current.get(path) !== request) return;
+      if (fingerprint.expectedSha256 !== target.sha256) {
+        throw new Error(t('installed.replace.stale', { defaultValue: 'An installed file changed or was removed. Close this dialog and select the target again.' }));
+      }
+      patchRow(path, { replacementFingerprint: fingerprint, preparingReplacement: false });
+    } catch (reason) {
+      if (replacementRequestsRef.current.get(path) !== request) return;
+      patchRow(path, { preparingReplacement: false, replacementError: String(reason) });
+    }
+  };
 
   // Progress is streamed while the batch runs so a long copy shows movement
   // instead of one frozen spinner. Subscribed for the modal's whole life: the
@@ -193,6 +246,14 @@ export default function ImportCustomModsModal({
   const addPaths = useCallback(
     (paths: string[]) => {
       if (paths.length === 0) return;
+      if (replacementTarget) {
+        if (paths.length !== 1 || !/\.vpk$/i.test(paths[0])) {
+          setError(t('installed.replace.singleVpk', { defaultValue: 'Choose one .vpk file to replace this mod. Archives cannot be used for replacement.' }));
+          return;
+        }
+        setRows([{ ...newRow(paths[0]), replacement: replacementTarget }]);
+        return;
+      }
       setRows((prev) => {
         const seen = new Set(prev.map((row) => pathDedupeKey(row.path, platform)));
         const fresh: ImportRow[] = [];
@@ -205,11 +266,20 @@ export default function ImportCustomModsModal({
         return fresh.length > 0 ? [...prev, ...fresh] : prev;
       });
     },
-    [platform]
+    [platform, replacementTarget, t]
   );
 
   const pickFiles = async () => {
     if (submitting) return;
+    if (replacementTarget) {
+      const picked = await showOpenDialog({
+        title: t('installed.replace.chooseFile', { defaultValue: 'Choose replacement VPK' }),
+        filters: [{ name: 'VPK', extensions: ['vpk'] }],
+      });
+      setError(null);
+      if (picked) addPaths([picked]);
+      return;
+    }
     const picked = await showOpenDialogMulti({
       title: t('installed.batchImport.selectFiles'),
       filters: [{ name: 'VPK or archive', extensions: VPK_IMPORT_EXTS }],
@@ -248,7 +318,7 @@ export default function ImportCustomModsModal({
   };
 
   const pickThumbnail = async (row: ImportRow) => {
-    if (submitting) return;
+    if (submitting || row.replacement) return;
     const picked = await showOpenDialog({
       title: t('installed.imageField.selectImage'),
       filters: [{ name: 'Images', extensions: IMAGE_EXTS }],
@@ -267,7 +337,7 @@ export default function ImportCustomModsModal({
   const dropThumbnail = async (row: ImportRow, e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (submitting) return;
+    if (submitting || row.replacement) return;
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
     const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
@@ -292,6 +362,8 @@ export default function ImportCustomModsModal({
   const allNsfw = rows.length > 0 && rows.every((row) => row.nsfw);
   const toggleVariantImport = () => {
     if (submitting || addToGroup) return;
+    replacementRequestsRef.current.clear();
+    setRows((prev) => prev.map((row) => ({ ...row, replacement: undefined, replacementFingerprint: undefined, preparingReplacement: false, replacementError: undefined })));
     setGroupAsVariants((enabled) => {
       const next = !enabled;
       if (next && !variantGroupName.trim()) {
@@ -301,6 +373,7 @@ export default function ImportCustomModsModal({
     });
   };
   const removeRow = (path: string) => {
+    replacementRequestsRef.current.delete(path);
     const remaining = rows.filter((row) => row.path !== path);
     setRows(remaining);
     // Before anything has landed, one source does not need an explicit batch
@@ -309,6 +382,7 @@ export default function ImportCustomModsModal({
     if (remaining.length < 2 && !variantGroupId) setGroupAsVariants(false);
   };
   const clearRows = () => {
+    replacementRequestsRef.current.clear();
     setRows([]);
     setError(null);
     if (!variantGroupId) setGroupAsVariants(false);
@@ -320,8 +394,12 @@ export default function ImportCustomModsModal({
     ? 0
     : groupAsVariants
       ? (variantGroupName.trim().length === 0 ? 1 : 0)
-    : rows.filter((row) => row.name.trim().length === 0).length;
-  const canSubmit = rows.length > 0 && unnamedCount === 0 && !submitting;
+    : rows.filter((row) => !row.replacement && row.name.trim().length === 0).length;
+  const replacementRows = rows.filter((row) => row.replacement);
+  const staleReplacement = replacementRows.some((row) => !replacementTargetIsCurrent(row.replacement!, installedMods));
+  const duplicateReplacement = new Set(replacementRows.map((row) => row.replacement!.metaKey)).size !== replacementRows.length;
+  const unpreparedReplacement = replacementRows.some((row) => replacementTarget ? !explicitFingerprint : !row.replacementFingerprint);
+  const canSubmit = rows.length > 0 && unnamedCount === 0 && !submitting && !staleReplacement && !duplicateReplacement && !unpreparedReplacement;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -335,7 +413,7 @@ export default function ImportCustomModsModal({
       const results = await onImport(
         batch.map((row) => ({
           vpkPath: row.path,
-          name: addToGroup
+          name: row.replacement ? row.replacement.name : addToGroup
             ? addToGroup.modName
             : groupAsVariants
               ? variantGroupName.trim()
@@ -343,6 +421,7 @@ export default function ImportCustomModsModal({
           variantLabel: usesSharedName ? row.variantLabel?.trim() || undefined : undefined,
           thumbnailDataUrl: row.thumbnailDataUrl || undefined,
           nsfw: row.nsfw,
+          replacement: row.replacement ? (replacementTarget ? explicitFingerprint! : row.replacementFingerprint!) : undefined,
           localGroupId: groupAsVariants ? variantGroupId ?? undefined : undefined,
           localGroupBatchKey:
             groupAsVariants && !variantGroupId ? 'import-modal-variant-group' : undefined,
@@ -408,7 +487,9 @@ export default function ImportCustomModsModal({
     >
       <ModalHeader
         title={
-          addToGroup
+          replacementTarget
+            ? t('installed.replace.title', { defaultValue: 'Replace {{name}}', name: replacementTarget.name })
+          : addToGroup
             ? t('installed.batchImport.addVariantsTitle', { name: addToGroup.modName })
             : t('installed.batchImport.title')
         }
@@ -434,17 +515,19 @@ export default function ImportCustomModsModal({
         }}
         onDrop={handleDrop}
       >
-        <p className="text-xs leading-5 text-text-secondary">
-          {addToGroup
-            ? t('installed.batchImport.addVariantsHelp', { name: addToGroup.modName })
-            : t('installed.batchImport.help')}
-        </p>
+        {addToGroup && (
+          <p className="text-xs leading-5 text-text-secondary">
+            {t('installed.batchImport.addVariantsHelp', { name: addToGroup.modName })}
+          </p>
+        )}
 
         {rows.length === 0 ? (
           <div
             role="button"
             tabIndex={0}
-            aria-label={t('installed.batchImport.ariaBrowse')}
+            aria-label={replacementTarget
+              ? t('installed.replace.ariaBrowse', { defaultValue: 'Drop one replacement .vpk here, or press Enter to browse' })
+              : t('installed.batchImport.ariaBrowse')}
             onClick={pickFiles}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -460,24 +543,19 @@ export default function ImportCustomModsModal({
           >
             <UploadCloud className="h-7 w-7 text-text-secondary" aria-hidden />
             <span className="text-sm font-medium text-text-primary">
-              <Trans
+              {replacementTarget ? t('installed.replace.dropFile', { defaultValue: 'Drop one replacement .vpk here' }) : <Trans
                 i18nKey="installed.batchImport.dropFilesHere"
                 components={{ code: <code className="font-mono text-accent" /> }}
-              />
+              />}
             </span>
             <span className="text-xs text-text-secondary">{t('installed.import.orClickToBrowse')}</span>
           </div>
         ) : (
           <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-text-secondary">
-                {usesSharedName
-                  ? t('installed.batchImport.variantNamesHint')
-                  : t('installed.batchImport.namesHint')}
-              </span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" icon={Plus} onClick={pickFiles} disabled={submitting}>
-                  {t('installed.batchImport.addMore')}
+                  {replacementTarget ? t('installed.replace.changeFile', { defaultValue: 'Choose another VPK' }) : t('installed.batchImport.addMore')}
                 </Button>
                 {rows.length > 1 && (
                   <Button
@@ -501,7 +579,7 @@ export default function ImportCustomModsModal({
               </div>
             </div>
 
-            {!addToGroup && (rows.length > 1 || groupAsVariants) && (
+            {!addToGroup && !replacementTarget && (rows.length > 1 || groupAsVariants) && (
               <div className="rounded-lg border border-border bg-bg-tertiary/40 p-3">
                 <button
                   type="button"
@@ -542,7 +620,9 @@ export default function ImportCustomModsModal({
 
             <ul className="space-y-1.5">
               {rows.map((row) => {
-                const nameMissing = !usesSharedName && row.name.trim().length === 0;
+                const nameMissing = !row.replacement && !usesSharedName && row.name.trim().length === 0;
+                const candidates = !usesSharedName && !replacementTarget
+                  ? localReplacementCandidates(row.path, row.name, installedMods) : [];
                 return (
                 <li
                   key={row.path}
@@ -557,14 +637,14 @@ export default function ImportCustomModsModal({
                     onClick={() => void pickThumbnail(row)}
                     onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; }}
                     onDrop={(e) => void dropThumbnail(row, e)}
-                    disabled={submitting}
+                    disabled={submitting || !!row.replacement}
                     title={t('installed.batchImport.thumbnailHint')}
                     aria-label={t('installed.batchImport.thumbnailHint')}
                     className="flex aspect-video w-16 flex-shrink-0 items-center justify-center overflow-hidden rounded-md border border-dashed border-border bg-bg-tertiary text-text-secondary transition-colors hover:border-accent/50 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                   >
-                    {row.thumbnailDataUrl ? (
+                    {(row.replacement?.thumbnailUrl || row.thumbnailDataUrl) ? (
                       <img
-                        src={row.thumbnailDataUrl}
+                        src={row.replacement?.thumbnailUrl || row.thumbnailDataUrl}
                         alt={t('installed.imageField.thumbnailPreview')}
                         className="h-full w-full object-cover"
                       />
@@ -576,7 +656,7 @@ export default function ImportCustomModsModal({
                   <div className="min-w-0 flex-1">
                     {/* Add-variants mode has no name to edit: the group owns it,
                         and the file name below is what tells the rows apart. */}
-                    {!usesSharedName && (
+                    {!usesSharedName && !row.replacement && (
                       <Input
                         inputSize="sm"
                         value={row.name}
@@ -588,6 +668,41 @@ export default function ImportCustomModsModal({
                         className={nameMissing ? 'ring-1 ring-state-danger/60' : ''}
                       />
                     )}
+                    {row.replacement && (
+                      <p className="text-sm font-medium text-text-primary">
+                        {t('installed.replace.replacing', { defaultValue: 'Replacing: {{name}}', name: row.replacement.name })}
+                        {row.replacement.variantLabel ? ` — ${row.replacement.variantLabel}` : ''}
+                        <span className="mt-1 block break-all font-mono text-[11px] text-text-secondary">{row.replacement.metaKey}</span>
+                      </p>
+                    )}
+                    {(candidates.length > 0 || (row.replacement && !replacementTarget)) && (
+                      <label className="mt-2 block text-xs text-text-secondary">
+                        <span className="sr-only">{t('installed.replace.match', { defaultValue: 'Import action' })}</span>
+                        <select
+                          className="mt-1 w-full rounded-md border border-border bg-bg-secondary p-2 text-xs text-text-primary"
+                          value={row.replacement?.metaKey ?? ''}
+                          disabled={submitting}
+                          onChange={(event) => void selectReplacement(row.path, candidates.find((candidate) => candidate.metaKey === event.target.value))}
+                        >
+                          <option value="">{t('installed.replace.addSeparately', { defaultValue: 'Add as a separate mod' })}</option>
+                          {row.replacement && !candidates.some((candidate) => candidate.metaKey === row.replacement!.metaKey) && (
+                            <option value={row.replacement.metaKey} disabled>{row.replacement.name} — {row.replacement.metaKey}</option>
+                          )}
+                          {candidates.map((candidate) => (
+                            <option key={candidate.metaKey} value={candidate.metaKey}>
+                              {t('installed.replace.option', { defaultValue: 'Replace {{name}}', name: candidate.name })}
+                              {candidate.variantLabel ? ` — ${candidate.variantLabel}` : ''} — {candidate.metaKey}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    {row.preparingReplacement && (
+                      <p role="status" className="mt-1 text-xs text-text-secondary">
+                        {t('installed.replace.preparing', { defaultValue: 'Checking the installed VPK before replacement…' })}
+                      </p>
+                    )}
+                    {row.replacementError && <p role="alert" className="mt-1 text-xs text-state-danger">{row.replacementError}</p>}
                     {usesSharedName && (
                       <Input
                         inputSize="sm"
@@ -633,11 +748,11 @@ export default function ImportCustomModsModal({
                   <button
                     type="button"
                     onClick={() => patchRow(row.path, { nsfw: !row.nsfw })}
-                    disabled={submitting}
-                    aria-pressed={row.nsfw}
+                    disabled={submitting || !!row.replacement}
+                    aria-pressed={row.replacement ? !!row.replacement.nsfw : row.nsfw}
                     title={t('installed.imageField.nsfw')}
                     className={`flex-shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${
-                      row.nsfw
+                      (row.replacement ? row.replacement.nsfw : row.nsfw)
                         ? 'border-accent/50 bg-accent/15 text-accent'
                         : 'border-border text-text-secondary hover:border-white/20 hover:text-text-primary'
                     }`}
@@ -662,11 +777,22 @@ export default function ImportCustomModsModal({
                 dragActive ? 'border-accent bg-accent/10 text-text-primary' : 'border-border text-text-secondary'
               }`}
             >
-              {t('installed.batchImport.dropMoreHere')}
+              {replacementTarget ? t('installed.replace.dropFile', { defaultValue: 'Drop one replacement .vpk here' }) : t('installed.batchImport.dropMoreHere')}
             </div>
           </>
         )}
 
+        {replacementTarget && !explicitFingerprint && !explicitPreparationError && (
+          <p role="status" className="text-xs text-text-secondary">{t('installed.replace.preparing', { defaultValue: 'Checking the installed VPK before replacement…' })}</p>
+        )}
+        {explicitPreparationError && <p role="alert" className="text-sm text-state-danger">{explicitPreparationError}</p>}
+        {(staleReplacement || duplicateReplacement) && (
+          <p role="alert" className="text-sm text-state-danger">
+            {staleReplacement
+              ? t('installed.replace.stale', { defaultValue: 'An installed file changed or was removed. Close this dialog and select the target again.' })
+              : t('installed.replace.duplicate', { defaultValue: 'Each installed file can only be replaced once per import. Choose different targets or add the other files separately.' })}
+          </p>
+        )}
         {error && (
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 text-sm text-state-danger">
             {error}
@@ -683,7 +809,11 @@ export default function ImportCustomModsModal({
           isLoading={submitting}
           className="!px-10 !py-1.5"
         >
-          {addToGroup
+          {replacementRows.length > 0
+            ? replacementRows.length === rows.length
+              ? t('installed.replace.confirm', { defaultValue: 'Replace VPK' })
+              : t('installed.replace.confirmBatch', { defaultValue: 'Apply selected actions' })
+          : addToGroup
             ? t('installed.batchImport.addVariantCount', { count: rows.length })
             : groupAsVariants
               ? t('installed.batchImport.importVariantCount', { count: rows.length })

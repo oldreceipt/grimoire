@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { canReplaceLocalMod } from '../lib/localModReplacement';
 import {
     DndContext,
     DragOverlay,
@@ -65,6 +66,7 @@ interface Props {
     /** Optional - import more local VPKs as variants of this mod. Passed only
      *  for local groups (a GameBanana group's files come from its submission). */
     onAddVariant?: () => void;
+    onReplaceVariant?: (variant: Mod) => void;
     /** Optional - take one file back out of the group. It stays installed and
      *  enabled, it just stops being a variant of this mod. Local groups only. */
     onDetachVariant?: (variant: Mod) => Promise<void> | void;
@@ -144,6 +146,7 @@ export default function VariantPickerModal({
     onRenameVariant,
     onOpenModDetails,
     onAddVariant,
+    onReplaceVariant,
     onDetachVariant,
     variantsWithUpdate,
     onUpdateGroup,
@@ -484,6 +487,16 @@ export default function VariantPickerModal({
                         >
                             <Pencil className="w-4 h-4" />
                         </button>
+                        {onReplaceVariant && canReplaceLocalMod(v) && (
+                            <button
+                                type="button"
+                                onClick={() => onReplaceVariant(v)}
+                                disabled={overlay || !!pending}
+                                className="flex-shrink-0 rounded px-2 py-1 text-xs text-text-secondary hover:bg-accent/10 hover:text-accent disabled:opacity-50"
+                            >
+                                {t('installed.replace.action', { defaultValue: 'Replace VPK…' })}
+                            </button>
+                        )}
                         {onDetachVariant && (
                             <button
                                 type="button"

@@ -107,6 +107,7 @@ import AudioPreviewPlayer from '../components/AudioPreviewPlayer';
 import ModDetailsModal from '../components/ModDetailsModal';
 import VariantPickerModal from '../components/VariantPickerModal';
 import ImportCustomModsModal from '../components/ImportCustomModsModal';
+import { canReplaceLocalMod } from '../lib/localModReplacement';
 import MergeModsModal from '../components/MergeModsModal';
 import MergedContentsModal from '../components/MergedContentsModal';
 import PriorityEditor from '../components/PriorityEditor';
@@ -601,6 +602,7 @@ interface InstalledEntryCardProps {
   onSoloLaunch: (entry: ModEntry) => void;
   onDelete: (entry: ModEntry) => void;
   onEditLocal: (mod: Mod) => void;
+  onReplaceLocal: (mod: Mod) => void;
   onRenameLocal: (mod: Mod, newName: string) => Promise<void>;
   /** Open the add-variants import dialog for a local entry. */
   onAddVariant: (entry: ModEntry) => void;
@@ -660,6 +662,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
   onSoloLaunch,
   onDelete,
   onEditLocal,
+  onReplaceLocal,
   onRenameLocal,
   onAddVariant,
   onUngroupVariants,
@@ -699,6 +702,7 @@ const InstalledEntryCard = memo(function InstalledEntryCard({
         soloBusy={soloBusy}
         onDelete={() => onDelete(entry)}
         onEditLocal={entryIsLocal(entry) ? () => onEditLocal(mod) : undefined}
+        onReplaceLocal={canReplaceLocalMod(mod) ? () => onReplaceLocal(mod) : undefined}
         onRenameLocal={
           entryIsLocal(entry) ? (newName) => onRenameLocal(mod, newName) : undefined
         }
@@ -1375,6 +1379,7 @@ export default function Installed() {
   // batch import): it can only be opened from a card, so the page always has
   // mods and can never early-return out from under it. `groupId` is null for a
   // standalone local mod, whose group is minted on the first successful add.
+  const [replaceLocalTarget, setReplaceLocalTarget] = useState<Mod | null>(null);
   const [addVariantTarget, setAddVariantTarget] = useState<{
     modIds: string[];
     groupId: string | null;
@@ -3864,6 +3869,9 @@ export default function Installed() {
     }
   });
   const editLocalEntry = useStableCallback((mod: Mod) => setLocalEditMod(mod));
+  const replaceLocalEntry = useStableCallback((mod: Mod) => {
+    if (canReplaceLocalMod(mod)) setReplaceLocalTarget(mod);
+  });
   const viewEntryImprint = useStableCallback((mod: Mod) => setImprintDetailsMod(mod));
   // Inline title rename (double-click). Reuses edit-local-mod but carries the
   // current thumbnail/NSFW flag through so renaming the name alone never wipes
@@ -4449,6 +4457,7 @@ export default function Installed() {
     onSoloLaunch: soloLaunchEntry,
     onDelete: deleteEntry,
     onEditLocal: editLocalEntry,
+    onReplaceLocal: replaceLocalEntry,
     onRenameLocal: renameLocalMod,
     onAddVariant: openAddVariant,
     onUngroupVariants: ungroupEntry,
@@ -5292,6 +5301,18 @@ export default function Installed() {
 
       {/* Add variants to an existing local mod. The same batch-import dialog
           as the toolbar's, minus the per-row name: the group owns the name. */}
+      {replaceLocalTarget && (
+        <ImportCustomModsModal
+          replacementTarget={replaceLocalTarget}
+          onClose={() => setReplaceLocalTarget(null)}
+          onImport={importCustomMods}
+          onFinished={(results) => {
+            if (results.some((result) => result.ok)) {
+              showToast(t('installed.replace.success', { defaultValue: 'VPK replaced. Your mod settings were kept.' }), { tone: 'success' });
+            }
+          }}
+        />
+      )}
       {addVariantTarget && (
         <ImportCustomModsModal
           addToGroup={{ modName: addVariantTarget.modName }}
@@ -5351,6 +5372,10 @@ export default function Installed() {
               reorderVariantTo(source, neighbor, position)
             }
             onDeleteVariant={(variant) => deleteMod(variant.id)}
+            onReplaceVariant={localGroup ? (variant) => {
+              setPickerGroupId(null);
+              replaceLocalEntry(variant);
+            } : undefined}
             onRenameVariant={(variant, label) => setVariantLabel(variant.id, label)}
             onOpenModDetails={
               liveEntry.primary.gameBananaId
@@ -7709,6 +7734,7 @@ interface ModCardProps {
   soloBusy?: boolean;
   onDelete: () => void;
   onEditLocal?: () => void;
+  onReplaceLocal?: () => void;
   /** Inline rename of a local mod's name (double-click the title). Undefined
    *  for GameBanana-sourced mods, which can't be renamed. */
   onRenameLocal?: (newName: string) => Promise<void>;
@@ -8379,6 +8405,7 @@ function ModCard({
   soloBusy = false,
   onDelete,
   onEditLocal,
+  onReplaceLocal,
   onRenameLocal,
   onAddVariant,
   onUngroupVariants,
@@ -8659,7 +8686,7 @@ function ModCard({
   // dropdown root on the three-dot button. Only one of the two is open at a
   // time, so this renders once in practice.
   const hasTopActions =
-    !!onEditLocal || !!onAddVariant || !!onUngroupVariants || !!onOpenDetails || !!onViewAuthor
+    !!onEditLocal || !!onReplaceLocal || !!onAddVariant || !!onUngroupVariants || !!onOpenDetails || !!onViewAuthor
     || !!cardImageSource;
   const hasSecondaryActions =
     !!onSoloLaunch || !!onSetPriority || !!onTagLocker || !!onTagGlobal || !!onFixUnknown
@@ -8674,6 +8701,11 @@ function ModCard({
       {onAddVariant && (
         <MenuItem icon={FilePlus} onSelect={onAddVariant}>
           {t('installed.card.addVariant')}
+        </MenuItem>
+      )}
+      {onReplaceLocal && (
+        <MenuItem icon={FilePlus} onSelect={onReplaceLocal}>
+          {t('installed.replace.action', { defaultValue: 'Replace VPK…' })}
         </MenuItem>
       )}
       {onUngroupVariants && (

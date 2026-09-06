@@ -270,6 +270,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('swap-mod-priority', modIdA, modIdB),
     importCustomMods: (args: ImportCustomModsBatchArgs) =>
         ipcRenderer.invoke('import-custom-mods', args),
+    prepareLocalVpkReplacement: (metaKey: string) => ipcRenderer.invoke('prepare-local-vpk-replacement', metaKey),
     onImportCustomModsProgress: (callback: (progress: ImportCustomModsProgress) => void) => {
         const handler = (_event: Electron.IpcRendererEvent, progress: ImportCustomModsProgress) =>
             callback(progress);
