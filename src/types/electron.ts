@@ -282,9 +282,17 @@ export interface SaveDialogOptions {
     filters?: Array<{ name: string; extensions: string[] }>;
 }
 
+export interface LocalVpkReplacementTarget {
+    metaKey: string;
+    expectedSha256: string;
+    expectedFileSha256: string;
+}
+
 export interface ImportCustomModArgs {
     vpkPath: string;
     name: string;
+    /** Explicitly reviewed single-VPK replacement. Names never select a target. */
+    replacement?: LocalVpkReplacementTarget;
     /** Optional user-facing name for this variant source. Exact for a bare VPK;
      *  used as a prefix when an archive expands into several VPK members. */
     variantLabel?: string;
@@ -944,6 +952,7 @@ export interface ElectronAPI {
     ) => Promise<{ mods: Mod[]; failures: string[] }>;
     swapModPriority: (modIdA: string, modIdB: string) => Promise<Mod[]>;
     importCustomMods: (args: ImportCustomModsBatchArgs) => Promise<ImportCustomModsBatchResult>;
+    prepareLocalVpkReplacement: (metaKey: string) => Promise<LocalVpkReplacementTarget>;
     onImportCustomModsProgress: (
         callback: (progress: ImportCustomModsProgress) => void
     ) => () => void;

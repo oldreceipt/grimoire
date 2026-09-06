@@ -1043,6 +1043,28 @@
     }
   },
   "installed": {
+    "replace": {
+      "action": "Replace VPK…",
+      "ariaBrowse": "Drop one replacement .vpk here, or press Enter to browse",
+      "addSeparately": "Add as a separate mod",
+      "changeFile": "Choose another VPK",
+      "chooseFile": "Choose replacement VPK",
+      "confirm": "Replace VPK",
+      "confirmBatch": "Apply selected actions",
+      "dropFile": "Drop one replacement .vpk here",
+      "duplicate": "Each installed file can only be replaced once per import. Choose different targets or add the other files separately.",
+      "help": "Choose one VPK, review the installed file below, then replace it. Its name, thumbnail, enabled state, load order, Global status, variant group and saved profiles are preserved.",
+      "match": "Matching names found — choose what to do",
+      "option": "Replace {{name}}",
+      "preparing": "Checking the installed VPK before replacement…",
+      "preserved": "Keeps the installed name, thumbnail, enabled state, load order, Global status, variant group and saved profiles.",
+      "replacing": "Replacing: {{name}}",
+      "review": "Review the source and installed file before replacing.",
+      "singleVpk": "Choose one .vpk file to replace this mod. Archives cannot be used for replacement.",
+      "stale": "An installed file changed or was removed. Close this dialog and select the target again.",
+      "success": "VPK replaced. Your mod settings were kept.",
+      "title": "Replace {{name}}"
+    },
     "empty": {
       "noGamePath": "Set your Deadlock path or enable dev mode.",
       "noMods": "Download mods from Browse or import a custom VPK to get started.",
@@ -1481,7 +1503,7 @@
     },
     "batchImport": {
       "title": "Import Local Mods",
-      "help": "Drop any number of .vpk files or archives (.zip, .7z, .rar). Each one is copied into your addons folder at the next free pak## priority, using the name parsed from its filename unless you change it. Tip: drag the .zip itself, not a file dragged out of an opened zip window.",
+      "help": "Drop any number of .vpk files or archives (.zip, .7z, .rar). New imports use the next free load-order slot and a name parsed from the filename, which you can edit. If a VPK matches an installed local mod's name, you can choose to replace that file while keeping its settings and load order. Tip: drag the .zip itself, not a file dragged out of an opened zip window.",
       "selectFiles": "Select VPK files or archives",
       "ariaBrowse": "Drop .vpk files or archives here, or press Enter to browse",
       "dropFilesHere": "Drop <code>.vpk</code> files or archives here",

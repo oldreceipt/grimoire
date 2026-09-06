@@ -497,6 +497,10 @@ export async function importCustomMods(
   return window.electronAPI.importCustomMods({ items });
 }
 
+export async function prepareLocalVpkReplacement(metaKey: string) {
+  return window.electronAPI.prepareLocalVpkReplacement(metaKey);
+}
+
 /** Subscribe to batch-import progress. Returns an unsubscribe function. */
 export function onImportCustomModsProgress(
   callback: (progress: ImportCustomModsProgress) => void

@@ -78,7 +78,7 @@ export function loadProfiles(): Profile[] {
  * Save profiles to disk atomically (P1 fix #8, #10)
  * Uses write-to-temp-then-rename pattern to prevent corruption on crash
  */
-function saveProfiles(profiles: Profile[]): void {
+export function saveProfiles(profiles: Profile[]): void {
     const path = getProfilesPath();
     const tempPath = `${path}.tmp`;
     const dir = dirname(path);
