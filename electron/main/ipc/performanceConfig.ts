@@ -2,6 +2,8 @@ import { ipcMain } from 'electron';
 import { existsSync } from 'fs';
 import { getActiveDeadlockPath, loadSettings } from '../services/settings';
 import { getGameinfoPath } from '../services/deadlock';
+import { getCustomConvarStatus, saveCustomConvarSettings, applyCustomConvarsWhenIdle, withIdleGameinfo } from '../services/customConvars';
+import { isDeadlockRunning } from '../services/launch';
 import { listEditorCandidates, openInEditor } from '../services/externalEditor';
 import {
     applyPerformanceConfig,
@@ -50,6 +52,20 @@ function selection(presetId?: string, optIns?: string[], version?: string | null
 }
 
 // get-performance-config-status
+function requireGamePath(): string {
+    const path = getActiveDeadlockPath();
+    if (!path) throw new Error('Configure your Deadlock path first.');
+    return path;
+}
+
+ipcMain.handle('get-custom-convar-status', () => getCustomConvarStatus(requireGamePath()));
+ipcMain.handle('save-custom-convars', (_event, input: unknown) => {
+    const path = requireGamePath();
+    saveCustomConvarSettings(path, input);
+    return getCustomConvarStatus(path);
+});
+ipcMain.handle('apply-custom-convars', () => applyCustomConvarsWhenIdle(requireGamePath(), isDeadlockRunning));
+
 ipcMain.handle('get-performance-config-status', (): PerformanceConfigStatus => {
     return getPerformanceConfigStatus(getActiveDeadlockPath());
 });
@@ -67,17 +83,19 @@ ipcMain.handle(
         presetId?: string,
         optIns?: string[],
         version?: string | null
-    ): PerformanceConfigStatus => {
-        return applyPerformanceConfig(
-            getActiveDeadlockPath(),
+    ): Promise<PerformanceConfigStatus> => {
+        const path = requireGamePath();
+        return withIdleGameinfo(path, isDeadlockRunning, () => applyPerformanceConfig(
+            path,
             selection(presetId, optIns, version)
-        );
+        ));
     }
 );
 
 // remove-performance-config
-ipcMain.handle('remove-performance-config', (): PerformanceConfigStatus => {
-    return removePerformanceConfig(getActiveDeadlockPath());
+ipcMain.handle('remove-performance-config', (): Promise<PerformanceConfigStatus> => {
+    const path = requireGamePath();
+    return withIdleGameinfo(path, isDeadlockRunning, () => removePerformanceConfig(path));
 });
 
 // reset-performance-config-overrides (reapply the pure preset, dropping the
@@ -89,11 +107,12 @@ ipcMain.handle(
         presetId?: string,
         optIns?: string[],
         version?: string | null
-    ): PerformanceConfigStatus => {
-        return resetPerformanceConfigOverrides(
-            getActiveDeadlockPath(),
+    ): Promise<PerformanceConfigStatus> => {
+        const path = requireGamePath();
+        return withIdleGameinfo(path, isDeadlockRunning, () => resetPerformanceConfigOverrides(
+            path,
             selection(presetId, optIns, version)
-        );
+        ));
     }
 );
 
