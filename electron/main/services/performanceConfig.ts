@@ -23,6 +23,7 @@ import { createHash } from 'crypto';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { getGameinfoPath } from './deadlock';
+import { layerCustomConvars, stripCustomConvars, readCustomConvarSettings } from './customConvars';
 import type {
     PerformanceConfigStatus,
     PerformancePresetSummary,
@@ -463,7 +464,7 @@ export function applyPerformanceConfig(
         const crlf = original.includes('\r\n');
 
         // Work in LF-space (see header comment), restore the EOL style on write.
-        let content = crlf ? original.split('\r\n').join('\n') : original;
+        let content = stripCustomConvars(crlf ? original.split('\r\n').join('\n') : original);
 
         const sidecar = readAppliedState(gameinfoPath);
         const saved = allOverrides(sidecar);
@@ -516,7 +517,7 @@ export function applyPerformanceConfig(
         const backupPath = backupPathFor(gameinfoPath);
         if (!existsSync(backupPath) && hasConVars(original)) {
             try {
-                writeFileSync(backupPath, original, 'utf-8');
+                writeFileSync(backupPath, stripCustomConvars(original), 'utf-8');
             } catch {
                 // Best-effort: a failed backup must not block the apply.
             }
@@ -612,13 +613,14 @@ export function applyPerformanceConfig(
             return status('error', 'Patch produced an unbalanced gameinfo.gi; no changes were written.');
         }
 
-        const finalText = crlf ? content.split('\n').join('\r\n') : content;
+        const presetText = crlf ? content.split('\n').join('\r\n') : content;
+        const finalText = layerCustomConvars(presetText, readCustomConvarSettings(deadlockPath).entries);
         writeFileSync(gameinfoPath, finalText, 'utf-8');
         saved[preset.id] = overrides;
         writeAppliedState(gameinfoPath, {
             presetId: preset.id,
             version: preset.version,
-            contentHash: sha256(finalText),
+            contentHash: sha256(presetText),
             optIns,
             overridesByPreset: saved,
         });
@@ -710,8 +712,9 @@ export function removePerformanceConfig(deadlockPath: string | null): Performanc
             return status('not-applied', 'No performance config to remove.');
         }
         const crlf = content.includes('\r\n');
-        const restored = removeMarkers(crlf ? content.split('\r\n').join('\n') : content);
-        writeFileSync(gameinfoPath, crlf ? restored.split('\n').join('\r\n') : restored, 'utf-8');
+        const restored = removeMarkers(stripCustomConvars(crlf ? content.split('\r\n').join('\n') : content));
+        const presetText = crlf ? restored.split('\n').join('\r\n') : restored;
+        writeFileSync(gameinfoPath, layerCustomConvars(presetText, readCustomConvarSettings(deadlockPath).entries), 'utf-8');
         clearAppliedState(gameinfoPath);
         return status('not-applied', 'Performance config removed; stock values restored.');
     } catch (err) {
@@ -827,7 +830,7 @@ export function getPerformanceConfigStatus(deadlockPath: string | null): Perform
             // sidecars without a hash just never set the flag.
             const sidecar = readAppliedState(gameinfoPath);
             const handEdited =
-                typeof sidecar?.contentHash === 'string' && sidecar.contentHash !== sha256(content);
+                typeof sidecar?.contentHash === 'string' && sidecar.contentHash !== sha256(stripCustomConvars(content));
             // The marker is authoritative for which preset is in the file: the
             // sidecar can be stale or absent (hand-installed, restored backup).
             const appliedId = begin[1];

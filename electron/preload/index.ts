@@ -398,6 +398,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getGameinfoStatus: () => ipcRenderer.invoke('get-gameinfo-status'),
     fixGameinfo: () => ipcRenderer.invoke('fix-gameinfo'),
     getPerformanceConfigStatus: () => ipcRenderer.invoke('get-performance-config-status'),
+    getCustomConvarStatus: () => ipcRenderer.invoke('get-custom-convar-status'),
+    saveCustomConvars: (settings) => ipcRenderer.invoke('save-custom-convars', settings),
+    applyCustomConvars: () => ipcRenderer.invoke('apply-custom-convars'),
     listPerformancePresets: () => ipcRenderer.invoke('list-performance-presets'),
     applyPerformanceConfig: (presetId?: string, optIns?: string[], version?: string | null) =>
         ipcRenderer.invoke('apply-performance-config', presetId, optIns, version),

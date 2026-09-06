@@ -2954,7 +2954,23 @@
       "downloaded": "downloaded",
       "downloadedHint": "Already fetched and cached; applies without a network connection."
     },
-    "moreActions": "More actions"
+    "moreActions": "More actions",
+    "custom": {
+      "title": "Personal convars",
+      "name": "Convar name",
+      "value": "Value",
+      "remove": "Remove {{name}}",
+      "add": "Add convar",
+      "autoRestore": "Restore on startup and before launch",
+      "unsaved": "You have unsaved changes.",
+      "pending": "Saved values differ from gameinfo.gi. Apply to update the file.",
+      "saved": "Saved. The game file has not been changed.",
+      "savedBeforeApply": "Settings saved. Applying to the game file…",
+      "applied": "Personal values applied.",
+      "saveApply": "Save & apply",
+      "save": "Save only",
+      "enable": "Enable {{name}}"
+    }
   },
   "lockerOverrides": {
     "volume": "Volume",

@@ -25,6 +25,7 @@ import PresetSummary from './PresetSummary';
 import VersionPicker from './VersionPicker';
 import VersionHistoryModal from './VersionHistoryModal';
 import GameplayOptIns from './GameplayOptIns';
+import CustomConvars from './CustomConvars';
 import { useAppStore, type BrowseArtistRef } from '../../stores/appStore';
 import {
   applyPerformanceConfig,
@@ -547,6 +548,7 @@ export default function PerformanceConfigCard() {
       contentClassName="p-0"
     >
       <div className="divide-y divide-white/5">
+        <CustomConvars revision={status} onApplied={() => void refresh()} />
         <section className="p-5">
           <div className="grid gap-4 sm:grid-cols-2">
             {presets.length > 0 && (

@@ -122,6 +122,10 @@ export interface EditorCandidate {
     path: string;
 }
 
+export interface CustomConvar { key: string; value: string; enabled?: boolean }
+export interface CustomConvarSettings { entries: CustomConvar[]; autoRestore: boolean }
+export interface CustomConvarStatus { settings: CustomConvarSettings; applied: boolean; error: string | null }
+
 /** A gameplay/visibility convar a preset's author set, which Grimoire holds
  *  back from the preset body and writes only when the user opts in. */
 export interface PerformanceOptIn {
@@ -1081,6 +1085,9 @@ export interface ElectronAPI {
     getGameinfoStatus: () => Promise<GameinfoStatus>;
     fixGameinfo: () => Promise<GameinfoStatus>;
     getPerformanceConfigStatus: () => Promise<PerformanceConfigStatus>;
+    getCustomConvarStatus: () => Promise<CustomConvarStatus>;
+    saveCustomConvars: (settings: CustomConvarSettings) => Promise<CustomConvarStatus>;
+    applyCustomConvars: () => Promise<CustomConvarStatus>;
     listPerformancePresets: () => Promise<PerformancePresetSummary[]>;
     applyPerformanceConfig: (
         presetId?: string,

@@ -16,6 +16,7 @@ import { healLockerVpks } from '../services/lockerVpk';
 import { ensureReplayFolderLink } from '../services/replayFolder';
 import { getMainWindow } from '../index';
 import { scanMods } from '../services/mods';
+import { applyCustomConvarsWhenIdle } from '../services/customConvars';
 import {
     captureEmptyGameMods,
     captureLoadedGameMods,
@@ -40,6 +41,7 @@ ipcMain.handle('launch-modded', async (): Promise<void> => {
             deadlockPath,
             onRestoreComplete: emitRestore,
             beforeLaunch: async () => {
+                await applyCustomConvarsWhenIdle(deadlockPath, isDeadlockRunning, true);
                 captureLoadedGameMods(await scanMods(deadlockPath));
                 markLaunchGrace();
             },
@@ -154,6 +156,11 @@ ipcMain.handle('restore-vanilla-stash', async (): Promise<RestoreResult> => {
 export async function runStartupRecovery(): Promise<void> {
     const deadlockPath = getActiveDeadlockPath();
     if (!deadlockPath) return;
+    try {
+        await applyCustomConvarsWhenIdle(deadlockPath, isDeadlockRunning, true);
+    } catch (error) {
+        console.warn('[CustomConvars] Startup restore deferred:', error);
+    }
     try {
         const result = await recoverFromStashOnStartup(deadlockPath);
         if (result) {
