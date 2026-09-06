@@ -53,10 +53,7 @@ export default function CustomConvars({ revision, onApplied }: { revision: unkno
   const inputClass = 'w-full min-w-0 rounded-sm border border-white/10 bg-bg-primary px-3 py-2 text-sm font-mono text-text-primary focus:outline-none focus:border-accent';
   return (
     <section className="p-5 space-y-4" aria-labelledby="custom-convars-title">
-      <div>
-        <h3 id="custom-convars-title" className="font-medium text-text-primary">{t('performance.custom.title')}</h3>
-        <p className="mt-1 text-xs text-text-secondary">{t('performance.custom.description')}</p>
-      </div>
+      <h3 id="custom-convars-title" className="font-medium text-text-primary">{t('performance.custom.title')}</h3>
       {draft.entries.map((entry, index) => (
         <div key={index} className="flex items-end gap-2">
           <label className="flex items-center py-2.5">
@@ -65,12 +62,12 @@ export default function CustomConvars({ revision, onApplied }: { revision: unkno
               onChange={(event) => change({ ...draft, entries: draft.entries.map((row, i) => i === index ? { ...row, enabled: event.target.checked } : row) })} />
           </label>
           <label className="min-w-0 flex-1 space-y-1">
-            <span className="text-xs text-text-secondary">{t('performance.custom.name')}</span>
+            <span className={index === 0 ? 'text-xs text-text-secondary' : 'sr-only'}>{t('performance.custom.name')}</span>
             <input className={inputClass} value={entry.key} placeholder="r_aspectratio" disabled={busy}
               onChange={(event) => change({ ...draft, entries: draft.entries.map((row, i) => i === index ? { ...row, key: event.target.value } : row) })} />
           </label>
           <label className="min-w-0 flex-1 space-y-1">
-            <span className="text-xs text-text-secondary">{t('performance.custom.value')}</span>
+            <span className={index === 0 ? 'text-xs text-text-secondary' : 'sr-only'}>{t('performance.custom.value')}</span>
             <input className={inputClass} value={entry.value} placeholder="2.15" disabled={busy}
               onChange={(event) => change({ ...draft, entries: draft.entries.map((row, i) => i === index ? { ...row, value: event.target.value } : row) })} />
           </label>
@@ -87,8 +84,7 @@ export default function CustomConvars({ revision, onApplied }: { revision: unkno
       </Button>
       <Toggle checked={draft.autoRestore} disabled={busy}
         onChange={(autoRestore) => change({ ...draft, autoRestore })}
-        label={t('performance.custom.autoRestore')} description={t('performance.custom.autoDescription')} />
-      <p className="text-xs text-text-secondary">{t('performance.custom.removalHint')}</p>
+        label={t('performance.custom.autoRestore')} />
       {dirty && <p className="text-xs text-state-info">{t('performance.custom.unsaved')}</p>}
       {!dirty && status && !status.applied && !displayedError && <p className="text-xs text-state-warning">{t('performance.custom.pending')}</p>}
       {notice && <p className="text-xs text-text-secondary" role="status">{notice}</p>}
