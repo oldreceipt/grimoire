@@ -515,13 +515,11 @@ export default function ImportCustomModsModal({
         }}
         onDrop={handleDrop}
       >
-        <p className="text-xs leading-5 text-text-secondary">
-          {replacementTarget
-            ? t('installed.replace.help', { defaultValue: 'Choose one VPK, review the installed file below, then replace it. Its name, thumbnail, enabled state, load order, Global status, variant group and saved profiles are preserved.' })
-          : addToGroup
-            ? t('installed.batchImport.addVariantsHelp', { name: addToGroup.modName })
-            : t('installed.batchImport.help')}
-        </p>
+        {addToGroup && (
+          <p className="text-xs leading-5 text-text-secondary">
+            {t('installed.batchImport.addVariantsHelp', { name: addToGroup.modName })}
+          </p>
+        )}
 
         {rows.length === 0 ? (
           <div
@@ -554,14 +552,7 @@ export default function ImportCustomModsModal({
           </div>
         ) : (
           <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs text-text-secondary">
-                {replacementTarget
-                  ? t('installed.replace.review', { defaultValue: 'Review the source and installed file before replacing.' })
-                : usesSharedName
-                  ? t('installed.batchImport.variantNamesHint')
-                  : t('installed.batchImport.namesHint')}
-              </span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" icon={Plus} onClick={pickFiles} disabled={submitting}>
                   {replacementTarget ? t('installed.replace.changeFile', { defaultValue: 'Choose another VPK' }) : t('installed.batchImport.addMore')}
@@ -686,7 +677,7 @@ export default function ImportCustomModsModal({
                     )}
                     {(candidates.length > 0 || (row.replacement && !replacementTarget)) && (
                       <label className="mt-2 block text-xs text-text-secondary">
-                        {t('installed.replace.match', { defaultValue: 'Matching names found — choose what to do' })}
+                        <span className="sr-only">{t('installed.replace.match', { defaultValue: 'Import action' })}</span>
                         <select
                           className="mt-1 w-full rounded-md border border-border bg-bg-secondary p-2 text-xs text-text-primary"
                           value={row.replacement?.metaKey ?? ''}
@@ -705,11 +696,6 @@ export default function ImportCustomModsModal({
                           ))}
                         </select>
                       </label>
-                    )}
-                    {row.replacement && (
-                      <p className="mt-1 text-xs leading-5 text-text-secondary">
-                        {t('installed.replace.preserved', { defaultValue: 'Keeps the installed name, thumbnail, enabled state, load order, Global status, variant group and saved profiles.' })}
-                      </p>
                     )}
                     {row.preparingReplacement && (
                       <p role="status" className="mt-1 text-xs text-text-secondary">
