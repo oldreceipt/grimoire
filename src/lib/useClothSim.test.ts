@@ -9,11 +9,9 @@ import {
   buildFitMatrixReconstructions,
   closestPointOnSegment,
   clothAnchorMap,
-  DEFAULT_CLOTH_SUBSTEPS,
   effectiveNodeGravity,
   fitMatrixDrivenNodeSet,
   fitMatrixTargetNode,
-  fixedClothSubsteps,
   freeSimNodeSet,
   isFreeSimNode,
   isKinematicNode,
@@ -266,27 +264,6 @@ describe('solverIterationPhases', () => {
       goalIterations: 0,
       constraintIterations: 8,
     });
-  });
-});
-
-describe('fixedClothSubsteps', () => {
-  it('splits the clamped frame delta into the default fixed quality count', () => {
-    expect(fixedClothSubsteps(1 / 60)).toEqual({
-      count: DEFAULT_CLOTH_SUBSTEPS,
-      dt: (1 / 60) / DEFAULT_CLOTH_SUBSTEPS,
-    });
-  });
-
-  it('clamps long frames before splitting them', () => {
-    expect(fixedClothSubsteps(1)).toEqual({
-      count: DEFAULT_CLOTH_SUBSTEPS,
-      dt: (1 / 30) / DEFAULT_CLOTH_SUBSTEPS,
-    });
-  });
-
-  it('keeps at least one substep and ignores invalid deltas', () => {
-    expect(fixedClothSubsteps(Number.NaN, 0)).toEqual({ count: 1, dt: 0 });
-    expect(fixedClothSubsteps(-1 / 60, -4)).toEqual({ count: 1, dt: 0 });
   });
 });
 

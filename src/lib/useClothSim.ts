@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { clothIntegratorMode } from './feModel';
 import {
   applyOffset,
   nodeBaseQuaternion,
@@ -133,16 +134,13 @@ export const defaultClothTuning = {
 };
 
 const DEFAULT_CONSTRAINT_ITERATIONS = 8;
-const MAX_CLOTH_FRAME_DT = 1 / 30;
+export const CLOTH_TIMESTEP = 1 / 120;
+const MAX_CLOTH_STEPS_PER_FRAME = 12;
+const CLOTH_RESUME_GAP = 0.25;
 const MIN_TIMESTEP_HISTORY_RATIO = 0.25;
-// Every shipped FeModel authors flPointDamping == 0, so an undamped Verlet pass
-// conserves energy and rings forever -- the cloth "never settles". Source 2's real
-// velocity sinks (rod-velocity smoothing, air drag) are not ported here, so we floor
-// the per-node damping with a small global value. This stays clear of the gravity==0
-// invariant: damping only scales carried velocity (pos - prev), never gravity, so a
-// node authored at rest with zero gravity still cannot move.
+// Preview damping floor retained until the authored integrator modes and
+// rod-velocity smoothing have independently validated runtime implementations.
 const MIN_VELOCITY_DAMPING = 0.02;
-export const DEFAULT_CLOTH_SUBSTEPS = 2;
 
 export const clothTuning = { ...defaultClothTuning };
 
@@ -226,13 +224,8 @@ export function effectiveNodeGravity(nodeGravity: number, defaultGravityScale: n
   return g * scale;
 }
 
-// Per-step animation-attraction coefficients, ported verbatim from Source 2's
-// CSoftbody::AddAnimationAttraction (run once per frame over every dynamic node):
-//   posBlend   = min(1, flAnimationVertexAttraction * dt * g_flClothAttrPos)  // inertia-less
-//   velImpulse =        flAnimationForceAttraction  * dt * g_flClothAttrVel   // toward goal
-// with Valve's global convars g_flClothAttrPos = 1, g_flClothAttrVel = 2. Both terms are
-// linear in (animatedTarget - pos). This is the ONLY damping these models carry (every
-// flPointDamping / air-drag field is authored 0), so it must run unconditionally.
+// Existing preview approximation. S2V distinguishes raw and goal-damped compiled
+// integrators; its authoring conversions do not establish their runtime updates.
 export function animationAttraction(
   animVertex: number,
   animForce: number,
@@ -254,15 +247,6 @@ export function solverIterationPhases(
       Math.round(iterationOverride || model.extraIterations || DEFAULT_CONSTRAINT_ITERATIONS),
     ),
   };
-}
-
-export function fixedClothSubsteps(
-  delta: number,
-  substeps = DEFAULT_CLOTH_SUBSTEPS,
-): { count: number; dt: number } {
-  const count = Math.max(1, Math.round(Number.isFinite(substeps) ? substeps : DEFAULT_CLOTH_SUBSTEPS));
-  const frameDt = Math.max(0, Math.min(Number.isFinite(delta) ? delta : 0, MAX_CLOTH_FRAME_DT));
-  return { count, dt: frameDt / count };
 }
 
 export function verletVelocityScale(dt: number, lastDt: number | null | undefined, damping = 0): number {
@@ -511,9 +495,9 @@ interface NodeRuntime {
   index: number;
   name: string;
   bone: THREE.Bone | null;
-  bindPosition: THREE.Vector3 | null;
-  bindQuaternion: THREE.Quaternion | null;
-  bindScale: THREE.Vector3 | null;
+  animationPosition: THREE.Vector3 | null;
+  animationQuaternion: THREE.Quaternion | null;
+  animationScale: THREE.Vector3 | null;
   invMass: number;
   pinned: boolean;
   positionDriven: boolean;
@@ -613,10 +597,21 @@ interface ClothRuntime {
   lastSubstepDt: number | null;
   warmStarted: boolean;
   clothAnchors: Map<number, number>;
+  writtenBones: Set<THREE.Bone>;
+  accumulator: number;
+  simulationSteps: number;
 }
 
-export interface ClothHarnessOptions {
-  substeps?: number;
+export interface ClothSimulationCoverage {
+  rods: number;
+  pending: {
+    animatedRods: number;
+    twists: number;
+    kelagerBends: number;
+    jiggleBones: number;
+  };
+  integrators: Record<ReturnType<typeof clothIntegratorMode>, number>;
+  decodeIssues: number;
 }
 
 export interface ClothHarnessMetrics {
@@ -628,11 +623,32 @@ export interface ClothHarnessMetrics {
   maxFrameMotion: number;
   nodeCount: number;
   kinematicCount: number;
+  simulationSteps: number;
+  coverage: ClothSimulationCoverage;
 }
 
 export interface ClothSimHarness {
-  step(delta: number): ClothHarnessMetrics;
+  step(delta: number, animate?: (delta: number) => void): ClothHarnessMetrics;
   metrics(): ClothHarnessMetrics;
+  dispose(): void;
+}
+
+export function clothSimulationCoverage(model: ClothModel): ClothSimulationCoverage {
+  const integrators: ClothSimulationCoverage['integrators'] = { 'goal-damped': 0, raw: 0, unknown: 0 };
+  model.nodes.forEach((node, index) => {
+    if (!node.pinned) integrators[clothIntegratorMode(model, index)]++;
+  });
+  return {
+    rods: model.rods.length,
+    pending: {
+      animatedRods: model.animatedRods.length,
+      twists: model.twists.length,
+      kelagerBends: model.kelagerBends.length,
+      jiggleBones: model.jiggleBones.length,
+    },
+    integrators,
+    decodeIssues: model.decodeIssues.length,
+  };
 }
 
 function vec3(v: Vec3): THREE.Vector3 {
@@ -954,9 +970,9 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
       index,
       name: node.name,
       bone,
-      bindPosition: bone ? bone.position.clone() : null,
-      bindQuaternion: bone ? bone.quaternion.clone() : null,
-      bindScale: bone ? bone.scale.clone() : null,
+      animationPosition: bone ? bone.position.clone() : null,
+      animationQuaternion: bone ? bone.quaternion.clone() : null,
+      animationScale: bone ? bone.scale.clone() : null,
       invMass: node.invMass,
       // m_FreeNodes is Source 2's authored sim-positioned set. Positive invMass
       // alone is too broad on several preview exports, so use invMass only when
@@ -1042,15 +1058,30 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
     lastSubstepDt: null,
     warmStarted: false,
     clothAnchors: clothAnchorMap(model),
+    writtenBones: new Set(),
+    accumulator: 0,
+    simulationSteps: 0,
   };
 }
 
-function refreshTargets(root: THREE.Object3D, rt: ClothRuntime): void {
-  root.updateWorldMatrix(true, true);
+function restoreAnimationPose(rt: ClothRuntime): void {
   for (const node of rt.nodes) {
-    if (node.bone && node.bindPosition && node.bindQuaternion && node.bindScale) {
-      restoreBoneBindTransform(node.bone, node.bindPosition, node.bindQuaternion, node.bindScale);
+    if (node.bone && rt.writtenBones.has(node.bone)
+      && node.animationPosition && node.animationQuaternion && node.animationScale) {
+      restoreBoneBindTransform(node.bone, node.animationPosition, node.animationQuaternion, node.animationScale);
     }
+  }
+  rt.writtenBones.clear();
+}
+
+function refreshTargets(root: THREE.Object3D, rt: ClothRuntime): void {
+  // Capture after the mixer update. Unkeyed channels must start the next update
+  // from this clean pose, while body anchors remain owned by animation.
+  for (const node of rt.nodes) {
+    if (!node.bone) continue;
+    node.animationPosition?.copy(node.bone.position);
+    node.animationQuaternion?.copy(node.bone.quaternion);
+    node.animationScale?.copy(node.bone.scale);
   }
   root.updateWorldMatrix(true, true);
 
@@ -1142,8 +1173,7 @@ function integrate(rt: ClothRuntime, gravity: THREE.Vector3, dt: number): void {
       node.solvedRot.copy(node.targetRot);
       continue;
     }
-    // Floor the authored damping (0 on every shipped model) so carried velocity
-    // actually decays each step; without this the integrator never settles.
+    // Keep the preview's damping floor until authored damping is validated.
     const damping = Math.max(node.damping, MIN_VELOCITY_DAMPING);
     const velocity = node.pos.clone().sub(node.prev).multiplyScalar(
       verletVelocityScale(dt, lastDt, damping),
@@ -1251,16 +1281,21 @@ function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
   const rotationWrites = new Map<THREE.Bone, THREE.Quaternion>();
   for (const base of rt.model.nodeBases) {
     const node = rt.nodes[base.node];
-    if (node?.bone) rotationWrites.set(node.bone, node.solvedRot.clone());
+    if (node?.bone && !node.pinned && !node.jiggleDriven) {
+      rotationWrites.set(node.bone, node.solvedRot.clone());
+    }
   }
 
   for (const fit of rt.fitReconstructions) {
     const fitNode = rt.nodes[fit.targetNode];
-    if (fitNode?.bone) rotationWrites.set(fitNode.bone, fitNode.solvedRot.clone());
+    if (fitNode?.bone && !fitNode.pinned && !fitNode.jiggleDriven) {
+      rotationWrites.set(fitNode.bone, fitNode.solvedRot.clone());
+    }
   }
 
   for (const [bone, rot] of orderBonesParentFirst(rotationWrites.entries())) {
     writeBoneQuaternion(root, rt, bone, rot);
+    rt.writtenBones.add(bone);
   }
 
   const positionWrites = new Map<THREE.Bone, THREE.Vector3>();
@@ -1271,21 +1306,39 @@ function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
 
   for (const offset of rt.reverseOffsets) {
     const boneNode = rt.nodes[offset.boneCtrl];
-    if (!boneNode?.bone) continue;
+    if (!boneNode?.bone || boneNode.pinned || boneNode.jiggleDriven) continue;
     positionWrites.set(boneNode.bone, boneNode.pos.clone());
   }
 
   for (const fit of rt.fitReconstructions) {
     const fitNode = rt.nodes[fit.targetNode];
-    if (!fitNode?.bone) continue;
+    if (!fitNode?.bone || fitNode.pinned || fitNode.jiggleDriven) continue;
     positionWrites.set(fitNode.bone, fitNode.pos.clone());
   }
 
   [...positionWrites.entries()]
     .sort(([a], [b]) => objectDepth(a) - objectDepth(b))
-    .forEach(([bone, pos]) => writeBonePosition(root, rt, bone, pos));
+    .forEach(([bone, pos]) => {
+      writeBonePosition(root, rt, bone, pos);
+      rt.writtenBones.add(bone);
+    });
 
   root.updateWorldMatrix(true, true);
+}
+
+function clearDebugGeometry(group: THREE.Group): void {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  group.traverse((object) => {
+    if (!(object instanceof THREE.Mesh)) return;
+    geometries.add(object.geometry);
+    for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+      materials.add(material);
+    }
+  });
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => material.dispose());
+  group.clear();
 }
 
 function updateDebug(root: THREE.Object3D, rt: ClothRuntime, debugRef: React.MutableRefObject<THREE.Group | null>): void {
@@ -1301,7 +1354,7 @@ function updateDebug(root: THREE.Object3D, rt: ClothRuntime, debugRef: React.Mut
   }
   const group = debugRef.current;
   group.visible = true;
-  group.clear();
+  clearDebugGeometry(group);
 
   if (clothTuning.showNodes) {
     const freeMat = new THREE.MeshBasicMaterial({ color: 0x22ff66, depthTest: false });
@@ -1351,26 +1404,34 @@ function stepClothRuntime(
   root: THREE.Object3D,
   rt: ClothRuntime,
   delta: number,
-  options: ClothHarnessOptions = {},
+  animate?: (delta: number) => void,
 ): void {
-  const substep = fixedClothSubsteps(delta, options.substeps);
-
-  refreshTargets(root, rt);
-  warmStartRuntime(rt, substep.dt);
-  applyRuntimeReverseOffsetReconstructions(rt);
+  if (!Number.isFinite(delta) || delta <= 0) return;
+  if (delta > CLOTH_RESUME_GAP) {
+    rt.accumulator = 0;
+    for (const node of rt.nodes) node.prev.copy(node.pos);
+    return;
+  }
+  rt.accumulator += Math.min(delta, MAX_CLOTH_STEPS_PER_FRAME * CLOTH_TIMESTEP);
+  const count = Math.min(MAX_CLOTH_STEPS_PER_FRAME, Math.floor((rt.accumulator + 1e-10) / CLOTH_TIMESTEP));
+  rt.accumulator = Math.max(0, rt.accumulator - count * CLOTH_TIMESTEP);
   const gravity = new THREE.Vector3(0, -1, 0)
     .applyQuaternion(root.getWorldQuaternion(new THREE.Quaternion()).invert())
     .applyQuaternion(rt.rootToModelRot);
 
   const { constraintIterations } = solverIterationPhases(rt.model, clothTuning.iterationOverride);
-  for (let step = 0; step < substep.count; step++) {
-    integrate(rt, gravity, substep.dt);
+  for (let step = 0; step < count; step++) {
+    restoreAnimationPose(rt);
+    animate?.(CLOTH_TIMESTEP);
+    refreshTargets(root, rt);
+    warmStartRuntime(rt, CLOTH_TIMESTEP);
+    applyRuntimeReverseOffsetReconstructions(rt);
+    integrate(rt, gravity, CLOTH_TIMESTEP);
     applyRuntimeReverseOffsetReconstructions(rt);
 
-    // Engine order: Predict (gravity) -> AddAnimationAttraction -> Collide -> constraints.
-    // Attraction is the cloth's only damper here, so each fixed substep gets one pass;
-    // it is NOT looped by m_nExtraGoalIterations (which gates the empty goal-spring set).
-    solveGoals(rt, substep.dt);
+    // The existing preview attraction is an approximation. Compiled integrator
+    // selectors are retained and reported, pending separate runtime validation.
+    solveGoals(rt, CLOTH_TIMESTEP);
     applyRuntimeReverseOffsetReconstructions(rt);
     solveCollisions(rt);
     applyRuntimeReverseOffsetReconstructions(rt);
@@ -1389,9 +1450,9 @@ function stepClothRuntime(
     restorePinnedSolverNodes(rt.nodes);
     applyRuntimeReverseOffsetReconstructions(rt);
     applyRuntimeSettledReconstructions(rt);
+    writeBack(root, rt);
+    rt.simulationSteps++;
   }
-
-  writeBack(root, rt);
 }
 
 function collectClothHarnessMetrics(rt: ClothRuntime): ClothHarnessMetrics {
@@ -1444,24 +1505,28 @@ function collectClothHarnessMetrics(rt: ClothRuntime): ClothHarnessMetrics {
     maxFrameMotion,
     nodeCount,
     kinematicCount,
+    simulationSteps: rt.simulationSteps,
+    coverage: clothSimulationCoverage(rt.model),
   };
 }
 
 export function createClothSimHarness(
   root: THREE.Object3D,
   femodel: ClothModel,
-  options: ClothHarnessOptions = {},
 ): ClothSimHarness {
   const rt = buildRuntime(root, femodel);
   if (!rt) throw new Error('createClothSimHarness requires at least three matched cloth nodes');
-  const harnessOptions = { ...options };
   return {
-    step(delta: number): ClothHarnessMetrics {
-      stepClothRuntime(root, rt, delta, harnessOptions);
+    step(delta: number, animate?: (delta: number) => void): ClothHarnessMetrics {
+      stepClothRuntime(root, rt, delta, animate);
       return collectClothHarnessMetrics(rt);
     },
     metrics(): ClothHarnessMetrics {
       return collectClothHarnessMetrics(rt);
+    },
+    dispose(): void {
+      restoreAnimationPose(rt);
+      root.updateWorldMatrix(true, true);
     },
   };
 }
@@ -1469,12 +1534,13 @@ export function createClothSimHarness(
 export function useClothSim(
   root: THREE.Object3D | null,
   femodel: ClothModel | null,
-): (delta: number) => void {
+): (delta: number, animate: (delta: number) => void) => void {
   const runtime = useRef<ClothRuntime | null>(null);
   const debugGroup = useRef<THREE.Group | null>(null);
 
   useEffect(() => {
     if (debugGroup.current) {
+      clearDebugGeometry(debugGroup.current);
       debugGroup.current.removeFromParent();
       debugGroup.current = null;
     }
@@ -1482,13 +1548,26 @@ export function useClothSim(
     if (!root || !femodel) return;
     const rt = buildRuntime(root, femodel);
     runtime.current = rt;
+    return () => {
+      if (rt) restoreAnimationPose(rt);
+      root.updateWorldMatrix(true, true);
+      runtime.current = null;
+      if (debugGroup.current) {
+        clearDebugGeometry(debugGroup.current);
+        debugGroup.current.removeFromParent();
+        debugGroup.current = null;
+      }
+    };
   }, [root, femodel]);
 
   return useCallback(
-    (delta: number) => {
+    (delta: number, animate: (delta: number) => void) => {
       const rt = runtime.current;
-      if (!root || !rt) return;
-      stepClothRuntime(root, rt, delta);
+      if (!root || !rt) {
+        if (Number.isFinite(delta) && delta > 0) animate(delta);
+        return;
+      }
+      stepClothRuntime(root, rt, delta, animate);
       updateDebug(root, rt, debugGroup);
     },
     [root],

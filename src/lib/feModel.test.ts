@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseFeModel, type RawFeModel } from './feModel';
+import { clothIntegratorMode, parseFeModel, type RawFeModel } from './feModel';
+import gigawattRaw from './__fixtures__/cloth/gigawatt_fe.json';
 
 // Mirror of morphic's `decodes_binding_fields` fixture: 3 nodes (1 static + 2 dynamic),
 // the binding maps, the collision tree (D=2 -> leaves [0,2), masks.len()==2*D-1==3 so
@@ -40,6 +41,60 @@ const raw: RawFeModel = {
 };
 
 describe('parseFeModel', () => {
+  it('preserves the shipped Gigawatt bend indices and signed weights', () => {
+    const model = parseFeModel(gigawattRaw)!;
+    expect(model.twists).toHaveLength(42);
+    expect(model.kelagerBends).toHaveLength(18);
+    expect(model.decodeIssues).toEqual([]);
+    for (const [index, bend] of model.kelagerBends.entries()) {
+      const source = gigawattRaw.m_KelagerBends[index];
+      expect(bend.node).toEqual(source.nNode);
+      expect(bend.weight).toEqual(source.flWeight);
+      expect(bend.height0).toBe(source.flHeight0);
+    }
+    expect(model.kelagerBends[0].node).toEqual([52, 105, 51]);
+    expect(model.kelagerBends.at(-1)!.weight[0]).toBeLessThan(0);
+  });
+
+  it('reports invalid bend data instead of inventing node zero and zero weights', () => {
+    const model = parseFeModel({
+      ...raw,
+      m_KelagerBends: [
+        { m_nNode: [0, 1, 2], flWeight: [0, 3, 0], flHeight0: 1 },
+        { nNode: [0, 1, 99], flWeight: [0, 3, 0], flHeight0: 1 },
+        { nNode: [0, 1, 2], flWeight: [0, Number.NaN, 0], flHeight0: 1 },
+        { nNode: [0, 1, 2], flWeight: [0, 3, 0], flHeight0: Number.NaN },
+      ],
+    })!;
+    expect(model.kelagerBends).toEqual([]);
+    expect(model.decodeIssues.map((issue) => issue.reason)).toEqual([
+      'invalid-nodes', 'invalid-nodes', 'invalid-weights', 'invalid-height',
+    ]);
+  });
+
+  it.each([
+    { nNode: [[0, 1, 1, 1], [1, 2, 2, 2]] },
+    { nNode: [0, 1, 1, 1, 1, 2, 2, 2] },
+  ])('recovers animated rods with no scalar equivalent from SIMD packing $nNode', ({ nNode }) => {
+    const model = parseFeModel({
+      ...raw,
+      m_Rods: [],
+      m_SimdRodsAnim: [{ nNode, f4Weight0: [0, 0.25, 0.25, 0.25] }],
+    })!;
+    expect(model.rods).toEqual([]);
+    expect(model.animatedRods).toEqual([{ a: 0, b: 1, weight: 0 }, { a: 1, b: 2, weight: 0.25 }]);
+    expect(model.decodeIssues).toEqual([]);
+  });
+
+  it('keeps animated rod endpoint order and reports invalid SIMD lanes', () => {
+    const model = parseFeModel({
+      ...raw,
+      m_SimdRodsAnim: [{ nNode: [[1, 2, 99, 0], [2, 1, 1, 0]], f4Weight0: [0.25, 0.75, 0.5, 0.5] }],
+    })!;
+    expect(model.animatedRods).toEqual([{ a: 1, b: 2, weight: 0.25 }, { a: 2, b: 1, weight: 0.75 }]);
+    expect(model.decodeIssues).toEqual([{ array: 'm_SimdRodsAnim', record: 0, reason: 'invalid-nodes' }]);
+  });
+
   it('returns null for a non-FeModel payload', () => {
     expect(parseFeModel(null)).toBeNull();
     expect(parseFeModel({})).toBeNull();
@@ -283,5 +338,45 @@ describe('parseFeModel', () => {
         collisionMask: 0,
       },
     });
+  });
+});
+
+describe('compiled integrator selection', () => {
+  it('uses dynamic-node bit indices, including the unsigned high bit and next word', () => {
+    const model = parseFeModel({
+      m_CtrlName: Array.from({ length: 35 }, (_, i) => `node_${i}`),
+      m_nStaticNodes: 2,
+      m_nStaticNodeFlags: 0x200,
+      m_nDynamicNodeFlags: 0x680,
+      m_GoalDampedSpringIntegrators: [0x80000001, 1],
+    })!;
+    expect(clothIntegratorMode(model, 0)).toBe('raw');
+    expect(clothIntegratorMode(model, 2)).toBe('goal-damped');
+    expect(clothIntegratorMode(model, 3)).toBe('raw');
+    expect(clothIntegratorMode(model, 33)).toBe('goal-damped');
+    expect(clothIntegratorMode(model, 34)).toBe('goal-damped');
+  });
+
+  it.each([
+    [0x80, 'goal-damped'], [0x200, 'raw'], [0x400, 'raw'], [0x680, 'unknown'],
+  ])('classifies band flags %i without guessing mixed nodes', (flags, mode) => {
+    const model = parseFeModel({ ...raw, m_nDynamicNodeFlags: flags })!;
+    expect(clothIntegratorMode(model, 1)).toBe(mode);
+  });
+
+  it('does not infer an integrator from attraction values when selectors are absent', () => {
+    const model = parseFeModel(raw)!;
+    expect(model.dynamicNodeFlags).toBeNull();
+    expect(clothIntegratorMode(model, 1)).toBe('unknown');
+    expect(model.nodes[1].animForce).toBe(1);
+    expect(model.nodes[1].animVertex).toBe(0.25);
+  });
+
+  it('reports invalid selector words and leaves truncated mixed bitsets unknown', () => {
+    const invalid = parseFeModel({ ...raw, m_GoalDampedSpringIntegrators: [-1] })!;
+    expect(invalid.decodeIssues[0].reason).toBe('invalid-bitset');
+    expect(clothIntegratorMode(invalid, 1)).toBe('unknown');
+    const truncated = { ...invalid, goalDampedSpringIntegrators: [1], dynamicNodeFlags: 0x680 };
+    expect(clothIntegratorMode(truncated, 33)).toBe('unknown');
   });
 });

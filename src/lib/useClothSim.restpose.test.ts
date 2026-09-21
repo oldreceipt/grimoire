@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { parseFeModel, type ClothModel } from './feModel';
-import { clothTuning, createClothSimHarness, resetClothTuning } from './useClothSim';
+import { clothSimulationCoverage, clothTuning, createClothSimHarness, resetClothTuning } from './useClothSim';
 import gigawattRaw from './__fixtures__/cloth/gigawatt_fe.json';
 
 // Real-data rest-pose stability gate.
@@ -49,10 +49,19 @@ const JITTER = [1 / 120, 1 / 30, 1 / 60, 1 / 90, 1 / 45];
 describe('cloth solver real-data rest-pose stability', () => {
   afterEach(resetClothTuning);
 
+  it('reports decoded constraints that the preview does not yet simulate', () => {
+    expect(clothSimulationCoverage(loadFixture())).toEqual({
+      rods: 157,
+      pending: { animatedRods: 0, twists: 42, kelagerBends: 18, jiggleBones: 0 },
+      integrators: { 'goal-damped': 0, raw: 0, unknown: 74 },
+      decodeIssues: 0,
+    });
+  });
+
   it('settles gigawatt at rest under jittery dt without ringing or NaN', () => {
     clothTuning.gravityScale = 0;
     const model = loadFixture();
-    const harness = createClothSimHarness(restSkeleton(model), model, { substeps: 2 });
+    const harness = createClothSimHarness(restSkeleton(model), model);
 
     let metrics = harness.metrics();
     let peakInit = 0;

@@ -1,8 +1,8 @@
 // Parser for the raw Source 2 FeModel cloth data delivered over IPC by
 // `vpkmerge model femodel` (a generic JSON projection of the whole PHYS.m_pFeModel
-// KV3 subtree). This is the TS mirror of morphic's `decode_fe_model`
-// (morphic/src/model/femodel.rs): it turns the raw m_-keyed JSON into a typed
-// `ClothModel` the rod-graph XPBD solver consumes.
+// KV3 subtree). The preview decodes this directly, independently of morphic's
+// typed Rust decoder. See docs/source2-preview-physics.md for source references
+// and the distinction between decoded records and implemented simulation.
 //
 // The field semantics + the two non-obvious folds (collision radius/friction are
 // DYNAMIC-slot indexed; the per-node collision mask lives in the collision-BVH
@@ -28,6 +28,10 @@ export interface RawFeModel {
     flMaxDist?: number;
     flRelaxationFactor?: number;
     flWeight0?: number;
+  }>;
+  m_SimdRodsAnim?: Array<{
+    nNode?: number[] | number[][];
+    f4Weight0?: number[];
   }>;
   m_NodeBases?: Array<{
     nNode: number;
@@ -58,12 +62,15 @@ export interface RawFeModel {
   m_DynNodeFriction?: number[]; // dyn-slot indexed
   m_TreeCollisionMasks?: number[]; // collision BVH; leaves [0,D) hold per-node masks
   m_nStaticNodes?: number;
+  m_nStaticNodeFlags?: number;
+  m_nDynamicNodeFlags?: number;
+  m_GoalDampedSpringIntegrators?: number[];
   m_flAddWorldCollisionRadius?: number;
   m_flDefaultGravityScale?: number;
   m_nExtraIterations?: number;
   m_nExtraGoalIterations?: number;
 
-  // --- Phase-B arrays (parsed here, consumed by the stub constraints) ----------
+  // Additional compiled records. Decoding alone does not imply solver support.
   m_Twists?: Array<{
     nNodeOrient?: number;
     nNodeEnd?: number;
@@ -90,7 +97,7 @@ export interface RawFeModel {
   }>;
   m_Ropes?: number[]; // flat: m_pRopes[i] is the end index of rope i (chain segmentation)
   m_JiggleBones?: Array<{ m_nNode?: number; m_nJiggleParent?: number; m_jiggleBone?: RawJiggleBoneParams }>;
-  m_KelagerBends?: Array<{ flHeight0?: number; m_nNode?: number[]; m_nFlags?: number }>;
+  m_KelagerBends?: Array<{ flHeight0?: number; nNode?: number[]; flWeight?: number[] }>;
   m_HingeLimits?: unknown[];
   m_nFirstPositionDrivenNode?: number;
   m_flRodVelocitySmoothRate?: number;
@@ -147,8 +154,8 @@ export interface ClothNode {
   pinned: boolean; // invMass <= 0: driven kinematically from the animated body
   gravity: number;
   damping: number;
-  animForce: number; // pull toward the animated rest target (mandatory)
-  animVertex: number; // per-vertex sibling (no bone-level consumer; see plan)
+  animForce: number; // compiled flAnimationForceAttraction, interpreted by integrator mode
+  animVertex: number; // compiled flAnimationVertexAttraction
   initPos: Vec3; // model space, cm, Z-up
   initRot: Vec4; // [x,y,z,w]
   collideRadius: number;
@@ -162,6 +169,12 @@ export interface ClothRod {
   min: number;
   max: number;
   relax: number;
+  weight: number;
+}
+
+export interface ClothAnimatedRod {
+  a: number;
+  b: number;
   weight: number;
 }
 
@@ -294,14 +307,24 @@ export interface ClothJiggleBone {
 }
 
 export interface ClothKelagerBend {
-  height0: number; // relaxed distance from tip to base centroid
-  node: Vec3; // [v, b0, b1] tip + two base ends (uint16 triple)
-  flags: number; // low 3 bits: inverse masses of the three nodes
+  height0: number;
+  node: [number, number, number]; // bent node, first end, second end
+  weight: Vec3; // signed solver shares, not inverse masses or flags
 }
+
+export interface ClothDecodeIssue {
+  array: 'm_KelagerBends' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators';
+  record: number;
+  reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-height' | 'invalid-bitset';
+}
+
+export type ClothIntegratorMode = 'goal-damped' | 'raw' | 'unknown';
 
 export interface ClothModel {
   nodes: ClothNode[];
   rods: ClothRod[];
+  animatedRods: ClothAnimatedRod[];
+  decodeIssues: ClothDecodeIssue[];
   capsules: ClothCapsule[];
   spheres: ClothSphere[];
   boxes: ClothBox[];
@@ -312,12 +335,15 @@ export interface ClothModel {
   strayRadii: ClothStrayRadius[];
   skelParents: number[];
   staticNodeCount: number;
+  staticNodeFlags: number | null;
+  dynamicNodeFlags: number | null;
+  goalDampedSpringIntegrators: number[];
   addWorldCollisionRadius: number;
   defaultGravityScale: number;
   extraIterations: number;
   extraGoalIterations: number;
 
-  // --- Phase-B data (parsed; consumed by the stub constraints) -----------------
+  // Compiled records retained even when their runtime solver is not implemented.
   twists: ClothTwist[];
   fitMatrices: ClothFitMatrix[];
   fitWeights: ClothFitWeight[];
@@ -349,6 +375,90 @@ const jiggleParent = (v: unknown): number => {
 };
 
 const isObject = (v: unknown): v is object => typeof v === 'object' && v !== null;
+const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isUint32 = (v: unknown): v is number => isFiniteNumber(v) && Number.isInteger(v) && v >= 0 && v <= 0xffffffff;
+const isNodeIndex = (v: unknown, nodeCount: number): v is number =>
+  isFiniteNumber(v) && Number.isInteger(v) && v >= 0 && v < nodeCount;
+
+export function clothIntegratorMode(model: Pick<ClothModel,
+  'staticNodeCount' | 'staticNodeFlags' | 'dynamicNodeFlags' | 'goalDampedSpringIntegrators'
+>, node: number): ClothIntegratorMode {
+  if (!Number.isInteger(node) || node < 0) return 'unknown';
+  const dynamicIndex = node - model.staticNodeCount;
+  if (dynamicIndex >= 0 && model.goalDampedSpringIntegrators.length > 0) {
+    const word = model.goalDampedSpringIntegrators[dynamicIndex >>> 5];
+    if (word === undefined) return 'unknown';
+    return (word & (1 << (dynamicIndex & 31))) !== 0 ? 'goal-damped' : 'raw';
+  }
+
+  const flags = dynamicIndex >= 0 ? model.dynamicNodeFlags : model.staticNodeFlags;
+  if (flags === null) return 'unknown';
+  const raw = (flags & 0x600) !== 0;
+  const goal = (flags & 0x80) !== 0;
+  if (!raw) return 'goal-damped';
+  // Mixed band flags without a node bitset cannot identify a node's mode.
+  return goal ? 'unknown' : 'raw';
+}
+
+function parseAnimatedRods(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothAnimatedRod[] {
+  const rods: ClothAnimatedRod[] = [];
+  const seen = new Set<string>();
+  for (const [record, entry] of (fe.m_SimdRodsAnim ?? []).entries()) {
+    const indices = Array.isArray(entry.nNode) ? entry.nNode.flat() : [];
+    if (indices.length !== 8) {
+      issues.push({ array: 'm_SimdRodsAnim', record, reason: 'invalid-nodes' });
+      continue;
+    }
+    for (let lane = 0; lane < 4; lane++) {
+      const a = indices[lane];
+      const b = indices[4 + lane];
+      if (!isNodeIndex(a, fe.m_CtrlName.length) || !isNodeIndex(b, fe.m_CtrlName.length)) {
+        issues.push({ array: 'm_SimdRodsAnim', record, reason: 'invalid-nodes' });
+        continue;
+      }
+      if (a === b) continue;
+      const weight = entry.f4Weight0?.[lane] ?? 0.5;
+      if (!isFiniteNumber(weight)) {
+        issues.push({ array: 'm_SimdRodsAnim', record, reason: 'invalid-weights' });
+        continue;
+      }
+      // SIMD packing repeats lanes to fill the last group of four. Keep the
+      // endpoint order because weight belongs to the first endpoint.
+      const key = `${a}:${b}:${weight}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rods.push({ a, b, weight });
+    }
+  }
+  return rods;
+}
+
+function parseKelagerBends(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothKelagerBend[] {
+  const bends: ClothKelagerBend[] = [];
+  for (const [record, bend] of (fe.m_KelagerBends ?? []).entries()) {
+    const indices = bend.nNode;
+    const weights = bend.flWeight;
+    if (!Array.isArray(indices) || indices.length !== 3
+      || !indices.every((index) => isNodeIndex(index, fe.m_CtrlName.length))) {
+      issues.push({ array: 'm_KelagerBends', record, reason: 'invalid-nodes' });
+      continue;
+    }
+    if (!Array.isArray(weights) || weights.length !== 3 || !weights.every(isFiniteNumber)) {
+      issues.push({ array: 'm_KelagerBends', record, reason: 'invalid-weights' });
+      continue;
+    }
+    if (!isFiniteNumber(bend.flHeight0)) {
+      issues.push({ array: 'm_KelagerBends', record, reason: 'invalid-height' });
+      continue;
+    }
+    bends.push({
+      node: [indices[0], indices[1], indices[2]],
+      weight: [weights[0], weights[1], weights[2]],
+      height0: bend.flHeight0,
+    });
+  }
+  return bends;
+}
 
 const parseJiggleBoneParams = (p: RawJiggleBoneParams | undefined): ClothJiggleBoneParams | null => {
   if (!isObject(p)) return null;
@@ -395,12 +505,13 @@ const parseJiggleBoneParams = (p: RawJiggleBoneParams | undefined): ClothJiggleB
 /**
  * Parse the raw FeModel JSON (whole m_pFeModel subtree) into a typed `ClothModel`.
  * Returns null when the payload is not a FeModel (no m_CtrlName) so a non-cloth hero
- * is handled cleanly. Mirrors morphic::model::decode_fe_model exactly, including the
- * dynamic-slot fold of radius/friction and the BVH-leaf fold of the per-node mask.
+ * is handled cleanly. Keeps compiler selectors and unsupported constraints so the
+ * runtime can report its coverage without silently dropping authored behavior.
  */
 export function parseFeModel(raw: unknown): ClothModel | null {
   const fe = raw as RawFeModel | null | undefined;
   if (!fe || !Array.isArray(fe.m_CtrlName)) return null;
+  const decodeIssues: ClothDecodeIssue[] = [];
 
   const names = fe.m_CtrlName;
   const inv = fe.m_NodeInvMasses ?? [];
@@ -553,15 +664,22 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     params: parseJiggleBoneParams(j.m_jiggleBone),
   }));
 
-  const kelagerBends: ClothKelagerBend[] = (fe.m_KelagerBends ?? []).map((k) => ({
-    height0: num(k.flHeight0),
-    node: vec3(k.m_nNode),
-    flags: num(k.m_nFlags),
-  }));
+  const animatedRods = parseAnimatedRods(fe, decodeIssues);
+  const kelagerBends = parseKelagerBends(fe, decodeIssues);
+  const bitset = fe.m_GoalDampedSpringIntegrators ?? [];
+  const validBitset = Array.isArray(bitset) && bitset.every(isUint32);
+  if (!validBitset) {
+    decodeIssues.push({ array: 'm_GoalDampedSpringIntegrators', record: 0, reason: 'invalid-bitset' });
+  }
 
   return {
     nodes,
     rods,
+    animatedRods,
+    decodeIssues,
+    staticNodeFlags: isUint32(fe.m_nStaticNodeFlags) ? fe.m_nStaticNodeFlags : null,
+    dynamicNodeFlags: isUint32(fe.m_nDynamicNodeFlags) ? fe.m_nDynamicNodeFlags : null,
+    goalDampedSpringIntegrators: validBitset ? bitset : [],
     capsules,
     spheres,
     boxes,

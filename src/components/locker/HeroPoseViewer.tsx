@@ -418,13 +418,11 @@ function RiggedModel({
     };
   }, [scene, clips]);
 
-  // Cloth bones swing under gravity + turntable inertia, AFTER the mixer poses
-  // the skeleton, and collide with the body capsules/spheres from the FeModel
-  // sidecar (null on a model with no cloth -> the sim no-ops).
+  // The cloth driver restores the clean pose before advancing animation. With
+  // physics disabled it advances the mixer directly at the render frame rate.
   const clothStep = useClothSim(scene, clothEnabled ? clothModel : null);
   useFrame((_, delta) => {
-    mixerRef.current?.update(delta);
-    clothStep(delta);
+    clothStep(delta, (dt) => { mixerRef.current?.update(dt); });
   });
 
   useTurntable(groupRef, interaction);

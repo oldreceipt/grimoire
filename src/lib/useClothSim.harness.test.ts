@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import type { ClothModel, ClothNode } from './feModel';
-import { createClothSimHarness } from './useClothSim';
+import { CLOTH_TIMESTEP, createClothSimHarness } from './useClothSim';
 
 const Q: [number, number, number, number] = [0, 0, 0, 1];
 const jiggleParams = {} as NonNullable<ClothModel['jiggleBones'][number]['params']>;
@@ -35,6 +35,11 @@ function syntheticClothModel(): ClothModel {
       { a: 1, b: 2, min: 1.1608, max: 1.1608, relax: 1, weight: 0.5 },
     ],
     capsules: [],
+    animatedRods: [],
+    decodeIssues: [],
+    staticNodeFlags: null,
+    dynamicNodeFlags: null,
+    goalDampedSpringIntegrators: [],
     spheres: [],
     boxes: [],
     nodeBases: [],
@@ -232,6 +237,97 @@ function syntheticJiggleRoot(): { root: THREE.Group; jiggle: THREE.Bone } {
 }
 
 describe('createClothSimHarness', () => {
+  it('samples moving body anchors without restoring them to the initial pose', () => {
+    const { root, anchor } = syntheticRoot();
+    const harness = createClothSimHarness(root, syntheticClothModel());
+    for (let i = 0; i < 120; i++) {
+      harness.step(CLOTH_TIMESTEP, (dt) => { anchor.position.x += dt; });
+    }
+    expect(anchor.position.x).toBeCloseTo(1, 8);
+    expect(harness.metrics().simulationSteps).toBe(120);
+    harness.dispose();
+    expect(anchor.position.x).toBeCloseTo(1, 8);
+  });
+
+  it('does not write a simulated node-base rotation into an animated body anchor', () => {
+    const { root, anchor } = syntheticRoot();
+    const model = syntheticClothModel();
+    model.nodeBases = [{ node: 0, x0: 0, x1: 1, y0: 0, y1: 2, qAdjust: Q }];
+    const harness = createClothSimHarness(root, model);
+    const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.7);
+    harness.step(CLOTH_TIMESTEP, () => { anchor.quaternion.copy(rotation); });
+    expect(anchor.quaternion.angleTo(rotation)).toBeLessThan(1e-7);
+    harness.dispose();
+    expect(anchor.quaternion.angleTo(rotation)).toBeLessThan(1e-7);
+  });
+
+  it('restores unkeyed cloth channels before animation and on disposal', () => {
+    const { root, anchor } = syntheticRoot();
+    const tip = root.getObjectByName('cloth_tip')!;
+    const initial = tip.position.clone();
+    const mixer = new THREE.AnimationMixer(root);
+    const clip = new THREE.AnimationClip('partial', 2, [
+      new THREE.NumberKeyframeTrack('cloth_anchor.position[x]', [0, 2], [0, 2]),
+      new THREE.QuaternionKeyframeTrack('cloth_tip.quaternion', [0, 2], [0, 0, 0, 1, 0, 0, 1, 0]),
+    ]);
+    mixer.clipAction(clip).play();
+    const harness = createClothSimHarness(root, syntheticClothModel());
+    for (let i = 0; i < 60; i++) {
+      harness.step(CLOTH_TIMESTEP, (dt) => {
+        expect(tip.position.distanceTo(initial)).toBeLessThan(1e-8);
+        mixer.update(dt);
+      });
+    }
+    expect(tip.position.distanceTo(initial)).toBeGreaterThan(0.01);
+    const animatedRotation = tip.quaternion.clone();
+    harness.dispose();
+    expect(tip.position.distanceTo(initial)).toBeLessThan(1e-8);
+    expect(tip.quaternion.angleTo(animatedRotation)).toBeLessThan(1e-7);
+    expect(anchor.position.x).toBeCloseTo(0.5, 8);
+    harness.dispose();
+    expect(anchor.position.x).toBeCloseTo(0.5, 8);
+  });
+
+  it('runs the same animated simulation at 30, 60, 144 and 360 render fps', () => {
+    const runs = [30, 60, 144, 360].map((fps) => {
+      const { root, anchor } = syntheticRoot();
+      const harness = createClothSimHarness(root, syntheticClothModel());
+      const mixer = new THREE.AnimationMixer(root);
+      const clip = new THREE.AnimationClip('move', 4, [
+        new THREE.NumberKeyframeTrack('cloth_anchor.position[x]', [0, 4], [0, 2]),
+      ]);
+      mixer.clipAction(clip).play();
+      for (let frame = 0; frame < fps * 2; frame++) {
+        harness.step(1 / fps, (dt) => mixer.update(dt));
+      }
+      expect(anchor.position.x).toBeCloseTo(1, 8);
+      expect(harness.metrics().simulationSteps).toBe(240);
+      return root.children.map((bone) => bone.position.toArray()).flat();
+    });
+    for (const run of runs.slice(1)) {
+      run.forEach((value, index) => expect(value).toBeCloseTo(runs[0][index], 8));
+    }
+  });
+
+  it('accumulates short frames, ignores invalid time and treats a suspended tab as paused', () => {
+    const { root, anchor } = syntheticRoot();
+    const harness = createClothSimHarness(root, syntheticClothModel());
+    const animate = (dt: number) => { anchor.position.x += dt; };
+    harness.step(CLOTH_TIMESTEP / 2, animate);
+    expect(anchor.position.x).toBe(0);
+    harness.step(CLOTH_TIMESTEP / 2, animate);
+    expect(anchor.position.x).toBeCloseTo(CLOTH_TIMESTEP, 10);
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2]) {
+      harness.step(invalid, animate);
+    }
+    expect(harness.metrics().simulationSteps).toBe(1);
+    harness.step(CLOTH_TIMESTEP, animate);
+    expect(anchor.position.x).toBeCloseTo(2 * CLOTH_TIMESTEP, 10);
+    const metrics = harness.step(0.2, animate);
+    expect(metrics.simulationSteps).toBe(14);
+    expect(metrics.finite).toBe(1);
+  });
+
   it('can step zero time headlessly without moving the pinned node', () => {
     const { root, anchor } = syntheticRoot();
     const harness = createClothSimHarness(root, syntheticClothModel());
@@ -268,7 +364,7 @@ describe('createClothSimHarness', () => {
 
   it('keeps a FitMatrix control bounded while source nodes settle', () => {
     const root = syntheticFitRoot();
-    const harness = createClothSimHarness(root, syntheticFitClothModel(), { substeps: 2 });
+    const harness = createClothSimHarness(root, syntheticFitClothModel());
     let metrics = harness.metrics();
 
     for (let i = 0; i < 180; i++) {
@@ -284,7 +380,7 @@ describe('createClothSimHarness', () => {
 
   it('keeps a stray-radius clamp finite and bounded over repeated steps', () => {
     const root = syntheticStrayRoot();
-    const harness = createClothSimHarness(root, syntheticStrayClothModel(), { substeps: 2 });
+    const harness = createClothSimHarness(root, syntheticStrayClothModel());
     let metrics = harness.metrics();
 
     for (let i = 0; i < 240; i++) {
@@ -301,9 +397,9 @@ describe('createClothSimHarness', () => {
   it('applies a collision plane through the solver pass', () => {
     const root = syntheticPlaneRoot();
     const child = root.children.find((obj) => obj.name === 'plane_child') as THREE.Bone;
-    const harness = createClothSimHarness(root, syntheticPlaneClothModel(), { substeps: 1 });
+    const harness = createClothSimHarness(root, syntheticPlaneClothModel());
 
-    const metrics = harness.step(0);
+    const metrics = harness.step(CLOTH_TIMESTEP);
     root.updateWorldMatrix(true, true);
 
     expect(metrics.finite).toBe(1);
@@ -313,7 +409,7 @@ describe('createClothSimHarness', () => {
   it('keeps a param-bearing jiggle node on its target under gravity', () => {
     const { root, jiggle } = syntheticJiggleRoot();
     const expected = jiggle.getWorldPosition(new THREE.Vector3());
-    const harness = createClothSimHarness(root, syntheticJiggleClothModel(), { substeps: 2 });
+    const harness = createClothSimHarness(root, syntheticJiggleClothModel());
     let metrics = harness.metrics();
 
     for (let i = 0; i < 180; i++) {
