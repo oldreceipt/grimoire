@@ -245,24 +245,24 @@ describe('animationAttraction', () => {
 });
 
 describe('solverIterationPhases', () => {
-  it('keeps constraint and goal iterations as separate authored phases', () => {
+  it('includes the base pass in both authored iteration counts', () => {
     expect(solverIterationPhases({ extraIterations: 18, extraGoalIterations: 12 })).toEqual({
-      goalIterations: 12,
-      constraintIterations: 18,
+      goalIterations: 13,
+      constraintIterations: 19,
     });
   });
 
-  it('uses the iteration override only for the constraint phase', () => {
+  it('bounds goal passes to the overridden relaxation count', () => {
     expect(solverIterationPhases({ extraIterations: 18, extraGoalIterations: 12 }, 5)).toEqual({
-      goalIterations: 12,
+      goalIterations: 5,
       constraintIterations: 5,
     });
   });
 
-  it('keeps the existing constraint fallback without inventing goal iterations', () => {
+  it('runs one base pass when no extra iterations are authored', () => {
     expect(solverIterationPhases({ extraIterations: 0, extraGoalIterations: 0 })).toEqual({
-      goalIterations: 0,
-      constraintIterations: 8,
+      goalIterations: 1,
+      constraintIterations: 1,
     });
   });
 });

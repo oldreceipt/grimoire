@@ -341,6 +341,43 @@ describe('parseFeModel', () => {
   });
 });
 
+describe('compiled rope and twist decoding', () => {
+  it('decodes ordered rope runs after their exclusive-end header', () => {
+    const model = parseFeModel({ m_CtrlName: ['a', 'b', 'c'], m_nRopeCount: 2, m_Ropes: [5, 7, 0, 1, 2, 0, 2] })!;
+    expect(model.ropeChains).toEqual([[0, 1, 2], [0, 2]]);
+    expect(model.decodeIssues).toEqual([]);
+  });
+
+  it.each([
+    { m_nRopeCount: -1, m_Ropes: [], reason: 'invalid-count' },
+    { m_Ropes: [3, 0, 1], reason: 'invalid-count' },
+    { m_nRopeCount: 1, m_Ropes: [4, 0, 1], reason: 'invalid-offsets' },
+    { m_nRopeCount: 1, m_Ropes: [2, 0], reason: 'invalid-offsets' },
+    { m_nRopeCount: 1, m_Ropes: [3, 0, 8], reason: 'invalid-nodes' },
+    { m_nRopeCount: 1, m_Ropes: [3, 0, 1, 2], reason: 'invalid-offsets' },
+  ])('rejects malformed rope packing: %j', ({ reason, ...packed }) => {
+    const model = parseFeModel({ m_CtrlName: ['a', 'b', 'c'], ...packed })!;
+    expect(model.ropeChains).toEqual([]);
+    expect(model.decodeIssues).toEqual([{ array: 'm_Ropes', record: 0, reason }]);
+  });
+
+  it('rejects malformed twist links instead of modifying a fabricated node zero', () => {
+    const model = parseFeModel({ m_CtrlName: ['base', 'tip'], m_Twists: [
+      {},
+      { nNodeOrient: -1, nNodeEnd: 1, flTwistRelax: 1, flSwingRelax: 1 },
+      { nNodeOrient: 0, nNodeEnd: 1, flTwistRelax: Number.NaN, flSwingRelax: 1 },
+      { nNodeOrient: 0, nNodeEnd: 1, flTwistRelax: 0.618, flSwingRelax: 0.5 },
+    ] })!;
+    expect(model.twists).toEqual([{ nodeOrient: 0, nodeEnd: 1, twistRelax: 0.618, swingRelax: 0.5 }]);
+    expect(model.decodeIssues).toEqual([
+      { array: 'm_Twists', record: 0, reason: 'invalid-nodes' },
+      { array: 'm_Twists', record: 1, reason: 'invalid-nodes' },
+      { array: 'm_Twists', record: 2, reason: 'invalid-weights' },
+    ]);
+  });
+
+});
+
 describe('compiled integrator selection', () => {
   it('uses dynamic-node bit indices, including the unsigned high bit and next word', () => {
     const model = parseFeModel({

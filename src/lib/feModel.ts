@@ -96,6 +96,7 @@ export interface RawFeModel {
     flStrength?: number;
   }>;
   m_Ropes?: number[]; // flat: m_pRopes[i] is the end index of rope i (chain segmentation)
+  m_nRopeCount?: number;
   m_JiggleBones?: Array<{ m_nNode?: number; m_nJiggleParent?: number; m_jiggleBone?: RawJiggleBoneParams }>;
   m_KelagerBends?: Array<{ flHeight0?: number; nNode?: number[]; flWeight?: number[] }>;
   m_HingeLimits?: unknown[];
@@ -313,9 +314,9 @@ export interface ClothKelagerBend {
 }
 
 export interface ClothDecodeIssue {
-  array: 'm_KelagerBends' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators';
+  array: 'm_KelagerBends' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
   record: number;
-  reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-height' | 'invalid-bitset';
+  reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets';
 }
 
 export type ClothIntegratorMode = 'goal-damped' | 'raw' | 'unknown';
@@ -352,6 +353,8 @@ export interface ClothModel {
   lockToGoal: number[];
   collisionPlanes: ClothCollisionPlane[];
   ropes: number[]; // flat rope-end-index array (chain segmentation)
+  ropeCount: number;
+  ropeChains: number[][];
   jiggleBones: ClothJiggleBone[];
   kelagerBends: ClothKelagerBend[];
   firstPositionDrivenNode: number; // m_nFirstPositionDrivenNode (>= here => reconstructed)
@@ -379,6 +382,34 @@ const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Num
 const isUint32 = (v: unknown): v is number => isFiniteNumber(v) && Number.isInteger(v) && v >= 0 && v <= 0xffffffff;
 const isNodeIndex = (v: unknown, nodeCount: number): v is number =>
   isFiniteNumber(v) && Number.isInteger(v) && v >= 0 && v < nodeCount;
+
+function parseRopeChains(fe: RawFeModel, issues: ClothDecodeIssue[]): number[][] {
+  const packed = fe.m_Ropes ?? [];
+  const count = fe.m_nRopeCount ?? 0;
+  if (!Array.isArray(packed) || !isUint32(count) || count > packed.length || (count === 0 && packed.length > 0)) {
+    issues.push({ array: 'm_Ropes', record: 0, reason: 'invalid-count' });
+    return [];
+  }
+  // The header stores exclusive end offsets, followed by the ordered node runs.
+  const chains: number[][] = [];
+  let begin = count;
+  for (let record = 0; record < count; record++) {
+    const end = packed[record];
+    if (!isUint32(end) || end < begin + 2 || end > packed.length
+      || (record === count - 1 && end !== packed.length)) {
+      issues.push({ array: 'm_Ropes', record, reason: 'invalid-offsets' });
+      return [];
+    }
+    const chain = packed.slice(begin, end);
+    if (chain.every((index) => isNodeIndex(index, fe.m_CtrlName.length))) {
+      chains.push(chain);
+    } else {
+      issues.push({ array: 'm_Ropes', record, reason: 'invalid-nodes' });
+    }
+    begin = end;
+  }
+  return chains;
+}
 
 export function clothIntegratorMode(model: Pick<ClothModel,
   'staticNodeCount' | 'staticNodeFlags' | 'dynamicNodeFlags' | 'goalDampedSpringIntegrators'
@@ -447,7 +478,7 @@ function parseKelagerBends(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothKel
       issues.push({ array: 'm_KelagerBends', record, reason: 'invalid-weights' });
       continue;
     }
-    if (!isFiniteNumber(bend.flHeight0)) {
+    if (!isFiniteNumber(bend.flHeight0) || bend.flHeight0 < 0) {
       issues.push({ array: 'm_KelagerBends', record, reason: 'invalid-height' });
       continue;
     }
@@ -622,12 +653,20 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     relax: num(s.flRelaxationFactor, 1),
   }));
 
-  const twists: ClothTwist[] = (fe.m_Twists ?? []).map((t) => ({
-    nodeOrient: num(t.nNodeOrient),
-    nodeEnd: num(t.nNodeEnd),
-    twistRelax: num(t.flTwistRelax),
-    swingRelax: num(t.flSwingRelax),
-  }));
+  const twists: ClothTwist[] = [];
+  for (const [record, t] of (fe.m_Twists ?? []).entries()) {
+    if (!isObject(t) || !isNodeIndex(t.nNodeOrient, names.length) || !isNodeIndex(t.nNodeEnd, names.length)) {
+      decodeIssues.push({ array: 'm_Twists', record, reason: 'invalid-nodes' });
+      continue;
+    }
+    if (!isFiniteNumber(t.flTwistRelax) || !isFiniteNumber(t.flSwingRelax)
+      || t.flTwistRelax < 0 || t.flTwistRelax > 1 || t.flSwingRelax < 0 || t.flSwingRelax > 1) {
+      decodeIssues.push({ array: 'm_Twists', record, reason: 'invalid-weights' });
+      continue;
+    }
+    twists.push({ nodeOrient: t.nNodeOrient, nodeEnd: t.nNodeEnd,
+      twistRelax: t.flTwistRelax, swingRelax: t.flSwingRelax });
+  }
 
   const fitMatrices: ClothFitMatrix[] = (fe.m_FitMatrices ?? []).map((m) => ({
     bone: vec3(m.bone),
@@ -666,6 +705,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
 
   const animatedRods = parseAnimatedRods(fe, decodeIssues);
   const kelagerBends = parseKelagerBends(fe, decodeIssues);
+  const ropeChains = parseRopeChains(fe, decodeIssues);
   const bitset = fe.m_GoalDampedSpringIntegrators ?? [];
   const validBitset = Array.isArray(bitset) && bitset.every(isUint32);
   if (!validBitset) {
@@ -702,7 +742,9 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     lockToParent,
     lockToGoal: (fe.m_LockToGoal ?? []).map((v) => num(v)),
     collisionPlanes,
-    ropes: (fe.m_Ropes ?? []).map((v) => num(v)),
+    ropes: Array.isArray(fe.m_Ropes) ? fe.m_Ropes.map((v) => num(v, -1)) : [],
+    ropeCount: isUint32(fe.m_nRopeCount) ? fe.m_nRopeCount : 0,
+    ropeChains,
     jiggleBones,
     kelagerBends,
     firstPositionDrivenNode: num(fe.m_nFirstPositionDrivenNode, names.length),

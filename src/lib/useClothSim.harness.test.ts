@@ -61,6 +61,8 @@ function syntheticClothModel(): ClothModel {
     lockToGoal: [],
     collisionPlanes: [],
     ropes: [],
+    ropeCount: 0,
+    ropeChains: [],
     jiggleBones: [],
     kelagerBends: [],
     firstPositionDrivenNode: 3,
@@ -237,6 +239,77 @@ function syntheticJiggleRoot(): { root: THREE.Group; jiggle: THREE.Bone } {
 }
 
 describe('createClothSimHarness', () => {
+  it('keeps an animated attachment fixed when its simulated parent translates', () => {
+    const model = syntheticClothModel();
+    model.nodes = [
+      node('anchor', [0, 0, 0], true),
+      node('attachment', [1, 1, 0], true),
+      { ...node('moving_parent', [1, 0, 0]), gravity: 100, animForce: 0, animVertex: 1 },
+    ];
+    model.staticNodeCount = 2;
+    model.dynamicNodeFlags = 0x80;
+    model.skelParents = [-1, 2, -1];
+    model.rods = [];
+    const root = new THREE.Group();
+    const anchor = new THREE.Bone();
+    anchor.name = 'anchor';
+    const parent = new THREE.Bone();
+    parent.name = 'moving_parent';
+    parent.position.set(1, 0, 0);
+    const attachment = new THREE.Bone();
+    attachment.name = 'attachment';
+    attachment.position.set(0, 1, 0);
+    root.add(anchor, parent);
+    parent.add(attachment);
+    const harness = createClothSimHarness(root, model);
+    for (let i = 0; i < 120; i++) harness.step(CLOTH_TIMESTEP);
+    expect(parent.position.y).toBeLessThan(-0.1);
+    expect(attachment.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(1, 1, 0))).toBeLessThan(1e-7);
+    harness.dispose();
+    expect(attachment.position.toArray()).toEqual([0, 1, 0]);
+  });
+
+  it.each(['twist', 'rope'])('rotates a static %s base while preserving descendant animation anchors and cleanup', (kind) => {
+    const model = syntheticClothModel();
+    model.nodes = [
+      node('cable_base', [0, 0, 0], true),
+      node('child_anchor', [0, 1, 0], true),
+      node('spare_anchor', [1, 0, 0], true),
+      { ...node('cable_tip', [0, 0, 1]), gravity: 100, animForce: 0, animVertex: 0.2 },
+    ];
+    model.rods = [{ a: 0, b: 3, min: 1, max: 1, relax: 1, weight: 0 }];
+    if (kind === 'twist') model.twists = [{ nodeOrient: 0, nodeEnd: 3, twistRelax: 0, swingRelax: 1 }];
+    else { model.ropeChains = [[0, 3]]; model.ropeCount = 1; }
+    model.staticNodeCount = 3;
+    model.firstPositionDrivenNode = 4;
+    model.dynamicNodeFlags = 0x80;
+    const root = new THREE.Group();
+    const bones = model.nodes.map((item) => {
+      const bone = new THREE.Bone();
+      bone.name = item.name;
+      bone.position.fromArray(item.initPos);
+      return bone;
+    });
+    root.add(bones[0], bones[2]);
+    bones[0].add(bones[1], bones[3]);
+    const harness = createClothSimHarness(root, model);
+    for (let i = 0; i < 120; i++) harness.step(CLOTH_TIMESTEP);
+    expect(bones[0].quaternion.angleTo(new THREE.Quaternion())).toBeGreaterThan(0.1);
+    expect(bones[0].getWorldPosition(new THREE.Vector3()).length()).toBeLessThan(1e-7);
+    expect(bones[1].getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(0, 1, 0))).toBeLessThan(1e-7);
+    expect(bones[1].getWorldQuaternion(new THREE.Quaternion()).angleTo(new THREE.Quaternion())).toBeLessThan(1e-7);
+    harness.dispose();
+    bones.forEach((bone, index) => {
+      expect(bone.position.distanceTo(new THREE.Vector3().fromArray(model.nodes[index].initPos))).toBeLessThan(1e-7);
+      expect(bone.quaternion.angleTo(new THREE.Quaternion())).toBeLessThan(1e-7);
+    });
+    model.rotLockStaticNodeCount = 1;
+    const locked = createClothSimHarness(root, model);
+    for (let i = 0; i < 120; i++) locked.step(CLOTH_TIMESTEP);
+    expect(bones[0].quaternion.angleTo(new THREE.Quaternion())).toBeLessThan(1e-7);
+    locked.dispose();
+  });
+
   it('samples moving body anchors without restoring them to the initial pose', () => {
     const { root, anchor } = syntheticRoot();
     const harness = createClothSimHarness(root, syntheticClothModel());

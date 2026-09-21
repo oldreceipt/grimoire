@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seven physics preview</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#181c24;color:#eef0f5;font:14px system-ui}main{display:grid;grid-template-columns:300px 1fr;height:100vh}aside{padding:24px;background:#11141a;overflow:auto}h1{font-size:24px;margin:0 0 8px}p{line-height:1.5;color:#b7bfce}label{display:block;margin:18px 0 8px}button,select{font:inherit;color:inherit;background:#2b3240;border:1px solid #47546a;border-radius:6px;padding:8px;margin:4px 4px 4px 0}select{width:100%}button{cursor:pointer}button:focus-visible,select:focus-visible{outline:2px solid #b3c8ff}#viewport{min-width:0;min-height:0;overflow:hidden;position:relative}canvas{display:block;width:100%;height:100%}pre{font:12px/1.5 monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:#b6d3cc}#status{color:#c9d5ee}small{color:#b7bfce}a{color:#aebfff}
+  </style>
+</head>
+<body>
+  <main>
+    <aside>
+      <h1>Seven</h1><p>Source 2 physics preview<br><small>Development comparison. Exported from your installed game.</small></p>
+      <label for="clip">Animation</label><select id="clip"></select>
+      <label><input id="physics" type="checkbox" checked /> Physics</label>
+      <label><input id="frozen" type="checkbox" /> Freeze animation</label>
+      <label><input id="skeleton" type="checkbox" /> Show bones</label>
+      <div><button id="play">Play</button><button id="reset">Reset</button><button id="step">Step 1 second</button><button id="settle">Settle 10 seconds</button></div>
+      <label for="view">Camera</label><select id="view"><option>Front</option><option>Back</option><option>Side</option></select>
+      <p id="status" role="status">Loading assets...</p><pre id="metrics"></pre>
+      <button id="checks">Run checks</button><button id="report">Save report</button>
+      <details><summary id="checks-summary">Check results</summary><pre id="checks-result"></pre></details>
+    </aside>
+    <div id="viewport"></div>
+  </main>
+  <script type="module" src="/src/dev/clothPreview.ts"></script>
+</body>
+</html>

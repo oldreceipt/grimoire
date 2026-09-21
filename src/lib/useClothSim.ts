@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { clothIntegratorMode } from './feModel';
+import { applyGoalDampedAttraction, applyRawAttraction, projectKelagerBend, reconstructClothRope, reconstructClothTwist } from './clothConstraints';
 import {
   applyOffset,
   nodeBaseQuaternion,
@@ -133,13 +134,11 @@ export const defaultClothTuning = {
   showNodes: false,
 };
 
-const DEFAULT_CONSTRAINT_ITERATIONS = 8;
 export const CLOTH_TIMESTEP = 1 / 120;
 const MAX_CLOTH_STEPS_PER_FRAME = 12;
 const CLOTH_RESUME_GAP = 0.25;
 const MIN_TIMESTEP_HISTORY_RATIO = 0.25;
-// Preview damping floor retained until the authored integrator modes and
-// rod-velocity smoothing have independently validated runtime implementations.
+// Legacy exports without integrator selectors keep the preview damping fallback.
 const MIN_VELOCITY_DAMPING = 0.02;
 
 export const clothTuning = { ...defaultClothTuning };
@@ -210,7 +209,7 @@ export const clothKnobs: Array<{
   { k: 'collisionScale', min: 0, max: 1.5, step: 0.05 },
 ];
 
-// Authored per-node gravity (cm/s^2, Z-up) times the model's global gravity scale,
+// Authored per-node gravity (Source units/s^2, Z-up) times the model's global gravity scale,
 // matching CSoftbody::Predict: displacement = flGravity * m_flDefaultGravityScale * dt^2.
 // flGravity == 0 is Valve's intent for position-driven / reconstructed bones (Dynamo's
 // bag, Celeste's hair tresses, Yamato's tassels, Engineer's pouches, ...): they are
@@ -240,12 +239,12 @@ export function solverIterationPhases(
   model: Pick<ClothModel, 'extraIterations' | 'extraGoalIterations'>,
   iterationOverride = 0,
 ): { goalIterations: number; constraintIterations: number } {
+  const constraintIterations = THREE.MathUtils.clamp(
+    Math.round(iterationOverride || (model.extraIterations + 1)), 1, 256,
+  );
   return {
-    goalIterations: Math.max(0, Math.round(model.extraGoalIterations || 0)),
-    constraintIterations: Math.max(
-      1,
-      Math.round(iterationOverride || model.extraIterations || DEFAULT_CONSTRAINT_ITERATIONS),
-    ),
+    goalIterations: THREE.MathUtils.clamp(Math.round(model.extraGoalIterations + 1), 1, constraintIterations),
+    constraintIterations,
   };
 }
 
@@ -504,6 +503,8 @@ interface NodeRuntime {
   reverseOffsetDriven: boolean;
   lockToGoal: boolean;
   jiggleDriven: boolean;
+  kinematic: boolean;
+  integratorMode: ReturnType<typeof clothIntegratorMode>;
   gravity: number;
   damping: number;
   animForce: number;
@@ -515,6 +516,7 @@ interface NodeRuntime {
   initRot: Vec4;
   pos: THREE.Vector3;
   prev: THREE.Vector3;
+  lastSolvedPos: THREE.Vector3;
   target: THREE.Vector3;
   solvedRot: THREE.Quaternion;
   targetRot: THREE.Quaternion;
@@ -581,6 +583,8 @@ interface ClothRuntime {
   model: ClothModel;
   nodes: NodeRuntime[];
   rods: ClothModel['rods'];
+  twistNodes: Set<number>;
+  rotationNodes: Set<number>;
   capsules: RigidRuntime[];
   boxes: BoxRuntime[];
   collisionPlanes: CollisionPlaneRuntime[];
@@ -604,10 +608,12 @@ interface ClothRuntime {
 
 export interface ClothSimulationCoverage {
   rods: number;
+  twists: number;
+  kelagerBends: number;
+  ropeChains: number;
   pending: {
     animatedRods: number;
-    twists: number;
-    kelagerBends: number;
+    ropeChains: number;
     jiggleBones: number;
   };
   integrators: Record<ReturnType<typeof clothIntegratorMode>, number>;
@@ -621,6 +627,9 @@ export interface ClothHarnessMetrics {
   maxDistanceFromTarget: number;
   maxDistanceFromInit: number;
   maxFrameMotion: number;
+  maxFrameMotionNode: string | null;
+  maxAnchorError: number;
+  maxBendExcess: number;
   nodeCount: number;
   kinematicCount: number;
   simulationSteps: number;
@@ -640,10 +649,12 @@ export function clothSimulationCoverage(model: ClothModel): ClothSimulationCover
   });
   return {
     rods: model.rods.length,
+    twists: model.twists.length,
+    kelagerBends: model.kelagerBends.length,
+    ropeChains: model.ropeChains.length,
     pending: {
       animatedRods: model.animatedRods.length,
-      twists: model.twists.length,
-      kelagerBends: model.kelagerBends.length,
+      ropeChains: Math.max(0, model.ropeCount - model.ropeChains.length),
       jiggleBones: model.jiggleBones.length,
     },
     integrators,
@@ -982,6 +993,8 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
       reverseOffsetDriven: reverseOffsetDrivenNodes.has(index),
       lockToGoal: lockToGoalNodes.has(index),
       jiggleDriven: jiggleDrivenNodes.has(index),
+      kinematic: false,
+      integratorMode: clothIntegratorMode(model, index),
       gravity: effectiveNodeGravity(node.gravity, model.defaultGravityScale),
       damping: node.damping,
       animForce: node.animForce,
@@ -993,11 +1006,14 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
       initRot: node.initRot,
       pos: initPos.clone(),
       prev: initPos.clone(),
+      lastSolvedPos: initPos.clone(),
       target: initPos.clone(),
       solvedRot: initRot.clone(),
       targetRot: initRot.clone(),
     };
   });
+
+  for (const node of nodes) node.kinematic = isKinematicNode(node);
 
   const ctrlOffsets: OffsetRuntime[] = model.ctrlOffsets.map((offset) => ({
     ...offset,
@@ -1035,6 +1051,12 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
     model,
     nodes,
     rods: model.rods,
+    twistNodes: new Set(model.twists.map((link) => link.nodeOrient).filter((index) => (
+      index >= model.rotLockStaticNodeCount && index < nodes.length && !nodes[index].jiggleDriven
+    ))),
+    rotationNodes: new Set([...model.twists.map((link) => link.nodeOrient), ...model.ropeChains.flat()].filter((index) => (
+      index >= model.rotLockStaticNodeCount && index < nodes.length && !nodes[index].jiggleDriven
+    ))),
     capsules: [...model.capsules.map(fromCapsule), ...model.spheres.map(fromSphere)].filter(
       (rigid) => rigid.node >= 0 && rigid.node < nodes.length,
     ),
@@ -1170,11 +1192,12 @@ function integrate(rt: ClothRuntime, gravity: THREE.Vector3, dt: number): void {
     if (isKinematicNode(node)) {
       node.pos.copy(node.target);
       node.prev.copy(node.target);
-      node.solvedRot.copy(node.targetRot);
+      if (!rt.twistNodes.has(node.index)) node.solvedRot.copy(node.targetRot);
       continue;
     }
-    // Keep the preview's damping floor until authored damping is validated.
-    const damping = Math.max(node.damping, MIN_VELOCITY_DAMPING);
+    const damping = node.integratorMode === 'unknown'
+      ? Math.max(node.damping, MIN_VELOCITY_DAMPING)
+      : Math.max(0, node.damping * dt);
     const velocity = node.pos.clone().sub(node.prev).multiplyScalar(
       verletVelocityScale(dt, lastDt, damping),
     );
@@ -1189,6 +1212,12 @@ const _goalDelta = new THREE.Vector3();
 function solveGoals(rt: ClothRuntime, dt: number): void {
   for (const node of rt.nodes) {
     if (isKinematicNode(node)) continue;
+    if (node.integratorMode === 'goal-damped') continue;
+    if (node.integratorMode === 'raw') {
+      applyRawAttraction(node.pos, node.prev, node.target,
+        node.animForce * clothTuning.attractionScale, node.animVertex * clothTuning.attractionScale, dt);
+      continue;
+    }
     const { posBlend, velImpulse } = animationAttraction(node.animVertex, node.animForce, dt);
     const pos = posBlend * clothTuning.attractionScale;
     const vel = velImpulse * clothTuning.attractionScale;
@@ -1198,6 +1227,14 @@ function solveGoals(rt: ClothRuntime, dt: number): void {
     // moves only the current position (imparts velocity toward the goal).
     node.prev.addScaledVector(_goalDelta, pos);
     node.pos.addScaledVector(_goalDelta, pos + vel);
+  }
+}
+
+function solveGoalDampedNodes(rt: ClothRuntime): void {
+  for (const node of rt.nodes) {
+    if (node.kinematic || node.integratorMode !== 'goal-damped') continue;
+    applyGoalDampedAttraction(node.pos, node.prev, node.target,
+      node.animForce * clothTuning.attractionScale, node.animVertex * clothTuning.attractionScale);
   }
 }
 
@@ -1217,8 +1254,8 @@ function solveRods(rt: ClothRuntime): void {
     const shares = rodCorrectionShares(rod.weight);
     if (shares.a <= 0 && shares.b <= 0) continue;
     const correction = delta.multiplyScalar(((d - wanted) / d) * rod.relax);
-    if (shares.a > 0) a.pos.addScaledVector(correction, shares.a);
-    if (shares.b > 0) b.pos.addScaledVector(correction, -shares.b);
+    if (shares.a > 0 && !a.kinematic) a.pos.addScaledVector(correction, shares.a);
+    if (shares.b > 0 && !b.kinematic) b.pos.addScaledVector(correction, -shares.b);
   }
 }
 
@@ -1233,13 +1270,8 @@ function solveCollisions(rt: ClothRuntime): void {
   for (const node of rt.nodes) {
     if (isKinematicNode(node)) continue;
     const particleRadius = node.collideRadius + rt.model.addWorldCollisionRadius;
-    // Position-only depenetration: push the node to the collider surface and leave the
-    // Verlet history (prev) alone, so Verlet derives the corrected velocity implicitly.
-    // The previous code also rewrote prev after the push (an inbound-velocity kill plus
-    // tangential friction); because cloth nodes rest INSIDE their own body capsules, that
-    // pumped outward velocity into the integrator every frame -> a self-sustaining limit
-    // cycle (the reported jitter / fly-off / clipping). A pure positional projection is
-    // the Source 2 contact behavior and is what makes the solver settle.
+    // Preview contact approximation. Projection also changes the inferred Verlet
+    // velocity; it is not a port of the engine's contact/friction pipeline.
     for (const rigid of rt.capsules) {
       if (!canCollide(node.collisionMask, rigid.mask)) continue;
       rigidToCapsule(rt, rigid, cap);
@@ -1267,10 +1299,18 @@ function solveAnimStrayRadii(rt: ClothRuntime): void {
 
 function updateSolvedRotations(rt: ClothRuntime): void {
   const positions = rt.nodes.map((node) => v3Array(node.pos));
-  for (const node of rt.nodes) node.solvedRot.copy(node.targetRot);
+  for (const node of rt.nodes) {
+    if (!rt.twistNodes.has(node.index)) node.solvedRot.copy(node.targetRot);
+  }
   for (const base of rt.model.nodeBases) {
     const node = rt.nodes[base.node];
     if (node) node.solvedRot.copy(nodeBaseQuaternion(positions, base));
+  }
+  for (const chain of rt.model.ropeChains) {
+    reconstructClothRope(rt.nodes, chain, rt.rotationNodes);
+  }
+  for (const link of rt.model.twists) {
+    if (rt.twistNodes.has(link.nodeOrient)) reconstructClothTwist(rt.nodes, link);
   }
 }
 
@@ -1279,6 +1319,10 @@ function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
   applyRuntimeSettledReconstructions(rt);
 
   const rotationWrites = new Map<THREE.Bone, THREE.Quaternion>();
+  for (const index of rt.rotationNodes) {
+    const node = rt.nodes[index];
+    if (node.bone) rotationWrites.set(node.bone, node.solvedRot.clone());
+  }
   for (const base of rt.model.nodeBases) {
     const node = rt.nodes[base.node];
     if (node?.bone && !node.pinned && !node.jiggleDriven) {
@@ -1293,14 +1337,31 @@ function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
     }
   }
 
+  for (const node of rt.nodes) {
+    if (!node.bone || rotationWrites.has(node.bone)) continue;
+    for (let parent = node.bone.parent; parent; parent = parent.parent) {
+      if (parent instanceof THREE.Bone && rotationWrites.has(parent)) {
+        rotationWrites.set(node.bone, node.targetRot.clone());
+        break;
+      }
+    }
+  }
   for (const [bone, rot] of orderBonesParentFirst(rotationWrites.entries())) {
     writeBoneQuaternion(root, rt, bone, rot);
     rt.writtenBones.add(bone);
   }
 
+  const movedBones = new Set(rt.nodes.filter((node) => !node.kinematic && node.bone).map((node) => node.bone));
   const positionWrites = new Map<THREE.Bone, THREE.Vector3>();
   for (const node of rt.nodes) {
-    if (!node.bone || isKinematicNode(node)) continue;
+    if (!node.bone) continue;
+    if (node.kinematic) {
+      // A simulated ancestor must not carry an animation-owned attachment away
+      // from its sampled world position, even when that ancestor only translates.
+      let parent: THREE.Object3D | null = node.bone;
+      while (parent && !(parent instanceof THREE.Bone && (rotationWrites.has(parent) || movedBones.has(parent)))) parent = parent.parent;
+      if (!parent) continue;
+    }
     positionWrites.set(node.bone, node.pos.clone());
   }
 
@@ -1419,32 +1480,31 @@ function stepClothRuntime(
     .applyQuaternion(root.getWorldQuaternion(new THREE.Quaternion()).invert())
     .applyQuaternion(rt.rootToModelRot);
 
-  const { constraintIterations } = solverIterationPhases(rt.model, clothTuning.iterationOverride);
+  const { constraintIterations, goalIterations } = solverIterationPhases(rt.model, clothTuning.iterationOverride);
   for (let step = 0; step < count; step++) {
     restoreAnimationPose(rt);
     animate?.(CLOTH_TIMESTEP);
     refreshTargets(root, rt);
     warmStartRuntime(rt, CLOTH_TIMESTEP);
+    for (const node of rt.nodes) node.lastSolvedPos.copy(node.pos);
     applyRuntimeReverseOffsetReconstructions(rt);
     integrate(rt, gravity, CLOTH_TIMESTEP);
     applyRuntimeReverseOffsetReconstructions(rt);
 
-    // The existing preview attraction is an approximation. Compiled integrator
-    // selectors are retained and reported, pending separate runtime validation.
     solveGoals(rt, CLOTH_TIMESTEP);
     applyRuntimeReverseOffsetReconstructions(rt);
     solveCollisions(rt);
     applyRuntimeReverseOffsetReconstructions(rt);
 
     for (let i = 0; i < constraintIterations; i++) {
+      for (const bend of rt.model.kelagerBends) projectKelagerBend(rt.nodes, bend);
       solveRods(rt);
+      if (i >= constraintIterations - goalIterations) solveGoalDampedNodes(rt);
       restorePinnedSolverNodes(rt.nodes);
       applyRuntimeReverseOffsetReconstructions(rt);
     }
-    // One final depenetration after the rods settle: the rod pass pulls nodes back
-    // toward the body and can leave them just inside a collider (the reported
-    // clipping). A single closing pass clears that without the outward over-push that
-    // colliding on every iteration causes. Position-only, so it stays energy-neutral.
+    // Close the preview contact pass after rods can move particles into a body.
+    // The engine's flag-dependent contact schedule is not yet reproduced here.
     solveCollisions(rt);
     solveAnimStrayRadii(rt);
     restorePinnedSolverNodes(rt.nodes);
@@ -1461,18 +1521,26 @@ function collectClothHarnessMetrics(rt: ClothRuntime): ClothHarnessMetrics {
   let maxDistanceFromTarget = 0;
   let maxDistanceFromInit = 0;
   let maxFrameMotion = 0;
+  let maxFrameMotionNode: string | null = null;
+  let maxAnchorError = 0;
   let kinematicCount = 0;
 
   for (const node of rt.nodes) {
     const init = vec3(node.initPos);
     const targetDistance = node.pos.distanceTo(node.target);
     const initDistance = node.pos.distanceTo(init);
-    const frameMotion = node.pos.distanceTo(node.prev);
+    const frameMotion = node.pos.distanceTo(node.lastSolvedPos);
     targetErrorSq += targetDistance * targetDistance;
     maxDistanceFromTarget = Math.max(maxDistanceFromTarget, targetDistance);
     maxDistanceFromInit = Math.max(maxDistanceFromInit, initDistance);
-    maxFrameMotion = Math.max(maxFrameMotion, frameMotion);
-    if (isKinematicNode(node)) kinematicCount += 1;
+    if (frameMotion > maxFrameMotion) {
+      maxFrameMotion = frameMotion;
+      maxFrameMotionNode = node.name;
+    }
+    if (isKinematicNode(node)) {
+      kinematicCount += 1;
+      maxAnchorError = Math.max(maxAnchorError, targetDistance);
+    }
 
     const values = [
       node.pos.x,
@@ -1496,6 +1564,13 @@ function collectClothHarnessMetrics(rt: ClothRuntime): ClothHarnessMetrics {
   }
 
   const nodeCount = rt.nodes.length;
+  let maxBendExcess = 0;
+  for (const bend of rt.model.kelagerBends) {
+    const [a, b, c] = bend.node.map((index) => rt.nodes[index]);
+    if (!a || !b || !c) continue;
+    const height = a.pos.clone().multiplyScalar(2).sub(b.pos).sub(c.pos).length() / 3;
+    maxBendExcess = Math.max(maxBendExcess, height - bend.height0);
+  }
   return {
     finite,
     rmse: nodeCount > 0 ? Math.sqrt(targetErrorSq / nodeCount) : 0,
@@ -1503,6 +1578,9 @@ function collectClothHarnessMetrics(rt: ClothRuntime): ClothHarnessMetrics {
     maxDistanceFromTarget,
     maxDistanceFromInit,
     maxFrameMotion,
+    maxFrameMotionNode,
+    maxAnchorError,
+    maxBendExcess,
     nodeCount,
     kinematicCount,
     simulationSteps: rt.simulationSteps,
