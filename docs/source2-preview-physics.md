@@ -1,8 +1,9 @@
 # Source 2 preview physics
 
-The preview now uses compiled raw/goal-damped attraction, Kelager bends, directed
-twist/swing links, and rope bone reconstruction. The first rendered validation
-cases include Seven, Vindicta and Yamato's current base models with three animations each.
+The preview now uses compiled raw/goal-damped attraction, fixed and animated rod
+batches, Kelager bends, directed twist/swing links, and rope bone reconstruction.
+The rendered validation cases include Seven, Vindicta, Yamato and Necro's current
+base models with three animations each.
 Physics remains behind
 the existing developer toggle and is disabled by default. This is a tested
 preview implementation, not a claim of full Source 2 simulation parity.
@@ -15,17 +16,17 @@ The script uses the bundled vpkmerge, exports fresh assets from the base VPK, an
 serves `http://127.0.0.1:5176/cloth-preview.html`. `VPKMERGE_PATH` can select another
 exporter. Linux/macOS users can provide `--game` explicitly.
 
-For all three cases and the S2V reference, build S2V's CLI in Release, then run:
+For all four cases and the S2V reference, build S2V's CLI in Release, then run:
 
 ```powershell
-pnpm dev:cloth --case "seven,vindicta,yamato" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
+pnpm dev:cloth --case "seven,vindicta,yamato,necro" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
 ```
 
 `S2V_CLI` also accepts the CLI path. The script resolves each current model through
 the game's hero data, then exports identical clips through both tools. The case
-selector lists the exported subset; `necro` is also available for further
-investigation. Missing requested clips stop export with an error. Yamato uses
-`primary_run275_n/e`, rather than the other cases' `primary_run_n/e` names.
+selector lists the exported subset. Missing requested clips stop export with an
+error. Yamato uses `primary_run275_n/e`; Necro uses `weapon_stand_idle`, `run_n`
+and `respawn_countdown_idle`.
 Without S2V, the reference pane uses the vpkmerge animation.
 
 Choose a clip, use Play or Step 1 second, and compare Physics on/off after Reset.
@@ -97,6 +98,11 @@ Inspected on 2026-09-22:
   applies those nested blends after the primary offset, including controls that
   have rendered bones. Static generated controls also receive these positions;
   animation-owned body anchors remain untouched.
+- Its [node-base tie reconstruction](https://github.com/w1tcherrr/ValveResourceFormat/blob/c22f897342e53f999bd7c466d648f5bbbe85bafa/ValveResourceFormat/Resource/ResourceTypes/RubikonPhysics/Softbody/FeModel.NodeBaseTies.cs)
+  includes simulated joints carrying reverse offsets. The reader's explicit
+  first-position-driven boundary takes precedence over its derived fallback.
+  A reverse offset alone therefore does not make a particle kinematic; Necro
+  exposes three such dynamic particles.
 
 Grimoire calls `vpkmerge model femodel`, which already serializes the raw KV3
 subtree. This path does not consume morphic's typed Rust FeModel, so the missing
@@ -122,6 +128,8 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Moving-body friction | `0x229ec0`, `0x22a060` | Transform the previous particle through the collider's relative motion, then limit the tangential correction to friction times penetration. Contact changes the current position only. |
 | Contact scheduling | `0x244f0b`, `0x24538f`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Each collider type is visited in reverse serialized order. |
 | Fixed rod batches | `0x111bc0` | Visit `m_SimdRods` in compiled order, gathering all four lanes before scattering endpoints. Padding copies within a batch do not add stiffness; repeated constraints in subsequent batches remain. |
+| Animated rod batches | `0x10d330`, `0x111ef0` | Derive target lengths from the clean animated controls every tick, then solve `m_SimdRodsAnim` with its compiled weight, relaxation and batch order. |
+| Reverse-offset writeback | `0x105b40`, `0x109b91` | Place the output bone from the solved target particle and bone orientation. This updates rendered transforms, without replacing particle positions or integration history. |
 
 The rope direction sign is recovered from the first rest segment and its bone X
 axis, since the runtime flip bitset is not exported. All 23 Seven chains use the
@@ -140,6 +148,14 @@ for 157 scalar rods, Vindicta has 9 for 31, and Yamato has 684 for 2,712. The
 extra lanes are preserved as packed, rather than flattened into extra sequential
 passes. A malformed packed record reports a decode issue and retains the whole
 scalar fallback. Scalar rods also remain available for residual diagnostics.
+
+Animated rods retain their four-lane batches too. Their lengths follow the
+current clean animation, including compiled generated targets, with the
+runtime's squared-length floor of `2^-30`. They solve after fixed rods. The
+unique connection count is separate from repeated packed lanes in diagnostics.
+Reverse offsets now apply only during rendered-bone writeback. Explicit driven
+node boundaries still apply, so Yamato retains its 13 position-driven controls
+while Necro's three reverse-offset particles can simulate.
 
 The shared 1/120-second clock advances animation before targets/colliders and
 simulation. Physics-written local transforms are restored before each clean
@@ -244,7 +260,24 @@ units, but its frozen full-rig motion drops to 2.41 mm and the damped subset to
 0.109 mm. Its forward skirt folds remain visible; rod ordering alone does not
 explain that shape.
 
-On Windows, 162 focused physics tests, ESLint, TypeScript, i18n key/manifest
+Necro uses `models/heroes_wip/necro/necro.vmdl_c`: 48 controls, 33 static and
+15 simulated nodes, 54 fixed rods, 2 animated rods, 16 twists, 2 rope chains,
+6 node bases and 3 reverse offsets. Its export at `2026-09-22T01:13:53.298Z`
+has GLB SHA-256 `6d017c5b8cd66d28578c98c8c0b97664393f0846e8f540bf12057ed1a4f5f119`
+and FeModel SHA-256 `43fc87486571dd51c14ef68959d53b53654b3d3bf94bac855ffaa1a3d364e655`.
+All 39 rendered controls and 9 generated controls resolve. Its 12 input, anchor
+and frame-rate cases pass, with maximum input difference below `2.72e-7` meters.
+The sampled rod residual is at most 0.774 Source units, with zero measured body
+penetration at those endpoints. In the one-second idle comparison, separating
+reverse-offset writeback reduces rod error from 4.858 to 0.774 Source units.
+After a ten-second frozen settle, the next second changes positions by less
+than `4e-16` meters and orientations by 0.000140 radians. Front/back idle and side
+run inspection shows attached hair and tag geometry without mesh explosions;
+there is still no matched in-game capture.
+The reverse-offset correction also retains Yamato's 12/12 checks and the same
+sampled residuals and frozen motion. Its side-view skirt folds are unchanged.
+
+On Windows, 159 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -252,6 +285,10 @@ fixed-step animation, render-FPS equivalence, moving-body friction, contact
 scheduling, particle radii, and the complete real-data fixture. The numerical
 rest-pose check allows twenty seconds to settle before measuring late motion;
 its original 0.005 Source-unit per-tick bound is unchanged.
+Four tests that enforced the old reverse-offset kinematic/history assumption
+were removed. Their replacement exercises an animated rod and reverse-offset
+bone together, checking that the particle keeps moving, the rendered bone uses
+its offset, and cleanup restores the clean animation.
 
 The preceding foundation stage also ran the full suite: four files failed on
 Unix executable/symlink fixtures and CRLF handling (12 tests and one suite setup).
@@ -268,8 +305,9 @@ Next validation units:
    40 selectable hero entries found 35 with FeModel data; all examined dynamic
    nodes selected goal-damped integration and had zero authored point damping.
    Raw integration and nonzero damping still need a different reference asset.
-3. Add animated rod lengths and a separate jiggle-bone runtime, then validate
-   garments using fit matrices/node bases and the effective mod stack.
+3. Add a separate jiggle-bone runtime, then validate garments using fit matrices,
+   node bases and the effective mod stack. Fit-matrix reconstruction still uses
+   an older approximation and needs the same output/particle separation audit.
 4. Gate supported model families and define an unsupported-data fallback before
    considering physics enabled by default.
 

@@ -36,6 +36,7 @@ function syntheticClothModel(): ClothModel {
     ],
     capsules: [],
     animatedRods: [],
+    animatedRodBatches: [],
     rodBatches: [],
     decodeIssues: [],
     staticNodeFlags: null,
@@ -305,6 +306,37 @@ function syntheticJiggleRoot(): { root: THREE.Group; jiggle: THREE.Bone } {
 }
 
 describe('createClothSimHarness', () => {
+  it('uses animated rod lengths without freezing or feeding back a reverse-offset bone', () => {
+    const model = syntheticClothModel();
+    model.nodes = [node('anchor', [0, 0, 0], true), node('cloth', [2, 0, 0]), node('other', [0, 2, 0], true)];
+    model.nodes[1] = { ...model.nodes[1], gravity: 0, animForce: 0, animVertex: 0, damping: 0 };
+    model.rods = [];
+    model.extraIterations = 0;
+    model.dynamicNodeFlags = 0x80;
+    const rod = { a: 0, b: 1, weight: 0, relax: 0.5 };
+    model.animatedRods = [rod];
+    model.animatedRodBatches = [[rod, rod, rod, rod]];
+    model.reverseOffsets = [{ boneCtrl: 1, targetNode: 0, offset: [2, 0, 0] }];
+    const root = new THREE.Group();
+    model.nodes.forEach((particle) => {
+      const bone = new THREE.Bone();
+      bone.name = particle.name; bone.position.fromArray(particle.initPos); root.add(bone);
+    });
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    harness.step(CLOTH_TIMESTEP, () => { root.getObjectByName('cloth')!.position.set(0, 6, 0); });
+    expect(harness.snapshot().nodes[1].position).toEqual([4, 0, 0]);
+    expect(root.getObjectByName('cloth')!.position.toArray()).toEqual([2, 0, 0]);
+    expect(harness.snapshot().rods[0]).toMatchObject({ min: 6, max: 6, error: 2 });
+    expect(harness.metrics().coverage.animatedRods).toBe(1);
+    expect(harness.metrics().kinematicCount).toBe(2);
+    harness.step(CLOTH_TIMESTEP);
+    expect(harness.snapshot().nodes[1].position).toEqual([6, 0, 0]);
+    expect(root.getObjectByName('cloth')!.position.toArray()).toEqual([2, 0, 0]);
+    harness.dispose();
+    expect(root.getObjectByName('cloth')!.position.toArray()).toEqual([0, 6, 0]);
+  });
+
   it('can render generated targets without applying gravity, contacts or rod relaxation', () => {
     const { root, anchor } = syntheticRoot();
     const model = syntheticClothModel();

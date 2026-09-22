@@ -304,16 +304,6 @@ export function isPositionDrivenNode(
   return Number.isFinite(model.firstPositionDrivenNode) && index >= model.firstPositionDrivenNode;
 }
 
-export function reverseOffsetDrivenNodeSet(
-  model: Pick<ClothModel, 'reverseOffsets'>,
-): Set<number> {
-  const nodes = new Set<number>();
-  for (const offset of model.reverseOffsets) {
-    if (Number.isInteger(offset.boneCtrl) && offset.boneCtrl >= 0) nodes.add(offset.boneCtrl);
-  }
-  return nodes;
-}
-
 export function fitMatrixDrivenNodeSet(
   model: Pick<ClothModel, 'fitMatrices'>,
 ): Set<number> {
@@ -429,18 +419,16 @@ export function rigidAnchorSeed(
 export function isKinematicNode(node: {
   pinned?: boolean;
   positionDriven?: boolean;
-  reverseOffsetDriven?: boolean;
   lockToGoal?: boolean;
   jiggleDriven?: boolean;
 }): boolean {
-  return Boolean(node.pinned || node.positionDriven || node.reverseOffsetDriven || node.lockToGoal || node.jiggleDriven);
+  return Boolean(node.pinned || node.positionDriven || node.lockToGoal || node.jiggleDriven);
 }
 
 export function restorePinnedSolverNodes(
   nodes: Iterable<{
     pinned: boolean;
     positionDriven?: boolean;
-    reverseOffsetDriven?: boolean;
     lockToGoal?: boolean;
     jiggleDriven?: boolean;
     pos: THREE.Vector3;
@@ -464,7 +452,6 @@ type AnimStrayRadiusNode = {
   target: THREE.Vector3;
   pinned?: boolean;
   positionDriven?: boolean;
-  reverseOffsetDriven?: boolean;
   lockToGoal?: boolean;
   jiggleDriven?: boolean;
 };
@@ -512,7 +499,6 @@ interface NodeRuntime {
   invMass: number;
   pinned: boolean;
   positionDriven: boolean;
-  reverseOffsetDriven: boolean;
   lockToGoal: boolean;
   jiggleDriven: boolean;
   kinematic: boolean;
@@ -596,6 +582,7 @@ interface ClothRuntime {
   model: ClothModel;
   nodes: NodeRuntime[];
   rods: ClothModel['rods'];
+  animatedRodBatches: ClothModel['rodBatches'];
   twistNodes: Set<number>;
   rotationNodes: Set<number>;
   capsules: RigidRuntime[];
@@ -622,11 +609,11 @@ interface ClothRuntime {
 
 export interface ClothSimulationCoverage {
   rods: number;
+  animatedRods: number;
   twists: number;
   kelagerBends: number;
   ropeChains: number;
   pending: {
-    animatedRods: number;
     ropeChains: number;
     jiggleBones: number;
   };
@@ -674,11 +661,11 @@ export function clothSimulationCoverage(model: ClothModel): ClothSimulationCover
   });
   return {
     rods: model.rods.length,
+    animatedRods: model.animatedRods.length,
     twists: model.twists.length,
     kelagerBends: model.kelagerBends.length,
     ropeChains: model.ropeChains.length,
     pending: {
-      animatedRods: model.animatedRods.length,
       ropeChains: Math.max(0, model.ropeCount - model.ropeChains.length),
       jiggleBones: model.jiggleBones.length,
     },
@@ -735,7 +722,6 @@ type CollisionPlaneNode = {
   solvedRot: THREE.Quaternion;
   pinned?: boolean;
   positionDriven?: boolean;
-  reverseOffsetDriven?: boolean;
   lockToGoal?: boolean;
 };
 
@@ -772,32 +758,13 @@ export function reconstructReverseOffsetPosition(
   offset: { boneCtrl: number; targetNode: number; offset: Vec3; sign: 1 | -1 },
   nodes: Array<{
     pos: THREE.Vector3;
-    prev: THREE.Vector3;
     solvedRot: THREE.Quaternion;
   } | undefined>,
 ): THREE.Vector3 | null {
   const boneNode = nodes[offset.boneCtrl];
   const targetNode = nodes[offset.targetNode];
   if (!boneNode || !targetNode) return null;
-  const pos = targetNode.pos.clone().add(vec3(offset.offset).multiplyScalar(offset.sign).applyQuaternion(boneNode.solvedRot));
-  boneNode.pos.copy(pos);
-  boneNode.prev.copy(pos);
-  return pos;
-}
-
-export function applyReverseOffsetReconstructions(
-  offsets: Iterable<{ boneCtrl: number; targetNode: number; offset: Vec3; sign: 1 | -1 }>,
-  nodes: Array<{
-    pos: THREE.Vector3;
-    prev: THREE.Vector3;
-    solvedRot: THREE.Quaternion;
-  } | undefined>,
-): number {
-  let reconstructed = 0;
-  for (const offset of offsets) {
-    if (reconstructReverseOffsetPosition(offset, nodes)) reconstructed += 1;
-  }
-  return reconstructed;
+  return targetNode.pos.clone().add(vec3(offset.offset).multiplyScalar(offset.sign).applyQuaternion(boneNode.solvedRot));
 }
 
 export function buildFitMatrixReconstructions(
@@ -877,22 +844,6 @@ export function applyFitMatrixReconstructions(
     if (reconstructFitMatrixPosition(fit, nodes)) reconstructed += 1;
   }
   return reconstructed;
-}
-
-export function applyDrivenReconstructions(
-  reverseOffsets: Iterable<{ boneCtrl: number; targetNode: number; offset: Vec3; sign: 1 | -1 }>,
-  fits: Iterable<FitMatrixReconstruction>,
-  nodes: Array<{
-    initPos: Vec3;
-    pos: THREE.Vector3;
-    prev: THREE.Vector3;
-    solvedRot: THREE.Quaternion;
-  } | undefined>,
-): { reverseBefore: number; fit: number; reverseAfter: number } {
-  const reverseBefore = applyReverseOffsetReconstructions(reverseOffsets, nodes);
-  const fit = applyFitMatrixReconstructions(fits, nodes);
-  const reverseAfter = applyReverseOffsetReconstructions(reverseOffsets, nodes);
-  return { reverseBefore, fit, reverseAfter };
 }
 
 function rigidToCapsule(rt: ClothRuntime, rigid: RigidRuntime, out: Capsule): Capsule {
@@ -991,7 +942,6 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
 
   const fit = recoverSimilarity(source, target);
   const lockToGoalNodes = new Set(model.lockToGoal);
-  const reverseOffsetDrivenNodes = reverseOffsetDrivenNodeSet(model);
   const fitMatrixDrivenNodes = fitMatrixDrivenNodeSet(model);
   const jiggleDrivenNodes = jiggleDrivenNodeSet(model);
   const generatedTargets = new Set([...model.ctrlOffsets, ...model.softOffsets].map((offset) => offset.child));
@@ -1011,7 +961,6 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
       // still simulate their positions. Explicit driven-node flags are separate.
       pinned: node.pinned,
       positionDriven: isPositionDrivenNode(index, model) || fitMatrixDrivenNodes.has(index),
-      reverseOffsetDriven: reverseOffsetDrivenNodes.has(index),
       lockToGoal: lockToGoalNodes.has(index),
       jiggleDriven: jiggleDrivenNodes.has(index),
       kinematic: false,
@@ -1073,6 +1022,7 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
     model,
     nodes,
     rods: model.rods,
+    animatedRodBatches: model.animatedRodBatches.map((batch) => batch.map((rod) => ({ ...rod, min: 0, max: 0 }))),
     twistNodes: new Set(model.twists.map((link) => link.nodeOrient).filter((index) => (
       index >= model.rotLockStaticNodeCount && index < nodes.length && !nodes[index].jiggleDriven
     ))),
@@ -1193,13 +1143,8 @@ function warmStartRuntime(rt: ClothRuntime, substepDt: number): void {
   rt.warmStarted = true;
 }
 
-function applyRuntimeReverseOffsetReconstructions(rt: ClothRuntime): void {
-  applyReverseOffsetReconstructions(rt.reverseOffsets, rt.nodes);
-}
-
 function applyRuntimeSettledReconstructions(rt: ClothRuntime): void {
   applyFitMatrixReconstructions(rt.fitReconstructions, rt.nodes);
-  applyReverseOffsetReconstructions(rt.reverseOffsets, rt.nodes);
 }
 
 function integrate(rt: ClothRuntime, gravity: THREE.Vector3, dt: number): void {
@@ -1255,7 +1200,7 @@ function solveGoalDampedNodes(rt: ClothRuntime): void {
   }
 }
 
-function solveRods(rt: ClothRuntime): void {
+function solveFixedRods(rt: ClothRuntime): void {
   if (rt.model.rodBatches.length > 0) {
     for (const batch of rt.model.rodBatches) projectRodBatch(rt.nodes, batch);
     return;
@@ -1349,6 +1294,21 @@ function updateSolvedRotations(rt: ClothRuntime): void {
   }
 }
 
+function updateAnimatedRodLengths(rt: ClothRuntime): void {
+  for (const batch of rt.animatedRodBatches) {
+    for (const rod of batch) {
+      const length = Math.sqrt(Math.max(rt.nodes[rod.a].target.distanceToSquared(rt.nodes[rod.b].target), 2 ** -30));
+      rod.min = length;
+      rod.max = length;
+    }
+  }
+}
+
+function solveRods(rt: ClothRuntime): void {
+  solveFixedRods(rt);
+  for (const batch of rt.animatedRodBatches) projectRodBatch(rt.nodes, batch);
+}
+
 function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
   updateSolvedRotations(rt);
   applyRuntimeSettledReconstructions(rt);
@@ -1403,7 +1363,10 @@ function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
   for (const offset of rt.reverseOffsets) {
     const boneNode = rt.nodes[offset.boneCtrl];
     if (!boneNode?.bone || boneNode.pinned || boneNode.jiggleDriven) continue;
-    positionWrites.set(boneNode.bone, boneNode.pos.clone());
+    // Reverse offsets place the rendered bone after orientation reconstruction.
+    // The particle and its integration history remain in the solver buffer.
+    const position = reconstructReverseOffsetPosition(offset, rt.nodes);
+    if (position) positionWrites.set(boneNode.bone, position);
   }
 
   for (const fit of rt.fitReconstructions) {
@@ -1523,6 +1486,7 @@ function stepClothRuntime(
     restoreAnimationPose(rt);
     animate?.(CLOTH_TIMESTEP);
     refreshTargets(root, rt);
+    updateAnimatedRodLengths(rt);
     warmStartRuntime(rt, CLOTH_TIMESTEP);
     for (const node of rt.nodes) node.lastSolvedPos.copy(node.pos);
     if (mode === 'targets') {
@@ -1535,26 +1499,20 @@ function stepClothRuntime(
       rt.simulationSteps++;
       continue;
     }
-    applyRuntimeReverseOffsetReconstructions(rt);
     integrate(rt, gravity, CLOTH_TIMESTEP);
-    applyRuntimeReverseOffsetReconstructions(rt);
 
     solveGoals(rt, CLOTH_TIMESTEP);
-    applyRuntimeReverseOffsetReconstructions(rt);
     if (!collideAfterConstraints) solveCollisions(rt);
-    applyRuntimeReverseOffsetReconstructions(rt);
 
     for (let i = 0; i < constraintIterations; i++) {
       for (const bend of rt.model.kelagerBends) projectKelagerBend(rt.nodes, bend);
       solveRods(rt);
       if (i >= constraintIterations - goalIterations) solveGoalDampedNodes(rt);
       restorePinnedSolverNodes(rt.nodes);
-      applyRuntimeReverseOffsetReconstructions(rt);
     }
     if (collideAfterConstraints) solveCollisions(rt);
     solveAnimStrayRadii(rt);
     restorePinnedSolverNodes(rt.nodes);
-    applyRuntimeReverseOffsetReconstructions(rt);
     applyRuntimeSettledReconstructions(rt);
     writeBack(root, rt);
     rt.simulationSteps++;
@@ -1585,7 +1543,7 @@ function collectClothHarnessMetrics(rt: ClothRuntime): ClothHarnessMetrics {
     }
     if (isKinematicNode(node)) {
       kinematicCount += 1;
-      if (!node.positionDriven && !node.reverseOffsetDriven) maxAnchorError = Math.max(maxAnchorError, targetDistance);
+      if (!node.positionDriven) maxAnchorError = Math.max(maxAnchorError, targetDistance);
     }
 
     const values = [
@@ -1680,7 +1638,7 @@ export function createClothSimHarness(
         modelToWorld: root.matrixWorld.clone().multiply(rt.modelToRoot).toArray(),
         nodes: rt.nodes.map((node) => ({ name: node.name, position: v3Array(node.pos), target: v3Array(node.target), kinematic: node.kinematic, collisionMask: node.collisionMask })),
         capsules, boxes, contacts,
-        rods: rt.rods.map((rod) => {
+        rods: [...rt.rods, ...rt.animatedRodBatches.flat()].map((rod) => {
           const distance = rt.nodes[rod.a].pos.distanceTo(rt.nodes[rod.b].pos);
           const error = Math.max(0, rod.min - distance, rod.max > 0 ? distance - rod.max : 0);
           return { a: rod.a, b: rod.b, min: rod.min, max: rod.max, error };

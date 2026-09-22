@@ -38,10 +38,11 @@ describe('cloth solver real-data rest-pose stability', () => {
   it('reports decoded constraints that the preview does not yet simulate', () => {
     expect(clothSimulationCoverage(loadFixture())).toEqual({
       rods: 157,
+      animatedRods: 0,
       twists: 42,
       kelagerBends: 18,
       ropeChains: 23,
-      pending: { animatedRods: 0, ropeChains: 0, jiggleBones: 0 },
+      pending: { ropeChains: 0, jiggleBones: 0 },
       integrators: { 'goal-damped': 74, raw: 0, unknown: 0 },
       decodeIssues: 0,
     });

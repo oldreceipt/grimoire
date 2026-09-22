@@ -39,6 +39,7 @@ export interface RawFeModel {
   m_SimdRodsAnim?: Array<{
     nNode?: number[] | number[][];
     f4Weight0?: number[];
+    f4RelaxationFactor?: number[];
   }>;
   m_NodeBases?: Array<{
     nNode: number;
@@ -184,6 +185,7 @@ export interface ClothAnimatedRod {
   a: number;
   b: number;
   weight: number;
+  relax: number;
 }
 
 export interface ClothCapsule {
@@ -333,6 +335,7 @@ export interface ClothModel {
   rods: ClothRod[];
   rodBatches: ClothRod[][]; // compiled SIMD order; all lanes read before any write
   animatedRods: ClothAnimatedRod[];
+  animatedRodBatches: ClothAnimatedRod[][];
   decodeIssues: ClothDecodeIssue[];
   capsules: ClothCapsule[];
   spheres: ClothSphere[];
@@ -439,8 +442,9 @@ export function clothIntegratorMode(model: Pick<ClothModel,
   return goal ? 'unknown' : 'raw';
 }
 
-function parseAnimatedRods(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothAnimatedRod[] {
+function parseAnimatedRods(fe: RawFeModel, issues: ClothDecodeIssue[]): { rods: ClothAnimatedRod[]; batches: ClothAnimatedRod[][] } {
   const rods: ClothAnimatedRod[] = [];
+  const batches: ClothAnimatedRod[][] = [];
   const seen = new Set<string>();
   for (const [record, entry] of (fe.m_SimdRodsAnim ?? []).entries()) {
     const indices = Array.isArray(entry.nNode) ? entry.nNode.flat() : [];
@@ -448,6 +452,7 @@ function parseAnimatedRods(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothAni
       issues.push({ array: 'm_SimdRodsAnim', record, reason: 'invalid-nodes' });
       continue;
     }
+    const batch: ClothAnimatedRod[] = [];
     for (let lane = 0; lane < 4; lane++) {
       const a = indices[lane];
       const b = indices[4 + lane];
@@ -457,19 +462,22 @@ function parseAnimatedRods(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothAni
       }
       if (a === b) continue;
       const weight = entry.f4Weight0?.[lane] ?? 0.5;
-      if (!isFiniteNumber(weight)) {
+      const relax = entry.f4RelaxationFactor?.[lane] ?? 1;
+      if (!isFiniteNumber(weight) || !isFiniteNumber(relax)) {
         issues.push({ array: 'm_SimdRodsAnim', record, reason: 'invalid-weights' });
         continue;
       }
-      // SIMD packing repeats lanes to fill the last group of four. Keep the
-      // endpoint order because weight belongs to the first endpoint.
-      const key = `${a}:${b}:${weight}`;
+      const rod = { a, b, weight, relax };
+      batch.push(rod);
+      // The flat list is for coverage; solving retains every lane and batch.
+      const key = `${a}:${b}:${weight}:${relax}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      rods.push({ a, b, weight });
+      rods.push(rod);
     }
+    if (batch.length > 0) batches.push(batch);
   }
-  return rods;
+  return { rods, batches };
 }
 
 function parseRodBatches(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothRod[][] {
@@ -746,7 +754,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     params: parseJiggleBoneParams(j.m_jiggleBone),
   }));
 
-  const animatedRods = parseAnimatedRods(fe, decodeIssues);
+  const { rods: animatedRods, batches: animatedRodBatches } = parseAnimatedRods(fe, decodeIssues);
   const rodBatches = parseRodBatches(fe, decodeIssues);
   const kelagerBends = parseKelagerBends(fe, decodeIssues);
   const ropeChains = parseRopeChains(fe, decodeIssues);
@@ -761,6 +769,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     rods,
     rodBatches,
     animatedRods,
+    animatedRodBatches,
     decodeIssues,
     staticNodeFlags: isUint32(fe.m_nStaticNodeFlags) ? fe.m_nStaticNodeFlags : null,
     dynamicNodeFlags: isUint32(fe.m_nDynamicNodeFlags) ? fe.m_nDynamicNodeFlags : null,

@@ -104,10 +104,11 @@ describe('parseFeModel', () => {
     const model = parseFeModel({
       ...raw,
       m_Rods: [],
-      m_SimdRodsAnim: [{ nNode, f4Weight0: [0, 0.25, 0.25, 0.25] }],
+      m_SimdRodsAnim: [{ nNode, f4Weight0: [0, 0.25, 0.25, 0.25], f4RelaxationFactor: [1, 0.85, 0.85, 0.85] }],
     })!;
     expect(model.rods).toEqual([]);
-    expect(model.animatedRods).toEqual([{ a: 0, b: 1, weight: 0 }, { a: 1, b: 2, weight: 0.25 }]);
+    expect(model.animatedRods).toEqual([{ a: 0, b: 1, weight: 0, relax: 1 }, { a: 1, b: 2, weight: 0.25, relax: 0.85 }]);
+    expect(model.animatedRodBatches[0]).toHaveLength(4);
     expect(model.decodeIssues).toEqual([]);
   });
 
@@ -116,7 +117,7 @@ describe('parseFeModel', () => {
       ...raw,
       m_SimdRodsAnim: [{ nNode: [[1, 2, 99, 0], [2, 1, 1, 0]], f4Weight0: [0.25, 0.75, 0.5, 0.5] }],
     })!;
-    expect(model.animatedRods).toEqual([{ a: 1, b: 2, weight: 0.25 }, { a: 2, b: 1, weight: 0.75 }]);
+    expect(model.animatedRods).toEqual([{ a: 1, b: 2, weight: 0.25, relax: 1 }, { a: 2, b: 1, weight: 0.75, relax: 1 }]);
     expect(model.decodeIssues).toEqual([{ array: 'm_SimdRodsAnim', record: 0, reason: 'invalid-nodes' }]);
   });
 

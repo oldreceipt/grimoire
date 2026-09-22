@@ -2,10 +2,8 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import type { ClothModel } from './feModel';
 import {
-  applyDrivenReconstructions,
   applyFitMatrixReconstructions,
   animationAttraction,
-  applyReverseOffsetReconstructions,
   buildFitMatrixReconstructions,
   closestPointOnSegment,
   clothAnchorMap,
@@ -22,7 +20,6 @@ import {
   pushOutsideBox,
   pushOutsideCapsule,
   reconstructReverseOffsetPosition,
-  reverseOffsetDrivenNodeSet,
   rigidAnchorSeed,
   restoreBoneBindTransform,
   restorePinnedSolverNodes,
@@ -533,27 +530,6 @@ describe('position-driven classification', () => {
     expect(isKinematicNode({ jiggleDriven: jiggleNodes.has(2) })).toBe(false);
   });
 
-  it('classifies reverse-offset bone controls as kinematic below firstPositionDrivenNode', () => {
-    const reverseOffsetNodes = reverseOffsetDrivenNodeSet({
-      reverseOffsets: [{ boneCtrl: 127, targetNode: 252, offset: [1, 0, 0] }],
-    });
-
-    expect(isPositionDrivenNode(127, { firstPositionDrivenNode: 252, fitMatrices: [] })).toBe(false);
-    expect(reverseOffsetNodes.has(127)).toBe(true);
-    expect(isKinematicNode({ reverseOffsetDriven: reverseOffsetNodes.has(127) })).toBe(true);
-  });
-
-  it('keeps reverse-offset classification independent of FitMatrix position-driven gating', () => {
-    const reverseOffsetNodes = reverseOffsetDrivenNodeSet({
-      reverseOffsets: [{ boneCtrl: 127, targetNode: 252, offset: [1, 0, 0] }],
-    });
-
-    const model = { firstPositionDrivenNode: 1, fitMatrices: [{}] } as Parameters<typeof isPositionDrivenNode>[1];
-
-    expect(isPositionDrivenNode(127, model)).toBe(false);
-    expect(reverseOffsetNodes.has(127)).toBe(true);
-  });
-
   it('classifies FitMatrix ctrl controls as kinematic position-driven nodes', () => {
     const fitNodes = fitMatrixDrivenNodeSet({
       fitMatrices: [{
@@ -626,28 +602,10 @@ describe('restorePinnedSolverNodes', () => {
     expect(node.prev.equals(node.target)).toBe(true);
     expect(node.solvedRot.angleTo(targetRot)).toBeCloseTo(0, 6);
   });
-
-  it('restores reverse-offset-driven solver positions as kinematic state', () => {
-    const node = {
-      pinned: false,
-      reverseOffsetDriven: true,
-      pos: V(20, 0, 0),
-      prev: V(19, 0, 0),
-      target: V(2, 3, 4),
-      solvedRot: Q(),
-      targetRot: Q(0, Math.PI / 5, 0),
-    };
-
-    restorePinnedSolverNodes([node]);
-
-    expect(node.pos.equals(node.target)).toBe(true);
-    expect(node.prev.equals(node.target)).toBe(true);
-    expect(node.solvedRot.angleTo(node.targetRot)).toBeCloseTo(0, 6);
-  });
 });
 
 describe('reconstructReverseOffsetPosition', () => {
-  it('reconstructs the bone control node from target position plus rotated offset', () => {
+  it('reconstructs the rendered bone without overwriting its simulated position or history', () => {
     const boneNode = {
       pos: V(0, 0, 0),
       prev: V(-1, 0, 0),
@@ -667,38 +625,11 @@ describe('reconstructReverseOffsetPosition', () => {
     expect(pos?.x).toBeCloseTo(10, 6);
     expect(pos?.y).toBeCloseTo(2, 6);
     expect(pos?.z).toBeCloseTo(0, 6);
-    expect(boneNode.pos.equals(pos!)).toBe(true);
-    expect(boneNode.prev.equals(pos!)).toBe(true);
+    expect(boneNode.pos.toArray()).toEqual([0, 0, 0]);
+    expect(boneNode.prev.toArray()).toEqual([-1, 0, 0]);
   });
 
-  it('applies all reverse-offset reconstructions into solver state before consumers read positions', () => {
-    const boneNode = {
-      initPos: [0, 0, 0] as [number, number, number],
-      pos: V(-100, 0, 0),
-      prev: V(-101, 0, 0),
-      solvedRot: Q(0, 0, Math.PI / 2),
-    };
-    const targetNode = {
-      initPos: [0, 0, 0] as [number, number, number],
-      pos: V(10, 0, 0),
-      prev: V(9, 0, 0),
-      solvedRot: Q(),
-    };
-
-    const count = applyReverseOffsetReconstructions(
-      [{ boneCtrl: 0, targetNode: 1, offset: [2, 0, 0], sign: 1 }],
-      [boneNode, targetNode],
-    );
-    const consumerRead = boneNode.pos.clone();
-
-    expect(count).toBe(1);
-    expect(consumerRead.x).toBeCloseTo(10, 6);
-    expect(consumerRead.y).toBeCloseTo(2, 6);
-    expect(consumerRead.z).toBeCloseTo(0, 6);
-    expect(boneNode.prev.equals(boneNode.pos)).toBe(true);
-  });
-
-  it('reruns reverse offsets after FitMatrix so fit-driven targets are observed', () => {
+  it('reads a fit-driven target without moving the reverse-offset particle', () => {
     const current = [
       V(10, 0, 0),
       V(11, 0, 0),
@@ -726,8 +657,7 @@ describe('reconstructReverseOffsetPosition', () => {
       reverseBone,
     ];
 
-    const counts = applyDrivenReconstructions(
-      [{ boneCtrl: 5, targetNode: 4, offset: [1, 0, 0], sign: 1 }],
+    const count = applyFitMatrixReconstructions(
       [{
         node: 4,
         targetNode: 4,
@@ -744,9 +674,11 @@ describe('reconstructReverseOffsetPosition', () => {
       nodes,
     );
 
-    expect(counts).toEqual({ reverseBefore: 1, fit: 1, reverseAfter: 1 });
+    const rendered = reconstructReverseOffsetPosition({ boneCtrl: 5, targetNode: 4, offset: [1, 0, 0], sign: 1 }, nodes);
+    expect(count).toBe(1);
     expect(fitTarget.pos.x).toBeCloseTo(10.25, 6);
-    expect(reverseBone.pos.x).toBeCloseTo(11.25, 6);
+    expect(rendered!.x).toBeCloseTo(11.25, 6);
+    expect(reverseBone.pos.x).toBe(-100);
   });
 });
 
