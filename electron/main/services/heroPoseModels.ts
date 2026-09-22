@@ -171,6 +171,7 @@ const STATIC_MODEL_FILENAME = 'model.glb';
 /** Rigged (no `--pose`, single idle-clip) SkinnedMesh + animated glb. Sibling of
  *  the static glb in the same entry dir; served over the same scheme. */
 const RIGGED_MODEL_FILENAME = 'model-rigged.glb';
+const RIGGED_CLOTH_FILENAME = 'cloth-rigged.json';
 
 function modelFile(key: string): string {
     return join(modelDir(key), STATIC_MODEL_FILENAME);
@@ -178,6 +179,10 @@ function modelFile(key: string): string {
 
 function riggedModelFile(key: string): string {
     return join(modelDir(key), RIGGED_MODEL_FILENAME);
+}
+
+function riggedClothFile(key: string): string {
+    return join(modelDir(key), RIGGED_CLOTH_FILENAME);
 }
 
 /**
@@ -282,9 +287,12 @@ function versionFile(key: string): string {
  * v14; the rigged path shares modelSelectorsForHero). Pre-v7 Infernus rigged GLBs
  * baked the vanilla look over any active skin.
  *
+ * v8: cache physics beside the GLB using the same resolved source and selector,
+ * including a single-skin fallback. A null sidecar means animation only.
+ *
  * Folds in SOURCE2_EXTRAS_VERSION on the same principle as POSE_CACHE_VERSION.
  */
-const RIGGED_PIPELINE_VERSION = '7';
+const RIGGED_PIPELINE_VERSION = '8';
 const RIGGED_CACHE_VERSION = `${RIGGED_PIPELINE_VERSION}.x${SOURCE2_EXTRAS_VERSION}`;
 
 const RIGGED_VERSION_FILENAME = '.rigged-cache-version';
@@ -514,11 +522,14 @@ async function runPoseCacheSweep(): Promise<void> {
         const version = await fs
             .readFile(join(dir, POSE_VERSION_FILENAME), 'utf8')
             .catch(() => '');
+        const riggedVersion = await fs
+            .readFile(join(dir, RIGGED_VERSION_FILENAME), 'utf8')
+            .catch(() => '');
         entries.push({
             dir,
             bytes,
             lastUsedMs,
-            stale: version.trim() !== POSE_CACHE_VERSION,
+            stale: version.trim() !== POSE_CACHE_VERSION && riggedVersion.trim() !== RIGGED_CACHE_VERSION,
         });
     }
 
@@ -740,6 +751,7 @@ async function infoForRiggedKey(key: string): Promise<HeroPoseInfo> {
         if (version.trim() !== RIGGED_CACHE_VERSION) {
             return { hasModel: false, mtimeMs: null, key };
         }
+        await fs.access(riggedClothFile(key));
         return { hasModel: true, mtimeMs: stat.mtimeMs, key };
     } catch {
         return { hasModel: false, mtimeMs: null, key };
@@ -961,6 +973,7 @@ async function runRiggedHeroExportForSources(
             foundUsableClip = true;
 
             try {
+                await fs.rm(riggedVersionFile(key), { force: true });
                 await runVpkmerge([
                     'model',
                     'export',
@@ -977,6 +990,15 @@ async function runRiggedHeroExportForSources(
                     '--out',
                     out,
                 ]);
+                let cloth: unknown = null;
+                try {
+                    cloth = JSON.parse(await runVpkmergeStdout([
+                        'model', 'femodel', '--vpk', source.vpk, ...selector, '--base', pak01,
+                    ]));
+                } catch (error) {
+                    console.warn('[heroPoseModels] rigged physics unavailable:', heroName, error);
+                }
+                await fs.writeFile(riggedClothFile(key), JSON.stringify(cloth));
                 await fs.writeFile(riggedVersionFile(key), RIGGED_CACHE_VERSION);
                 return infoForRiggedKey(key);
             } catch (err) {
@@ -1072,53 +1094,6 @@ export async function exportHeroEffect(
 }
 
 /**
- * The hero's cloth finite-element model (`PHYS.m_pFeModel`) as a parsed object:
- * the engine's own cloth-sim definition (collision capsules/spheres, nodes,
- * rods, integrator). The rigged preview's verlet reads it to drive the cloth
- * bones and, crucially, to stop them clipping through the body. Returned inline
- * (not cached to disk): it's derived from the same paks as the pose and fetched
- * once when the rigged model loads. Throws if the model carries no cloth.
- */
-export async function getHeroClothModel(
-    deadlockPath: string,
-    heroName: string,
-    skinSources?: HeroPoseSkinSource[]
-): Promise<unknown> {
-    const selectors = modelSelectorsForHero(heroName);
-    if (selectors.length === 0) throw new Error(`No known model codename for hero "${heroName}".`);
-
-    const normalized = normalizeSkinSources(skinSources);
-    const pak01 = join(getCitadelPath(deadlockPath), 'pak01_dir.vpk');
-    const source = await resolvePoseSource(deadlockPath, pak01, normalized);
-    try {
-        let lastError: unknown;
-        for (const selector of selectors) {
-            try {
-                const json = await runVpkmergeStdout([
-                    'model',
-                    'femodel',
-                    '--vpk',
-                    source.vpk,
-                    ...selector,
-                    '--base',
-                    pak01,
-                ]);
-                return JSON.parse(json);
-            } catch (err) {
-                lastError = err;
-            }
-        }
-        throw lastError instanceof Error
-            ? lastError
-            : new Error(`No cloth model for "${heroName}".`);
-    } finally {
-        if (source.tempDir) {
-            await fs.rm(source.tempDir, { recursive: true, force: true });
-        }
-    }
-}
-
-/**
  * Register the `grimoire-hero:` scheme handler. URLs look like
  * `grimoire-hero://m/<encoded-key>/model.glb` (the `?v=` cache-buster is
  * ignored). The key rides in the path under a fixed `m` host, not in the host
@@ -1134,7 +1109,7 @@ export function registerHeroPoseProtocol(): void {
             const parts = url.pathname.split('/').filter(Boolean);
             const key = decodeURIComponent(parts[0] ?? '');
             // The trailing segment(s) name what's served: the static `model.glb`
-            // (default; legacy URLs omit it), the rigged `model-rigged.glb`, the
+            // (default; legacy URLs omit it), the rigged GLB and cloth sidecar, the
             // ambient FX descriptor `effect.json`, or a bundled effect texture
             // `effect-tex/<name>.png`. Everything is resolved against a fixed
             // allowlist / strict basename, so the key segment can never escape the
@@ -1151,17 +1126,21 @@ export function registerHeroPoseProtocol(): void {
                 file = join(effectTexDir(key), png);
             } else if (requested === RIGGED_MODEL_FILENAME) {
                 file = riggedModelFile(key);
+            } else if (requested === RIGGED_CLOTH_FILENAME) {
+                file = riggedClothFile(key);
             } else {
                 file = modelFile(key);
             }
             await fs.access(file);
             // LRU touch for the cache sweep, which uses the newest file mtime
-            // in the entry dir as last-used. Touch the tiny static sidecar, not
+            // in the entry dir as last-used. Touch the tiny version marker, not
             // a GLB: the GLB mtime feeds the renderer's ?v= cache-buster and
             // must keep meaning "export time". Both glbs share the dir, so
             // touching the one sidecar protects the whole entry.
             const now = new Date();
-            void fs.utimes(versionFile(key), now, now).catch(() => { });
+            const version = requested === RIGGED_MODEL_FILENAME || requested === RIGGED_CLOTH_FILENAME
+                ? riggedVersionFile(key) : versionFile(key);
+            void fs.utimes(version, now, now).catch(() => { });
             return net.fetch(pathToFileURL(file).toString());
         } catch {
             return new Response(null, { status: 404 });

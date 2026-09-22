@@ -22,12 +22,12 @@ import {
   exportHeroPose,
   getRiggedHeroPose,
   exportRiggedHeroPose,
-  getHeroClothModel,
   getHeroEffectInfo,
   exportHeroEffect,
   previewTrippySprite,
 } from '../../lib/api';
 import { loadGltfPreview } from '../../lib/loadGltfPreview';
+import { loadRiggedHeroPreview } from '../../lib/loadRiggedHeroPreview';
 import { ParticleEffect } from './ParticleEffect';
 import type { FxDescriptor } from './fxDescriptor';
 import { useClothSim } from '../../lib/useClothSim';
@@ -181,10 +181,6 @@ function meshUrlFor(key: string, mtimeMs: number | null): string {
   // scheme forbids in the host, so carry it as a single encoded path segment
   // under a fixed `m` host.
   return `${HERO_POSE_SCHEME}://m/${encodeURIComponent(key)}/model.glb?v=${mtimeMs ?? 0}`;
-}
-
-function riggedMeshUrlFor(key: string, mtimeMs: number | null): string {
-  return `${HERO_POSE_SCHEME}://m/${encodeURIComponent(key)}/model-rigged.glb?v=${mtimeMs ?? 0}`;
 }
 
 /** Free a loaded scene's GPU resources (geometry, materials, textures,
@@ -956,8 +952,7 @@ export default function HeroPoseViewer({
               setGenerating(false);
             }
             if (rig.hasModel) {
-              const url = riggedMeshUrlFor(rig.key, rig.mtimeMs);
-              const gltf = await loadGltfPreview(url);
+              const { gltf, clothModel } = await loadRiggedHeroPreview(rig, features.clothPreviewEnabled);
               if (cancelled) {
                 disposeScene(gltf.scene);
                 return;
@@ -970,16 +965,8 @@ export default function HeroPoseViewer({
               loaded = gltf.scene;
               setClips([clip]);
               setRigged(true);
+              setClothModel(clothModel);
               setScene(gltf.scene);
-              // Cloth-sim sidecar (colliders) for the rigged path. Best-effort:
-              // a model with no cloth returns null and the sim simply no-ops.
-              if (features.clothPreviewEnabled) {
-                getHeroClothModel(heroName, skinSources).then((fe) => {
-                  if (!cancelled) setClothModel(fe);
-                });
-              } else {
-                setClothModel(null);
-              }
               return; // rigged path won.
             }
           } catch {

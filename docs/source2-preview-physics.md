@@ -507,7 +507,32 @@ frozen motion. Front idle and back running Vindicta, side running Seven and back
 running Bebop preserve attachments. These sampled poses do not exercise a
 visible difference from the corrected box corner and tie behavior.
 
-On Windows, 653 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
+A further Yamato audit captured nine real pose samples across idle, forward and
+sideways running. Feeding the same inputs into the compiled contact, fixed-rod
+and goal-attraction passes gives maximum differences of `1.52e-5`, `1.05e-5`
+and `6.88e-6` Source units respectively. The contact comparison bypasses the
+runtime's broadphase tree with equivalent explicit selections and excludes the
+13 back-solved suffix nodes. These are individual-pass checks with identity
+instance coefficients, not a complete game trajectory comparison.
+
+Across the four shared Yamato meshes, all 55,850 vertices have identical
+joint-name weights in vpkmerge and S2V. Bind poses and two shared solved poses
+agree within `3.45e-5` Source units when transferring motion relative to each
+export's own bind scale. The extra S2V sheathed-weapon mesh is excluded. This
+makes a mesh/weight mismatch less likely to explain the remaining shape
+differences. Game-side motion, initialization and instance overrides remain
+unverified. The user's inspection found Yamato substantially better than before;
+its current behavior is the working visual baseline for preview integration.
+
+Grimoire now caches `cloth-rigged.json` beside the rigged GLB, from the exact
+source and selector that produced that GLB. Both follow the export's returned
+cache key, including a single-skin fallback. The renderer waits for the pair
+before mounting animation so the solver calibrates against the bind pose.
+Missing physics leaves animation available. Rigged cache version 8 regenerates
+old exports; a missing sidecar or interrupted export is not a cache hit. Cache
+sweeps retain current rigged-only entries independently of static pose versions.
+
+On Windows, 677 focused physics and preview tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -529,9 +554,10 @@ focused regressions and build; it does not claim the full suite is green.
 
 Next validation units:
 
-1. Isolate generated target shape and node-basis reconstruction against Yamato's
-   larger garment. Capture matching Deadlock animation poses to compare
-   garment fit, cable curvature, contact and settling.
+1. Validate Grimoire's full preview renderer and opt-in controls with the paired
+   model/physics loading path. Preserve Yamato's current behavior as the visual
+   baseline; matching Deadlock captures can later compare garment fit, cable
+   curvature, contact and settling.
 2. Continue validating overlapping contacts, inverted shapes, SDF collision and
    engine instance overrides. Priority groups and vertex selections now have
    independent runtime regressions. A scan of the current VPK's
