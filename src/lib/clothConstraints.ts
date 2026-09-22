@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ClothHingeLimit, ClothKelagerBend, ClothRod, ClothTwist, Vec3, Vec4 } from './feModel';
+import type { ClothHingeLimit, ClothKelagerBend, ClothRod, ClothTriangle, ClothTwist, Vec3, Vec4 } from './feModel';
 
 // Compiled coefficients, not authoring strengths. See docs/source2-preview-physics.md.
 const unit = (value: number) => Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0, 1) : 0;
@@ -68,6 +68,99 @@ export function projectRodBatch(nodes: readonly BendNode[], rods: readonly Cloth
     const b = nodes[rods[lane].b];
     if (!b.kinematic) b.pos.copy(_rodB[lane]);
   }
+}
+
+const _triangleX = new THREE.Vector3();
+const _triangleY = new THREE.Vector3();
+const _triangleOrigin = new THREE.Vector3();
+const _triangleOutput = Array.from({ length: 4 }, () => Array.from({ length: 3 }, () => new THREE.Vector3()));
+
+function triangleProjection(nodes: readonly BendNode[], triangle: ClothTriangle, output: THREE.Vector3[], scale: number): void {
+  const a = nodes[triangle.node[0]].pos;
+  const b = nodes[triangle.node[1]].pos;
+  const c = nodes[triangle.node[2]].pos;
+  _triangleX.subVectors(b, a);
+  const length = _triangleX.lengthSq() > 2 ** -23 ? _triangleX.length() : 1;
+  if (_triangleX.lengthSq() > 2 ** -23) _triangleX.multiplyScalar(1 / length);
+  else _triangleX.set(1, 0, 0);
+  _triangleY.subVectors(c, a);
+  const projection = _triangleY.dot(_triangleX);
+  _triangleY.addScaledVector(_triangleX, -projection);
+  const height = _triangleY.lengthSq() > 2 ** -23 ? _triangleY.length() : 1;
+  if (_triangleY.lengthSq() > 2 ** -23) _triangleY.multiplyScalar(1 / height);
+  else _triangleY.set(0, 1, 0);
+
+  const { x1, x2, y2, weight1: w1, weight2: w2 } = triangle;
+  if (triangle.staticCount === 2) {
+    output[0].copy(a);
+    output[1].copy(b);
+    output[2].copy(a).addScaledVector(_triangleX, ((length - x1) * 0.5 + x2) * scale)
+      .addScaledVector(_triangleY, y2 * scale);
+    return;
+  }
+
+  const centerX = triangle.staticCount === 0 ? w1 * length + w2 * projection : 0;
+  const centerY = triangle.staticCount === 0 ? w2 * height : 0;
+  const restX = triangle.staticCount === 0 ? (w1 * x1 + w2 * x2) * scale : 0;
+  const restY = triangle.staticCount === 0 ? w2 * y2 * scale : 0;
+  let cosine: number;
+  let sine: number;
+  if (triangle.staticCount === 1) {
+    cosine = length * x1 * w1 + (height * y2 + projection * x2) * w2;
+    sine = (height * x2 - projection * y2) * w2;
+  } else {
+    // Weighted 2D rigid fit in the current triangle plane. These are compiled
+    // normalized mass shares; substituting inverse masses changes the fit.
+    const w0 = 1 - w1 - w2;
+    const bx = x1 * scale - restX;
+    const cx = x2 * scale - restX;
+    const cy = y2 * scale - restY;
+    cosine = w0 * (centerX * restX + centerY * restY)
+      + w1 * ((length - centerX) * bx + centerY * restY)
+      + w2 * ((projection - centerX) * cx + (height - centerY) * cy);
+    sine = w0 * (centerY * restX - centerX * restY)
+      + w1 * (-centerY * bx + (length - centerX) * restY)
+      + w2 * ((height - centerY) * cx - (projection - centerX) * cy);
+  }
+  const squared = cosine * cosine + sine * sine;
+  if (squared > 1e-14) {
+    const inverse = 1 / Math.sqrt(squared);
+    cosine *= inverse;
+    sine *= inverse;
+  } else {
+    cosine = 1;
+    sine = 0;
+  }
+  _triangleOrigin.copy(a)
+    .addScaledVector(_triangleX, centerX - (restX * cosine - restY * sine))
+    .addScaledVector(_triangleY, centerY - (restX * sine + restY * cosine));
+  output[0].copy(_triangleOrigin);
+  output[1].copy(_triangleOrigin).addScaledVector(_triangleX, x1 * scale * cosine)
+    .addScaledVector(_triangleY, x1 * scale * sine);
+  output[2].copy(_triangleOrigin).addScaledVector(_triangleX, (x2 * cosine - y2 * sine) * scale)
+    .addScaledVector(_triangleY, (x2 * sine + y2 * cosine) * scale);
+}
+
+export function projectTriangleBatch(nodes: readonly BendNode[], triangles: readonly ClothTriangle[], scale = 1): void {
+  for (let lane = 0; lane < triangles.length; lane++) triangleProjection(nodes, triangles[lane], _triangleOutput[lane], scale);
+  // Preserve compiled gather/scatter ordering even when lanes share a node.
+  for (let vertex = 0; vertex < 3; vertex++) {
+    for (let lane = 0; lane < triangles.length; lane++) {
+      const triangle = triangles[lane];
+      const node = nodes[triangle.node[vertex]];
+      if (vertex >= triangle.staticCount && !node.kinematic) node.pos.copy(_triangleOutput[lane][vertex]);
+    }
+  }
+}
+
+export function triangleProjectionError(nodes: readonly BendNode[], triangle: ClothTriangle): number {
+  triangleProjection(nodes, triangle, _triangleOutput[0], 1);
+  let error = 0;
+  for (let vertex = triangle.staticCount; vertex < 3; vertex++) {
+    const node = nodes[triangle.node[vertex]];
+    if (!node.kinematic) error = Math.max(error, node.pos.distanceTo(_triangleOutput[0][vertex]));
+  }
+  return error;
 }
 
 export function projectKelagerBend(nodes: readonly BendNode[], bend: ClothKelagerBend): void {

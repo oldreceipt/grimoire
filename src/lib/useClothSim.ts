@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { clothIntegratorMode } from './feModel';
-import { applyGoalDampedAttraction, applyRawAttraction, hingeLimitExcess, projectHingeLimit, projectKelagerBend, projectRodBatch, reconstructClothRope, reconstructClothTwist } from './clothConstraints';
+import { applyGoalDampedAttraction, applyRawAttraction, hingeLimitExcess, projectHingeLimit, projectKelagerBend, projectRodBatch, projectTriangleBatch, reconstructClothRope, reconstructClothTwist, triangleProjectionError } from './clothConstraints';
 import {
   applyOffset,
   nodeBaseQuaternion,
@@ -613,6 +613,7 @@ export interface ClothSimulationCoverage {
   twists: number;
   kelagerBends: number;
   hingeLimits: number;
+  triangles: number;
   ropeChains: number;
   pending: {
     ropeChains: number;
@@ -654,6 +655,7 @@ export interface ClothDebugSnapshot {
   boxes: { center: Vec3; rotation: Vec4; halfSize: Vec3; mask: number; node: number }[];
   rods: { a: number; b: number; min: number; max: number; error: number }[];
   hinges: { node: number[]; excess: number | null }[];
+  triangles: { node: number[]; correction: number }[];
   contacts: { node: number; shape: string; depth: number }[];
 }
 
@@ -668,6 +670,7 @@ export function clothSimulationCoverage(model: ClothModel): ClothSimulationCover
     twists: model.twists.length,
     kelagerBends: model.kelagerBends.length,
     hingeLimits: model.hingeLimits.length,
+    triangles: model.triangles.length,
     ropeChains: model.ropeChains.length,
     pending: {
       ropeChains: Math.max(0, model.ropeCount - model.ropeChains.length),
@@ -1513,6 +1516,7 @@ function stepClothRuntime(
       for (const bend of rt.model.kelagerBends) projectKelagerBend(rt.nodes, bend);
       for (const hinge of rt.model.hingeLimits) projectHingeLimit(rt.nodes, hinge);
       solveRods(rt);
+      for (const batch of rt.model.triangleBatches) projectTriangleBatch(rt.nodes, batch);
       if (i >= constraintIterations - goalIterations) solveGoalDampedNodes(rt);
       restorePinnedSolverNodes(rt.nodes);
     }
@@ -1650,6 +1654,7 @@ export function createClothSimHarness(
           return { a: rod.a, b: rod.b, min: rod.min, max: rod.max, error };
         }),
         hinges: rt.model.hingeLimits.map((hinge) => ({ node: [...hinge.node], excess: hingeLimitExcess(rt.nodes, hinge) })),
+        triangles: rt.model.triangles.map((triangle) => ({ node: [...triangle.node], correction: triangleProjectionError(rt.nodes, triangle) })),
       };
     },
     dispose(): void {

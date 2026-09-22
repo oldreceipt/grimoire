@@ -41,17 +41,47 @@ const raw: RawFeModel = {
 };
 
 describe('parseFeModel', () => {
+  it('decodes scalar triangle partitions and falls back when a packed block is incomplete', () => {
+    const triangle = { nNode: [0, 1, 2], w1: 0, w2: 1, v1x: 2, v2: [1, 0.6] };
+    const model = parseFeModel({ ...raw, m_Tris: [triangle], m_nTriCount1: 1, m_nTriCount2: 1,
+      m_SimdTris: [{ nNode: [[0, 0, 0, 0], [1, 1, 1, 1], [2, 2, 2, 2]] }],
+      m_nSimdTriCount1: 1, m_nSimdTriCount2: 1 })!;
+    expect(model.triangles).toEqual([{ node: [0, 1, 2], staticCount: 2, weight1: 0, weight2: 1, x1: 2, x2: 1, y2: 0.6 }]);
+    expect(model.triangleBatches).toEqual([model.triangles]);
+    expect(model.decodeIssues.every((issue) => issue.array === 'm_SimdTris' && issue.reason === 'invalid-weights')).toBe(true);
+    expect(model.featureGaps).toEqual([]);
+  });
+
+  it('rejects missing or reversed triangle partitions instead of assuming movable anchors', () => {
+    const triangle = { nNode: [0, 1, 2], w1: 0.3, w2: 0.7, v1x: 2, v2: [1, 1] };
+    for (const counts of [{}, { m_nTriCount1: 0, m_nTriCount2: 1 }, { m_nTriCount1: 2, m_nTriCount2: 0 }]) {
+      const model = parseFeModel({ ...raw, m_Tris: [triangle], ...counts })!;
+      expect(model.triangleBatches).toEqual([]);
+      expect(model.decodeIssues).toEqual([{ array: 'm_Tris', record: 0, reason: 'invalid-count' }]);
+    }
+  });
+
+  it('rejects invalid triangle indices, mass shares and rest geometry', () => {
+    const triangle = { nNode: [0, 1, 2], w1: 0.3, w2: 0.4, v1x: 2, v2: [1, 1] };
+    const model = parseFeModel({ ...raw, m_nTriCount1: 0, m_nTriCount2: 0, m_Tris: [
+      { ...triangle, nNode: [0, 1, 99] }, { ...triangle, nNode: [0, 1, 1] },
+      { ...triangle, w2: 0.9 }, { ...triangle, v2: [0, Number.NaN] },
+    ] })!;
+    expect(model.triangleBatches).toEqual([]);
+    expect(model.decodeIssues.map((issue) => issue.reason)).toEqual(['invalid-nodes', 'invalid-nodes', 'invalid-weights', 'invalid-limits']);
+  });
+
   it('reports missing constraint families without counting SIMD copies twice or unscoped colliders', () => {
     const model = parseFeModel({
       ...raw,
-      m_Tris: [{}, {}], m_SimdTris: [{}],
+      m_Quads: [{}, {}], m_SimdQuads: [{}],
       m_TaperedCapsuleRigids: [
         { nNode: 0, vSphere: [], nFlags: 0, nVertexMapIndex: 0xffff },
         { nNode: 0, vSphere: [], nFlags: 1, nVertexMapIndex: 0 },
       ],
     })!;
     expect(model.featureGaps).toEqual([
-      { field: 'm_Tris', label: 'Triangle constraints', count: 2, status: 'not-implemented' },
+      { field: 'm_Quads', label: 'Quad constraints', count: 2, status: 'not-implemented' },
       { field: 'm_TaperedCapsuleRigids.nFlags', label: 'Collider flags', count: 1, status: 'not-implemented' },
       { field: 'm_TaperedCapsuleRigids.nVertexMapIndex', label: 'Vertex-scoped colliders', count: 1, status: 'not-implemented' },
     ]);

@@ -117,8 +117,18 @@ export interface RawFeModel {
     flAngleCenter?: number;
     flAngleExtents?: number;
   }>;
-  m_Tris?: unknown[];
-  m_SimdTris?: unknown[];
+  m_Tris?: RawClothTriangle[];
+  m_nTriCount1?: number;
+  m_nTriCount2?: number;
+  m_SimdTris?: Array<{
+    nNode?: number[] | number[][];
+    w1?: number[];
+    w2?: number[];
+    v1x?: number[];
+    v2?: { x?: number[]; y?: number[] };
+  }>;
+  m_nSimdTriCount1?: number;
+  m_nSimdTriCount2?: number;
   m_Quads?: unknown[];
   m_SimdQuads?: unknown[];
   m_AxialEdges?: unknown[];
@@ -128,6 +138,14 @@ export interface RawFeModel {
   m_flRodVelocitySmoothRate?: number;
   m_nRodVelocitySmoothIterations?: number;
   m_nRotLockStaticNodes?: number;
+}
+
+export interface RawClothTriangle {
+  nNode?: number[];
+  w1?: number;
+  w2?: number;
+  v1x?: number;
+  v2?: number[];
 }
 
 export interface RawJiggleBoneParams {
@@ -346,8 +364,18 @@ export interface ClothHingeLimit {
   extents: number;
 }
 
+export interface ClothTriangle {
+  node: [number, number, number];
+  staticCount: 0 | 1 | 2;
+  weight1: number;
+  weight2: number;
+  x1: number;
+  x2: number;
+  y2: number;
+}
+
 export interface ClothDecodeIssue {
-  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
+  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_Tris' | 'm_SimdTris' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
   record: number;
   reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-limits' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets' | 'unsupported-flags';
 }
@@ -363,6 +391,8 @@ export interface ClothModel {
   decodeIssues: ClothDecodeIssue[];
   featureGaps: ClothFeatureGap[];
   hingeLimits: ClothHingeLimit[];
+  triangles: ClothTriangle[];
+  triangleBatches: ClothTriangle[][];
   capsules: ClothCapsule[];
   spheres: ClothSphere[];
   boxes: ClothBox[];
@@ -461,7 +491,6 @@ function clothFeatureGaps(fe: RawFeModel): ClothFeatureGap[] {
     const entries = fe[field];
     if (Array.isArray(entries) && entries.length > 0) gaps.push({ field, label, count: entries.length, status });
   };
-  add(fe.m_Tris?.length ? 'm_Tris' : 'm_SimdTris', fe.m_Tris?.length ? 'Triangle constraints' : 'Triangle batches');
   add(fe.m_Quads?.length ? 'm_Quads' : 'm_SimdQuads', fe.m_Quads?.length ? 'Quad constraints' : 'Quad batches');
   add('m_AxialEdges', 'Axial edges');
   add('m_FollowNodes', 'Follow links');
@@ -570,6 +599,80 @@ function parseRodBatches(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothRod[]
   // Keep a complete scalar fallback if any packed record is malformed. Never
   // deduplicate valid batches: repeated rods can encode authored extra passes.
   return invalid ? [] : batches;
+}
+
+function parseTriangles(fe: RawFeModel, issues: ClothDecodeIssue[]): { triangles: ClothTriangle[]; batches: ClothTriangle[][] } {
+  const decode = (entry: RawClothTriangle, staticCount: ClothTriangle['staticCount'], array: 'm_Tris' | 'm_SimdTris', record: number): ClothTriangle | null => {
+    const n = entry.nNode;
+    if (!Array.isArray(n) || n.length !== 3 || new Set(n).size !== 3
+      || !n.every((index) => isNodeIndex(index, fe.m_CtrlName.length))) {
+      issues.push({ array, record, reason: 'invalid-nodes' });
+      return null;
+    }
+    const { w1, w2, v1x } = entry;
+    if (!isFiniteNumber(w1) || !isFiniteNumber(w2) || w1 < 0 || w2 < 0 || w1 + w2 > 1 + 1e-6) {
+      issues.push({ array, record, reason: 'invalid-weights' });
+      return null;
+    }
+    const x2 = entry.v2?.[0];
+    const y2 = entry.v2?.[1];
+    if (!isFiniteNumber(v1x) || !isFiniteNumber(x2) || !isFiniteNumber(y2) || v1x < 0 || y2 < 0) {
+      issues.push({ array, record, reason: 'invalid-limits' });
+      return null;
+    }
+    return { node: [n[0], n[1], n[2]], staticCount, weight1: w1, weight2: w2, x1: v1x, x2, y2 };
+  };
+  const partitions = (count: number, one: number | undefined, two: number | undefined, array: 'm_Tris' | 'm_SimdTris') => {
+    if (count === 0) return [];
+    if (!isUint32(one) || !isUint32(two) || two > one || one > count) {
+      issues.push({ array, record: 0, reason: 'invalid-count' });
+      return null;
+    }
+    return Array.from({ length: count }, (_, index): ClothTriangle['staticCount'] => index < two ? 2 : index < one ? 1 : 0);
+  };
+  const scalar = fe.m_Tris ?? [];
+  const scalarPartitions = partitions(scalar.length, fe.m_nTriCount1, fe.m_nTriCount2, 'm_Tris');
+  const triangles: ClothTriangle[] = [];
+  scalarPartitions?.forEach((fixed, record) => {
+    const triangle = decode(scalar[record], fixed, 'm_Tris', record);
+    if (triangle) triangles.push(triangle);
+  });
+  const packed = fe.m_SimdTris ?? [];
+  const packedPartitions = partitions(packed.length, fe.m_nSimdTriCount1, fe.m_nSimdTriCount2, 'm_SimdTris');
+  const batches: ClothTriangle[][] = [];
+  let invalid = packedPartitions === null;
+  packedPartitions?.forEach((fixed, record) => {
+    const entry = packed[record];
+    const indices = Array.isArray(entry.nNode) ? entry.nNode.flat() : [];
+    if (indices.length !== 12) {
+      issues.push({ array: 'm_SimdTris', record, reason: 'invalid-nodes' });
+      invalid = true;
+      return;
+    }
+    const batch: ClothTriangle[] = [];
+    for (let lane = 0; lane < 4; lane++) {
+      const triangle = decode({
+        nNode: [indices[lane], indices[lane + 4], indices[lane + 8]],
+        w1: entry.w1?.[lane], w2: entry.w2?.[lane], v1x: entry.v1x?.[lane],
+        v2: entry.v2?.x && entry.v2?.y ? [entry.v2.x[lane], entry.v2.y[lane]] : undefined,
+      }, fixed, 'm_SimdTris', record);
+      if (triangle) batch.push(triangle);
+      else invalid = true;
+    }
+    batches.push(batch);
+  });
+  // A malformed packed block uses the validated scalar sequence. Valid blocks
+  // retain padding and cross-batch repeats, just like compiled rod batches.
+  if (invalid || batches.length === 0) return { triangles, batches: triangles.map((triangle) => [triangle]) };
+  if (triangles.length === 0) {
+    const seen = new Set<string>();
+    for (const triangle of batches.flat()) {
+      const key = JSON.stringify(triangle);
+      if (!seen.has(key)) triangles.push(triangle);
+      seen.add(key);
+    }
+  }
+  return { triangles, batches };
 }
 
 function parseKelagerBends(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothKelagerBend[] {
@@ -839,6 +942,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
 
   const { rods: animatedRods, batches: animatedRodBatches } = parseAnimatedRods(fe, decodeIssues);
   const rodBatches = parseRodBatches(fe, decodeIssues);
+  const { triangles, batches: triangleBatches } = parseTriangles(fe, decodeIssues);
   const kelagerBends = parseKelagerBends(fe, decodeIssues);
   const ropeChains = parseRopeChains(fe, decodeIssues);
   const bitset = fe.m_GoalDampedSpringIntegrators ?? [];
@@ -856,6 +960,8 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     decodeIssues,
     featureGaps: clothFeatureGaps(fe),
     hingeLimits: parseHingeLimits(fe, decodeIssues),
+    triangles,
+    triangleBatches,
     staticNodeFlags: isUint32(fe.m_nStaticNodeFlags) ? fe.m_nStaticNodeFlags : null,
     dynamicNodeFlags: isUint32(fe.m_nDynamicNodeFlags) ? fe.m_nDynamicNodeFlags : null,
     goalDampedSpringIntegrators: validBitset ? bitset : [],

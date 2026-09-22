@@ -179,6 +179,23 @@ against those independent outputs within `1e-6` Source units. The measured
 maximum difference was `2.77e-7`; this does not claim bit-identical math imports
 or a match to the engine's complete simulation loop.
 
+Triangles now preserve the compiled static partitions and four-lane solve order.
+S2V's cloth branch identifies `m_Tris` as surface solve elements, rather than
+edges to replace with rods. The runtime dispatcher `0x113460` selects two-anchor,
+one-anchor and fully dynamic kernels. These fit the authored 2D triangle into
+the current plane; the dynamic case preserves its compiled mass-weighted center.
+Collapsed edges use the runtime's axis fallbacks. Triangles run after rods,
+without an invented relaxation coefficient, and never modify animation-owned
+anchors or particle history.
+
+Thirty-six synthetic cases in `source2_triangle_reference.json` exercise all
+three kernels, collapsed geometry, scaling, shared nodes, padding and repeated
+batches. They call the compiled dispatcher in Unicorn without substituted
+imports. The preview's maximum difference is `1.77e-6` Source units, within the
+`1e-5` regression bound. All triangle-bearing entries in the installed base-hero
+inventory (Bebop, Doorman, Nano, Necro and Werewolf) decode without triangle
+issues. Other missing features on those models remain separately reported.
+
 The shared 1/120-second clock advances animation before targets/colliders and
 simulation. Physics-written local transforms are restored before each clean
 animation sample. Rotation-free static cloth bases can rotate, while the body's
@@ -296,19 +313,23 @@ After a ten-second frozen settle, the next second changes positions by less
 than `4e-16` meters and orientations by 0.000140 radians. Front/back idle and side
 run inspection shows attached hair and tag geometry without mesh explosions;
 there is still no matched in-game capture.
-Its two triangle constraints remain unimplemented and are explicitly reported
-by the testbed and saved metrics. All three hinge limits now run. The resulting
+All three hinge limits now run. The resulting
 12/12 checks still pass, with maximum sampled rod residual 0.781 Source units
 and zero sampled endpoint penetration. The frozen jar-tag hinge excess drops
 from 9.657 to 3.885 degrees. Later rods and attraction can reintroduce angular
 error, so the testbed reports this residual independently of pose checks.
+Both triangle constraints also run. The frozen-pose correction needed by the
+worse triangle drops from 0.100886 to 0.000558 Source units; the largest sampled
+correction across the three clips is 0.001244 Source units. All 12 checks still
+pass, and rod/contact/frozen-motion measurements remain unchanged. Front/back
+idle and side run inspection shows no obvious attachment regression.
 The reverse-offset correction also retains Yamato's 12/12 checks and the same
 sampled residuals and frozen motion. Its side-view skirt folds are unchanged.
 The node-basis audit agrees with S2V's Y-first Gram-Schmidt construction. It adds
 the runtime's collapsed-edge fallback; Yamato's sampled spans exceed its
 threshold, and the updated formula still passes all 12 regression cases.
 
-On Windows, 183 focused physics tests, ESLint, TypeScript, i18n key/manifest
+On Windows, 224 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -342,7 +363,7 @@ Next validation units:
 4. Gate supported model families and define an unsupported-data fallback before
    considering physics enabled by default.
 
-Coverage includes known gaps for triangle/quad constraints, axial
+Coverage includes known gaps for quad constraints, axial
 edges, follow links, collider priorities/flags/vertex scopes, jiggle bones, and
 approximate fit matrices. Scalar constraints take precedence over padded SIMD
 copies in these counts. The list is not exhaustive: world collision has no

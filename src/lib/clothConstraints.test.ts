@@ -1,8 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applyGoalDampedAttraction, applyRawAttraction, projectHingeLimit, projectKelagerBend, projectRodBatch, reconstructClothRope, reconstructClothTwist, type TwistNode } from './clothConstraints';
+import { applyGoalDampedAttraction, applyRawAttraction, projectHingeLimit, projectKelagerBend, projectRodBatch, projectTriangleBatch, reconstructClothRope, reconstructClothTwist, triangleProjectionError, type TwistNode } from './clothConstraints';
 import { parseFeModel } from './feModel';
 import hingeReference from './__fixtures__/cloth/source2_hinge_reference.json';
+import triangleReference from './__fixtures__/cloth/source2_triangle_reference.json';
+import type { ClothKelagerBend, ClothRod, ClothTriangle, ClothTwist } from './feModel';
+
+describe('compiled triangle elements', () => {
+  it.each(triangleReference.cases)('matches the runtime reference: $name', ({ positions, batches, staticCounts, scale, expected }) => {
+    const packed = batches.map((batch) => ({
+      nNode: [0, 1, 2].map((axis) => batch.map((triangle) => triangle.nNode[axis])),
+      w1: batch.map((triangle) => triangle.w1), w2: batch.map((triangle) => triangle.w2),
+      v1x: batch.map((triangle) => triangle.v1x),
+      v2: { x: batch.map((triangle) => triangle.v2[0]), y: batch.map((triangle) => triangle.v2[1]) },
+    }));
+    const model = parseFeModel({ m_CtrlName: positions.map((_, i) => String(i)), m_SimdTris: packed,
+      m_nSimdTriCount1: staticCounts.filter((count) => count >= 1).length,
+      m_nSimdTriCount2: staticCounts.filter((count) => count === 2).length })!;
+    expect(model.decodeIssues).toEqual([]);
+    const nodes = positions.map((position) => ({ pos: new THREE.Vector3().fromArray(position), kinematic: false }));
+    for (const batch of model.triangleBatches) projectTriangleBatch(nodes, batch, scale);
+    nodes.forEach((node, i) => expect(node.pos.distanceTo(new THREE.Vector3().fromArray(expected[i]))).toBeLessThan(1e-5));
+  });
+
+  it('preserves animation-owned nodes even in a dynamic partition and measures pending corrections', () => {
+    const nodes = [[0, 0, 0], [4, 0, 0], [1, 3, 0]].map((p, i) => ({ pos: new THREE.Vector3().fromArray(p), kinematic: i === 0 }));
+    const triangle: ClothTriangle = { node: [0, 1, 2], staticCount: 0, weight1: 0.3, weight2: 0.4, x1: 2, x2: 1, y2: 1 };
+    const before = nodes.map((node) => node.pos.clone());
+    expect(triangleProjectionError(nodes, triangle)).toBeGreaterThan(0.5);
+    expect(nodes.map((node) => node.pos)).toEqual(before);
+    projectTriangleBatch(nodes, [triangle]);
+    expect(nodes[0].pos).toEqual(before[0]);
+  });
+});
 
 describe('compiled hinge limits', () => {
   it.each(hingeReference.cases)('matches the runtime reference: $name', ({ positions, invMasses, hinge, expected }) => {
@@ -15,7 +45,6 @@ describe('compiled hinge limits', () => {
     });
   });
 });
-import type { ClothKelagerBend, ClothRod, ClothTwist } from './feModel';
 
 const v = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const axisZ = v(0, 0, 1);

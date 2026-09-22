@@ -41,6 +41,8 @@ function syntheticClothModel(): ClothModel {
     decodeIssues: [],
     featureGaps: [],
     hingeLimits: [],
+    triangles: [],
+    triangleBatches: [],
     staticNodeFlags: null,
     dynamicNodeFlags: null,
     goalDampedSpringIntegrators: [],
@@ -91,6 +93,28 @@ function syntheticRoot(): { root: THREE.Group; anchor: THREE.Bone } {
   root.updateWorldMatrix(true, true);
   return { root, anchor };
 }
+
+describe('compiled triangle integration', () => {
+  it('projects dynamic triangle vertices while retaining both animated anchors', () => {
+    const model = syntheticClothModel();
+    model.nodes[1].pinned = true;
+    model.nodes[1].invMass = 0;
+    model.staticNodeCount = 2;
+    model.nodes.forEach((node) => { node.gravity = 0; node.animForce = 0; node.animVertex = 0; });
+    model.rods = [];
+    const triangle: ClothModel['triangles'][number] = { node: [0, 1, 2], staticCount: 2, weight1: 0, weight2: 1, x1: 1, x2: 0.5, y2: 0.4 };
+    model.triangles = [triangle];
+    model.triangleBatches = [[triangle, triangle, triangle, triangle]];
+    const { root } = syntheticRoot();
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    const snapshot = harness.snapshot();
+    expect(snapshot.triangles[0].correction).toBeLessThan(1e-10);
+    expect(harness.metrics().maxAnchorError).toBe(0);
+    expect(snapshot.nodes[2].position).not.toEqual(model.nodes[2].initPos);
+    harness.dispose();
+  });
+});
 
 describe('local body contacts', () => {
   it.each(['sphere', 'box'])('expands a %s by the particle radius but not the extra world margin', (shape) => {
