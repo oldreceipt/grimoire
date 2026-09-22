@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ClothHingeLimit, ClothKelagerBend, ClothRod, ClothTriangle, ClothTwist, Vec3, Vec4 } from './feModel';
+import type { ClothHingeLimit, ClothKelagerBend, ClothQuad, ClothRod, ClothTriangle, ClothTwist, Vec3, Vec4 } from './feModel';
 
 // Compiled coefficients, not authoring strengths. See docs/source2-preview-physics.md.
 const unit = (value: number) => Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0, 1) : 0;
@@ -159,6 +159,84 @@ export function triangleProjectionError(nodes: readonly BendNode[], triangle: Cl
   for (let vertex = triangle.staticCount; vertex < 3; vertex++) {
     const node = nodes[triangle.node[vertex]];
     if (!node.kinematic) error = Math.max(error, node.pos.distanceTo(_triangleOutput[0][vertex]));
+  }
+  return error;
+}
+
+const _quadX = new THREE.Vector3();
+const _quadY = new THREE.Vector3();
+const _quadZ = new THREE.Vector3();
+const _quadCenter = new THREE.Vector3();
+const _quadOffset = new THREE.Vector3();
+const _quadOutput = Array.from({ length: 4 }, () => Array.from({ length: 2 }, () => new THREE.Vector3()));
+
+function anchoredQuadProjection(nodes: readonly BendNode[], quad: ClothQuad, output: THREE.Vector3[], scale: number): void {
+  const a = nodes[quad.node[0]].pos;
+  const b = nodes[quad.node[1]].pos;
+  const c = nodes[quad.node[2]].pos;
+  const d = nodes[quad.node[3]].pos;
+  _quadCenter.addVectors(a, b).multiplyScalar(0.5);
+  _quadX.subVectors(b, a);
+  if (_quadX.lengthSq() >= 2 ** -23) _quadX.normalize();
+  else _quadX.set(1, 0, 0);
+  _quadY.addVectors(c, d).addScaledVector(_quadCenter, -2);
+  _quadY.addScaledVector(_quadX, -_quadY.dot(_quadX));
+  if (_quadY.lengthSq() < 2 ** -23) {
+    if (Math.abs(_quadX.x) > Math.abs(_quadX.z)) _quadY.set(-_quadX.y, _quadX.x, 0);
+    else _quadY.set(0, -_quadX.z, _quadX.y);
+  }
+  _quadY.normalize();
+  _quadZ.crossVectors(_quadX, _quadY);
+
+  // The two fixed corners define the axis and midpoint. Fit the movable
+  // corners' compiled Y/Z shape about that axis using their mass shares.
+  let cosine = 0;
+  let sine = 0;
+  for (let vertex = 2; vertex < 4; vertex++) {
+    _quadOffset.subVectors(nodes[quad.node[vertex]].pos, _quadCenter);
+    const y = _quadOffset.dot(_quadY);
+    const z = _quadOffset.dot(_quadZ);
+    const [, sy, sz, weight] = quad.shape[vertex];
+    cosine += weight * (sy * y + sz * z);
+    sine += weight * (sz * y - sy * z);
+  }
+  const squared = cosine * cosine + sine * sine;
+  if (squared > 2 ** -23) {
+    const inverse = 1 / Math.sqrt(squared);
+    cosine *= inverse;
+    sine *= inverse;
+  } else {
+    cosine = 1;
+    sine = 0;
+  }
+  for (let vertex = 2; vertex < 4; vertex++) {
+    const [x, y, z] = quad.shape[vertex];
+    output[vertex - 2].copy(_quadCenter).addScaledVector(_quadX, x * scale)
+      .addScaledVector(_quadY, (y * cosine + z * sine) * scale)
+      .addScaledVector(_quadZ, (z * cosine - y * sine) * scale);
+  }
+}
+
+export function projectQuadBatch(nodes: readonly BendNode[], quads: readonly ClothQuad[], scale = 1): void {
+  for (let lane = 0; lane < quads.length; lane++) {
+    if (quads[lane].staticCount === 2) anchoredQuadProjection(nodes, quads[lane], _quadOutput[lane], scale);
+  }
+  for (let vertex = 2; vertex < 4; vertex++) {
+    for (let lane = 0; lane < quads.length; lane++) {
+      const quad = quads[lane];
+      const node = nodes[quad.node[vertex]];
+      if (quad.staticCount === 2 && !node.kinematic) node.pos.copy(_quadOutput[lane][vertex - 2]);
+    }
+  }
+}
+
+export function quadProjectionError(nodes: readonly BendNode[], quad: ClothQuad): number {
+  if (quad.staticCount !== 2) return 0;
+  anchoredQuadProjection(nodes, quad, _quadOutput[0], 1);
+  let error = 0;
+  for (let vertex = 2; vertex < 4; vertex++) {
+    const node = nodes[quad.node[vertex]];
+    if (!node.kinematic) error = Math.max(error, node.pos.distanceTo(_quadOutput[0][vertex - 2]));
   }
   return error;
 }

@@ -146,17 +146,45 @@ describe('parseFeModel', () => {
     expect(model.decodeIssues.map((issue) => issue.reason)).toEqual(['invalid-nodes', 'invalid-nodes', 'invalid-weights', 'invalid-limits']);
   });
 
+  it('decodes supported quads and falls back to scalar records when packing is malformed', () => {
+    const quad = { nNode: [0, 1, 2, 3], flSlack: 0, vShape: [[-1, 0, 0, 0], [1, 0, 0, 0], [-1, 2, 0, 0.4], [1, 2, 0, 0.6]] };
+    const model = parseFeModel({ m_CtrlName: ['a', 'b', 'c', 'd'], m_Quads: [quad], m_nQuadCount1: 1, m_nQuadCount2: 1,
+      m_SimdQuads: [{ nNode: [] }], m_nSimdQuadCount1: 1, m_nSimdQuadCount2: 1 })!;
+    expect(model.quads).toHaveLength(1);
+    expect(model.quads[0]).toEqual({ node: [0, 1, 2, 3], staticCount: 2, shape: quad.vShape, slack: 0 });
+    expect(model.quadBatches).toEqual([model.quads]);
+    expect(model.featureGaps).toEqual([]);
+    expect(model.decodeIssues).toEqual([{ array: 'm_SimdQuads', record: 0, reason: 'invalid-nodes' }]);
+  });
+
+  it('rejects ambiguous quad partitions and invalid rest shapes', () => {
+    const quad = { nNode: [0, 1, 2, 3], flSlack: 0, vShape: [[-1, 0, 0, 0], [1, 0, 0, 0], [-1, 2, 0, 0.4], [1, 2, 0, 0.6]] };
+    const names = ['a', 'b', 'c', 'd'];
+    for (const counts of [{}, { m_nQuadCount1: 0, m_nQuadCount2: 1 }, { m_nQuadCount1: 2, m_nQuadCount2: 0 }]) {
+      const model = parseFeModel({ m_CtrlName: names, m_Quads: [quad], ...counts })!;
+      expect(model.quadBatches).toEqual([]);
+      expect(model.decodeIssues).toEqual([{ array: 'm_Quads', record: 0, reason: 'invalid-count' }]);
+    }
+    const model = parseFeModel({ m_CtrlName: names, m_nQuadCount1: 4, m_nQuadCount2: 4, m_Quads: [
+      { ...quad, nNode: [0, 1, 2, 99] }, { ...quad, nNode: [0, 1, 2, 2] },
+      { ...quad, vShape: [[0, 0, 0, 1], ...quad.vShape.slice(1)] }, { ...quad, flSlack: Number.NaN },
+    ] })!;
+    expect(model.quadBatches).toEqual([]);
+    expect(model.decodeIssues.map((issue) => issue.reason)).toEqual(['invalid-nodes', 'invalid-nodes', 'invalid-weights', 'invalid-limits']);
+  });
+
   it('reports missing constraint families without counting SIMD copies twice or unscoped colliders', () => {
+    const quad = { nNode: [0, 1, 2, 3], flSlack: 0, vShape: [[-1, 0, 0, 0.25], [1, 0, 0, 0.25], [-1, 2, 0, 0.25], [1, 2, 0, 0.25]] };
     const model = parseFeModel({
       ...raw,
-      m_Quads: [{}, {}], m_SimdQuads: [{}],
+      m_CtrlName: ['a', 'b', 'c', 'd'], m_Quads: [quad, quad], m_nQuadCount1: 0, m_nQuadCount2: 0,
       m_TaperedCapsuleRigids: [
         { nNode: 0, vSphere: [], nFlags: 0, nVertexMapIndex: 0xffff },
         { nNode: 0, vSphere: [], nFlags: 1, nVertexMapIndex: 0 },
       ],
     })!;
     expect(model.featureGaps).toEqual([
-      { field: 'm_Quads', label: 'Quad constraints', count: 2, status: 'not-implemented' },
+      { field: 'm_Quads', label: 'Quads with fewer than two fixed nodes', count: 2, status: 'not-implemented' },
       { field: 'm_TaperedCapsuleRigids.nFlags', label: 'Collider flags', count: 1, status: 'not-implemented' },
     ]);
     expect(model.decodeIssues).toEqual([]);

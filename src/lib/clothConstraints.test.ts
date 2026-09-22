@@ -1,10 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applyGoalDampedAttraction, applyRawAttraction, projectHingeLimit, projectKelagerBend, projectRodBatch, projectTriangleBatch, reconstructClothRope, reconstructClothTwist, triangleProjectionError, type TwistNode } from './clothConstraints';
+import { applyGoalDampedAttraction, applyRawAttraction, projectHingeLimit, projectKelagerBend, projectQuadBatch, projectRodBatch, projectTriangleBatch, quadProjectionError, reconstructClothRope, reconstructClothTwist, triangleProjectionError, type TwistNode } from './clothConstraints';
 import { parseFeModel } from './feModel';
 import hingeReference from './__fixtures__/cloth/source2_hinge_reference.json';
 import triangleReference from './__fixtures__/cloth/source2_triangle_reference.json';
-import type { ClothKelagerBend, ClothRod, ClothTriangle, ClothTwist } from './feModel';
+import quadReference from './__fixtures__/cloth/source2_quad_reference.json';
+import type { ClothKelagerBend, ClothQuad, ClothRod, ClothTriangle, ClothTwist } from './feModel';
+
+describe('compiled quads with two fixed nodes', () => {
+  it.each(quadReference.cases)('matches the runtime reference: $name', ({ positions, batches, scale, expected }) => {
+    const packed = batches.map((batch) => ({
+      nNode: [0, 1, 2, 3].map((vertex) => batch.map((quad) => quad.nNode[vertex])),
+      f4Slack: batch.map((quad) => quad.flSlack),
+      vShape: [0, 1, 2, 3].map((vertex) => [0, 1, 2].flatMap((axis) => batch.map((quad) => quad.vShape[vertex][axis]))),
+      f4Weights: [0, 1, 2, 3].map((vertex) => batch.map((quad) => quad.vShape[vertex][3])),
+    }));
+    const model = parseFeModel({ m_CtrlName: positions.map((_, i) => String(i)), m_SimdQuads: packed,
+      m_nSimdQuadCount1: batches.length, m_nSimdQuadCount2: batches.length })!;
+    expect(model.decodeIssues).toEqual([]);
+    expect(model.featureGaps).toEqual([]);
+    const nodes = positions.map((position) => ({ pos: new THREE.Vector3().fromArray(position), kinematic: false }));
+    for (const batch of model.quadBatches) projectQuadBatch(nodes, batch, scale);
+    nodes.forEach((node, i) => expect(node.pos.distanceTo(new THREE.Vector3().fromArray(expected[i]))).toBeLessThan(1e-5));
+  });
+
+  it('preserves fixed and animation-owned nodes, and keeps residual measurement read-only', () => {
+    const nodes = [[-1, 0, 0], [1, 0, 0], [-1, 4, 0], [1, 3, 0]].map((p, i) => ({ pos: new THREE.Vector3().fromArray(p), kinematic: i === 2 }));
+    const quad: ClothQuad = { node: [0, 1, 2, 3], staticCount: 2, slack: 0,
+      shape: [[-1, 0, 0, 0], [1, 0, 0, 0], [-1, 2, 0, 0.5], [1, 2, 0, 0.5]] };
+    const before = nodes.map((node) => node.pos.clone());
+    expect(quadProjectionError(nodes, quad)).toBeCloseTo(1);
+    expect(nodes.map((node) => node.pos)).toEqual(before);
+    projectQuadBatch(nodes, [quad]);
+    expect(nodes.slice(0, 3).map((node) => node.pos)).toEqual(before.slice(0, 3));
+    expect(nodes[3].pos.toArray()).toEqual([1, 2, 0]);
+    projectQuadBatch(nodes, [{ ...quad, staticCount: 0 }]);
+    expect(nodes[3].pos.toArray()).toEqual([1, 2, 0]);
+  });
+});
 
 describe('compiled triangle elements', () => {
   it.each(triangleReference.cases)('matches the runtime reference: $name', ({ positions, batches, staticCounts, scale, expected }) => {

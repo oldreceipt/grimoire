@@ -134,8 +134,17 @@ export interface RawFeModel {
   }>;
   m_nSimdTriCount1?: number;
   m_nSimdTriCount2?: number;
-  m_Quads?: unknown[];
-  m_SimdQuads?: unknown[];
+  m_Quads?: RawClothQuad[];
+  m_nQuadCount1?: number;
+  m_nQuadCount2?: number;
+  m_SimdQuads?: Array<{
+    nNode?: number[] | number[][];
+    f4Slack?: number[];
+    vShape?: number[][];
+    f4Weights?: number[][];
+  }>;
+  m_nSimdQuadCount1?: number;
+  m_nSimdQuadCount2?: number;
   m_AxialEdges?: unknown[];
   m_FollowNodes?: unknown[];
   m_RigidColliderPriorities?: RawColliderPriority[];
@@ -146,6 +155,12 @@ export interface RawFeModel {
   m_flRodVelocitySmoothRate?: number;
   m_nRodVelocitySmoothIterations?: number;
   m_nRotLockStaticNodes?: number;
+}
+
+export interface RawClothQuad {
+  nNode?: number[];
+  flSlack?: number;
+  vShape?: number[][];
 }
 
 export interface RawClothTriangle {
@@ -394,8 +409,15 @@ export interface ClothTriangle {
   y2: number;
 }
 
+export interface ClothQuad {
+  node: [number, number, number, number];
+  staticCount: 0 | 1 | 2;
+  shape: [Vec4, Vec4, Vec4, Vec4];
+  slack: number;
+}
+
 export interface ClothDecodeIssue {
-  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_Tris' | 'm_SimdTris' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_AnimStrayRadii' | 'm_SimdAnimStrayRadii' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes' | 'm_RigidColliderPriorities' | 'm_VertexMaps';
+  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_Tris' | 'm_SimdTris' | 'm_Quads' | 'm_SimdQuads' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_AnimStrayRadii' | 'm_SimdAnimStrayRadii' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes' | 'm_RigidColliderPriorities' | 'm_VertexMaps';
   record: number;
   reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-limits' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets' | 'unsupported-flags';
 }
@@ -413,6 +435,8 @@ export interface ClothModel {
   hingeLimits: ClothHingeLimit[];
   triangles: ClothTriangle[];
   triangleBatches: ClothTriangle[][];
+  quads: ClothQuad[];
+  quadBatches: ClothQuad[][];
   capsules: ClothCapsule[];
   spheres: ClothSphere[];
   boxes: ClothBox[];
@@ -506,13 +530,14 @@ export interface ClothFeatureGap {
   status: 'not-implemented' | 'approximate';
 }
 
-function clothFeatureGaps(fe: RawFeModel): ClothFeatureGap[] {
+function clothFeatureGaps(fe: RawFeModel, quads: ClothQuad[]): ClothFeatureGap[] {
   const gaps: ClothFeatureGap[] = [];
   const add = (field: keyof RawFeModel, label: string, status: ClothFeatureGap['status'] = 'not-implemented') => {
     const entries = fe[field];
     if (Array.isArray(entries) && entries.length > 0) gaps.push({ field, label, count: entries.length, status });
   };
-  add(fe.m_Quads?.length ? 'm_Quads' : 'm_SimdQuads', fe.m_Quads?.length ? 'Quad constraints' : 'Quad batches');
+  const unsupportedQuads = quads.filter((quad) => quad.staticCount !== 2).length;
+  if (unsupportedQuads) gaps.push({ field: fe.m_Quads?.length ? 'm_Quads' : 'm_SimdQuads', label: 'Quads with fewer than two fixed nodes', count: unsupportedQuads, status: 'not-implemented' });
   add('m_AxialEdges', 'Axial edges');
   add('m_FollowNodes', 'Follow links');
   add('m_SDFRigids', 'SDF colliders');
@@ -788,6 +813,80 @@ function parseTriangles(fe: RawFeModel, issues: ClothDecodeIssue[]): { triangles
     }
   }
   return { triangles, batches };
+}
+
+function parseQuads(fe: RawFeModel, issues: ClothDecodeIssue[]): { quads: ClothQuad[]; batches: ClothQuad[][] } {
+  const decode = (entry: RawClothQuad, staticCount: ClothQuad['staticCount'], array: 'm_Quads' | 'm_SimdQuads', record: number): ClothQuad | null => {
+    const n = entry.nNode;
+    if (!Array.isArray(n) || n.length !== 4 || new Set(n).size !== 4
+      || !n.every((index) => isNodeIndex(index, fe.m_CtrlName.length))) {
+      issues.push({ array, record, reason: 'invalid-nodes' });
+      return null;
+    }
+    const shape = entry.vShape;
+    if (!Array.isArray(shape) || shape.length !== 4 || !shape.every((v) => Array.isArray(v) && v.length === 4 && v.every(isFiniteNumber))
+      || !isFiniteNumber(entry.flSlack) || entry.flSlack < 0) {
+      issues.push({ array, record, reason: 'invalid-limits' });
+      return null;
+    }
+    if (shape.some((v, i) => v[3] < 0 || (i < staticCount && v[3] !== 0))
+      || Math.abs(shape.reduce((sum, v) => sum + v[3], 0) - 1) > 1e-5) {
+      issues.push({ array, record, reason: 'invalid-weights' });
+      return null;
+    }
+    return { node: [n[0], n[1], n[2], n[3]], staticCount,
+      shape: [sphere4(shape[0]), sphere4(shape[1]), sphere4(shape[2]), sphere4(shape[3])], slack: entry.flSlack };
+  };
+  const partitions = (count: number, one: number | undefined, two: number | undefined, array: 'm_Quads' | 'm_SimdQuads') => {
+    if (count === 0) return [];
+    if (!isUint32(one) || !isUint32(two) || two > one || one > count) {
+      issues.push({ array, record: 0, reason: 'invalid-count' });
+      return null;
+    }
+    return Array.from({ length: count }, (_, index): ClothQuad['staticCount'] => index < two ? 2 : index < one ? 1 : 0);
+  };
+  const scalar = fe.m_Quads ?? [];
+  const quads: ClothQuad[] = [];
+  partitions(scalar.length, fe.m_nQuadCount1, fe.m_nQuadCount2, 'm_Quads')?.forEach((fixed, record) => {
+    const quad = decode(scalar[record], fixed, 'm_Quads', record);
+    if (quad) quads.push(quad);
+  });
+  const packed = fe.m_SimdQuads ?? [];
+  const packedPartitions = partitions(packed.length, fe.m_nSimdQuadCount1, fe.m_nSimdQuadCount2, 'm_SimdQuads');
+  const batches: ClothQuad[][] = [];
+  let invalid = packedPartitions === null;
+  packedPartitions?.forEach((fixed, record) => {
+    const entry = packed[record];
+    const indices = Array.isArray(entry.nNode) ? entry.nNode.flat() : [];
+    if (indices.length !== 16) {
+      issues.push({ array: 'm_SimdQuads', record, reason: 'invalid-nodes' });
+      invalid = true;
+      return;
+    }
+    const batch: ClothQuad[] = [];
+    for (let lane = 0; lane < 4; lane++) {
+      const quad = decode({ nNode: [indices[lane], indices[lane + 4], indices[lane + 8], indices[lane + 12]],
+        flSlack: entry.f4Slack?.[lane],
+        vShape: [0, 1, 2, 3].map((vertex) => [
+          entry.vShape?.[vertex]?.[lane] ?? NaN, entry.vShape?.[vertex]?.[lane + 4] ?? NaN,
+          entry.vShape?.[vertex]?.[lane + 8] ?? NaN, entry.f4Weights?.[vertex]?.[lane] ?? NaN,
+        ]),
+      }, fixed, 'm_SimdQuads', record);
+      if (quad) batch.push(quad);
+      else invalid = true;
+    }
+    batches.push(batch);
+  });
+  if (invalid || batches.length === 0) return { quads, batches: quads.map((quad) => [quad]) };
+  if (quads.length === 0) {
+    const seen = new Set<string>();
+    for (const quad of batches.flat()) {
+      const key = JSON.stringify(quad);
+      if (!seen.has(key)) quads.push(quad);
+      seen.add(key);
+    }
+  }
+  return { quads, batches };
 }
 
 function parseKelagerBends(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothKelagerBend[] {
@@ -1071,6 +1170,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
   const { rods: animatedRods, batches: animatedRodBatches } = parseAnimatedRods(fe, decodeIssues);
   const rodBatches = parseRodBatches(fe, decodeIssues);
   const { triangles, batches: triangleBatches } = parseTriangles(fe, decodeIssues);
+  const { quads, batches: quadBatches } = parseQuads(fe, decodeIssues);
   const kelagerBends = parseKelagerBends(fe, decodeIssues);
   const ropeChains = parseRopeChains(fe, decodeIssues);
   const bitset = fe.m_GoalDampedSpringIntegrators ?? [];
@@ -1086,10 +1186,12 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     animatedRods,
     animatedRodBatches,
     decodeIssues,
-    featureGaps: clothFeatureGaps(fe),
+    featureGaps: clothFeatureGaps(fe, quads),
     hingeLimits: parseHingeLimits(fe, decodeIssues),
     triangles,
     triangleBatches,
+    quads,
+    quadBatches,
     staticNodeFlags: isUint32(fe.m_nStaticNodeFlags) ? fe.m_nStaticNodeFlags : null,
     dynamicNodeFlags: isUint32(fe.m_nDynamicNodeFlags) ? fe.m_nDynamicNodeFlags : null,
     goalDampedSpringIntegrators: validBitset ? bitset : [],

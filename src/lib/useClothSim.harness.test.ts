@@ -44,6 +44,8 @@ function syntheticClothModel(): ClothModel {
     featureGaps: [],
     hingeLimits: [],
     triangles: [],
+    quads: [],
+    quadBatches: [],
     triangleBatches: [],
     staticNodeFlags: null,
     dynamicNodeFlags: null,
@@ -132,6 +134,32 @@ describe('compiled collision selections and priority groups', () => {
     expect(snapshot.nodes[2].position).toEqual(model.nodes[2].initPos);
     expect(snapshot.contacts).toEqual([]);
     harness.dispose();
+  });
+});
+
+describe('compiled quad integration', () => {
+  it('projects after rods and restores the animation pose on cleanup', () => {
+    const positions = [[-1, 0, 0], [1, 0, 0], [-1, 4, 0], [1, 3, 0]];
+    const model = parseFeModel({ m_CtrlName: ['a', 'b', 'c', 'd'], m_nStaticNodes: 2, m_NodeInvMasses: [0, 0, 1, 1],
+      m_InitPose: positions.map((position) => [...position, 1, ...Q]),
+      m_Quads: [{ nNode: [0, 1, 2, 3], flSlack: 0, vShape: [[-1, 0, 0, 0], [1, 0, 0, 0], [-1, 2, 0, 0.5], [1, 2, 0, 0.5]] }],
+      m_nQuadCount1: 1, m_nQuadCount2: 1,
+      m_Rods: [{ nNode: [0, 2], flMinDist: 3, flMaxDist: 3, flWeight0: 0, flRelaxationFactor: 1 }],
+    })!;
+    const root = new THREE.Group();
+    model.nodes.forEach((node) => {
+      const bone = new THREE.Bone();
+      bone.name = node.name;
+      bone.position.fromArray(node.initPos);
+      root.add(bone);
+    });
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    expect(harness.snapshot().nodes.map((node) => node.position)).toEqual([[-1, 0, 0], [1, 0, 0], [-1, 2, 0], [1, 2, 0]]);
+    expect(harness.snapshot().quads[0].correction).toBe(0);
+    expect(harness.metrics().coverage.quads).toBe(1);
+    harness.dispose();
+    expect(root.children.map((bone) => bone.position.toArray())).toEqual(positions);
   });
 });
 

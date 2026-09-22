@@ -314,6 +314,7 @@ async function main() {
             maxContactDepth: Math.max(0, ...snapshot?.contacts.map((contact) => contact.depth) ?? []),
             maxRodError: Math.max(0, ...snapshot?.rods.map((rod) => rod.error) ?? []),
             maxTriangleCorrection: Math.max(0, ...snapshot?.triangles.map((triangle) => triangle.correction) ?? []),
+            maxQuadCorrection: Math.max(0, ...snapshot?.quads.map((quad) => quad.correction) ?? []),
           });
         }
       }
@@ -385,6 +386,7 @@ async function main() {
         diagnostics.textContent = snapshot ? `Body penetration: ${worstContact?.depth.toFixed(4) ?? '0'} Source units\nRod limit error: ${worstRod?.error.toFixed(4) ?? '0'} Source units`
           + (snapshot.hinges.length > 0 ? `\nHinge limit error: ${hingeErrors.length ? THREE.MathUtils.radToDeg(Math.max(...hingeErrors)).toFixed(2) + ' degrees' : 'unavailable'}` : '')
           + (snapshot.triangles.length > 0 ? `\nTriangle correction: ${Math.max(...snapshot.triangles.map((triangle) => triangle.correction)).toFixed(4)} Source units` : '')
+          + (snapshot.quads.length > 0 ? `\nQuad correction: ${Math.max(...snapshot.quads.map((quad) => quad.correction)).toFixed(4)} Source units` : '')
           + (worstContact ? `\nContact: ${snapshot.nodes[worstContact.node].name} / ${worstContact.shape}` : '')
           + (worstRod && worstRod.error > 1e-4 ? `\nRod: ${snapshot.nodes[worstRod.a].name} -> ${snapshot.nodes[worstRod.b].name}` : '') : 'Enable physics to inspect solver data.';
         status.textContent = `${elapsed.toFixed(3)} seconds | animation ${mixer.time.toFixed(3)}\n${matched} rendered controls | ${model.nodes.length - matched - missingInputs.length} generated controls | ${missingInputs.length} unresolved`;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { clothIntegratorMode } from './feModel';
-import { applyGoalDampedAttraction, applyRawAttraction, hingeLimitExcess, projectHingeLimit, projectKelagerBend, projectRodBatch, projectTriangleBatch, reconstructClothRope, reconstructClothTwist, triangleProjectionError } from './clothConstraints';
+import { applyGoalDampedAttraction, applyRawAttraction, hingeLimitExcess, projectHingeLimit, projectKelagerBend, projectQuadBatch, projectRodBatch, projectTriangleBatch, quadProjectionError, reconstructClothRope, reconstructClothTwist, triangleProjectionError } from './clothConstraints';
 import {
   applyOffset,
   nodeBaseQuaternion,
@@ -632,6 +632,7 @@ export interface ClothSimulationCoverage {
   kelagerBends: number;
   hingeLimits: number;
   triangles: number;
+  quads: number;
   ropeChains: number;
   pending: {
     ropeChains: number;
@@ -674,6 +675,7 @@ export interface ClothDebugSnapshot {
   rods: { a: number; b: number; min: number; max: number; error: number }[];
   hinges: { node: number[]; excess: number | null }[];
   triangles: { node: number[]; correction: number }[];
+  quads: { node: number[]; correction: number }[];
   contacts: { node: number; shape: string; depth: number }[];
 }
 
@@ -689,6 +691,7 @@ export function clothSimulationCoverage(model: ClothModel): ClothSimulationCover
     kelagerBends: model.kelagerBends.length,
     hingeLimits: model.hingeLimits.length,
     triangles: model.triangles.length,
+    quads: model.quads.filter((quad) => quad.staticCount === 2).length,
     ropeChains: model.ropeChains.length,
     pending: {
       ropeChains: Math.max(0, model.ropeCount - model.ropeChains.length),
@@ -1521,6 +1524,7 @@ function stepClothRuntime(
       for (const hinge of rt.model.hingeLimits) projectHingeLimit(rt.nodes, hinge);
       solveRods(rt);
       solveAnimStrayRadii(rt);
+      for (const batch of rt.model.quadBatches) projectQuadBatch(rt.nodes, batch);
       for (const batch of rt.model.triangleBatches) projectTriangleBatch(rt.nodes, batch);
       if (i >= constraintIterations - goalIterations) solveGoalDampedNodes(rt);
       restorePinnedSolverNodes(rt.nodes);
@@ -1658,6 +1662,7 @@ export function createClothSimHarness(
         }),
         hinges: rt.model.hingeLimits.map((hinge) => ({ node: [...hinge.node], excess: hingeLimitExcess(rt.nodes, hinge) })),
         triangles: rt.model.triangles.map((triangle) => ({ node: [...triangle.node], correction: triangleProjectionError(rt.nodes, triangle) })),
+        quads: rt.model.quads.filter((quad) => quad.staticCount === 2).map((quad) => ({ node: [...quad.node], correction: quadProjectionError(rt.nodes, quad) })),
       };
     },
     dispose(): void {

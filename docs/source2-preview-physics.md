@@ -1,7 +1,8 @@
 # Source 2 preview physics
 
 The preview now uses compiled raw/goal-damped attraction, fixed and animated rod
-batches, triangle elements, animation stray limits, Kelager bends, hinge limits,
+batches, triangle elements, quads with two fixed nodes, animation stray limits,
+Kelager bends, hinge limits,
 directed twist/swing links, and rope bone reconstruction.
 The rendered validation cases include Seven, Vindicta, Yamato, Necro, Dynamo and Bebop's current
 base models with three animations each.
@@ -138,6 +139,7 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Moving-body friction | `0x229ec0`, `0x22a060` | Transform the previous particle through the collider's relative motion, then limit the tangential correction to friction times penetration. Contact changes the current position only. |
 | Contact scheduling | `0x244f0b`, `0x24538f`, `0x234a20`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Priority groups run last to first; each group visits capsules, spheres and boxes in reverse order, then planes in forward order. SDF remains unsupported. |
 | Collider vertex selections | `0x10c34b`, `0x2302a0`, `0x2309c0` | Build node membership from positive byte weights within each map's node span. Empty selections affect no nodes; out-of-range map indices use layer filtering. |
+| Quads with two fixed nodes | `0x111a40`, `0x111380`, `0x102cf0` | Build the fixed-edge frame, fit the two movable corners about that axis using compiled mass shares, then scatter the packed lanes. Run after rods/stray limits and before triangles. Preserve the midpoint and runtime's collapsed-edge fallback. Free and one-fixed-node quads remain unsupported. |
 | Fixed rod batches | `0x111bc0` | Visit `m_SimdRods` in compiled order, gathering all four lanes before scattering endpoints. Padding copies within a batch do not add stiffness; repeated constraints in subsequent batches remain. |
 | Animated rod batches | `0x10d330`, `0x111ef0` | Derive target lengths from the clean animated controls every tick, then solve `m_SimdRodsAnim` with its compiled weight, relaxation and batch order. |
 | Reverse-offset writeback | `0x105b40`, `0x109b91` | Place the output bone from the solved target particle and bone orientation. This updates rendered transforms, without replacing particle positions or integration history. |
@@ -387,13 +389,28 @@ triangle correction 0.290 Source units. After ten frozen seconds, the next
 second moves the full rig by 10.601 mm and the damped subset by 8.092 mm, with
 0.08115 radians maximum rotation. Front idle and side/back run inspection shows
 attached garment geometry, but ankle contact residuals and continued motion
-remain. Two quad constraints are missing and five fit matrices remain
-approximate. These are fidelity issues, despite passing the pose checks.
+remain. At this checkpoint two quad constraints were missing and five fit
+matrices remained approximate. These are fidelity issues, despite passing the
+pose checks.
 Seven's repeated 12/12 regression retains exactly the preceding sampled rod and
 contact measurements (2.915117 and 0.538154 Source units), with unchanged frozen
 motion. Side run inspection shows no new cable attachment issue.
 
-On Windows, 283 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
+The subsequent anchored-quad implementation is independently checked against
+21 synthetic compiled passes, including different mass shares, scale, collapsed
+geometry and overlapping packed lanes. Maximum numerical difference is
+`1.36e-6` Source units. The parser retains unsupported free and one-fixed-node
+partitions as visible gaps. The current inventory decodes without quad issues:
+Bebop has two supported quads, Werewolf one, and Doorman five supported/four free.
+
+Bebop's repeated 03:13 UTC report retains 12/12 pose checks. Frozen quad correction
+drops from 0.962048 to 0.410683 Source units. The largest sampled triangle
+correction rises from 0.289213 to 0.398449 Source units; later constraints and
+attraction still conflict. Maximum rod/contact residuals and frozen motion are
+unchanged. Front idle and back run inspection shows no obvious attachment
+regression. This change does not establish improved settling or in-game parity.
+
+On Windows, 308 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -430,7 +447,7 @@ Next validation units:
 4. Gate supported model families and define an unsupported-data fallback before
    considering physics enabled by default.
 
-Coverage includes known gaps for quad constraints, axial
+Coverage includes known gaps for free/one-fixed-node quad constraints, axial
 edges, follow links, collider flags, SDF collision, jiggle bones, and
 approximate fit matrices. Scalar constraints take precedence over padded SIMD
 copies in these counts. The list is not exhaustive: world collision has no
