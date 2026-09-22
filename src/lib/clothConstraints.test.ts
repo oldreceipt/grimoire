@@ -5,6 +5,7 @@ import { parseFeModel } from './feModel';
 import hingeReference from './__fixtures__/cloth/source2_hinge_reference.json';
 import triangleReference from './__fixtures__/cloth/source2_triangle_reference.json';
 import quadReference from './__fixtures__/cloth/source2_quad_reference.json';
+import goalReference from './__fixtures__/cloth/source2_goal_reference.json';
 import type { ClothKelagerBend, ClothQuad, ClothRod, ClothTriangle, ClothTwist } from './feModel';
 
 describe('compiled quad elements', () => {
@@ -117,6 +118,15 @@ describe('compiled rod batches', () => {
 });
 
 describe('compiled animation attraction', () => {
+  it.each(goalReference.cases)('matches the runtime reference: $name', ({ position, previous, goal, force, vertex, expected }) => {
+    const current = new THREE.Vector3().fromArray(position);
+    const history = new THREE.Vector3().fromArray(previous);
+    applyGoalDampedAttraction(current, history, new THREE.Vector3().fromArray(goal), force, vertex);
+    expect(current.distanceTo(new THREE.Vector3().fromArray(expected.position))).toBeLessThan(2e-6);
+    expect(history.distanceTo(new THREE.Vector3().fromArray(expected.previous))).toBeLessThan(2e-6);
+    if (expected.position.every((value, axis) => value === position[axis])) expect(current.toArray()).toEqual(position);
+  });
+
   it('uses force for goal displacement and vertex for velocity damping in goal mode', () => {
     const position = v(8);
     const previous = v(6);

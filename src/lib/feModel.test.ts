@@ -41,6 +41,15 @@ const raw: RawFeModel = {
 };
 
 describe('parseFeModel', () => {
+  it.each([
+    { friction: undefined, enabled: false },
+    { friction: [], enabled: false },
+    { friction: [0, 0], enabled: true },
+    { friction: [0.3, 0.6], enabled: true },
+  ])('retains the contact kernel selection for friction data $friction', ({ friction, enabled }) => {
+    expect(parseFeModel({ ...raw, m_DynNodeFriction: friction })!.hasCollisionFriction).toBe(enabled);
+  });
+
   it('decodes binary collider selections from byte weights and respects map offsets', () => {
     const model = parseFeModel({ ...raw,
       m_VertexMaps: [{ nVertexBase: 0, nVertexCount: 3, nMapOffset: 1 }],

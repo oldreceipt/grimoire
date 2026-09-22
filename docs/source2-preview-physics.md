@@ -127,7 +127,7 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 
 | Runtime path | RVA | Preview behavior |
 | --- | --- | --- |
-| Goal-damped attraction | `0x2dd100` | Force attraction blends position toward the goal; vertex attraction blends history toward the new position. Near-unit force resets both buffers. |
+| Goal-damped attraction | `0x2dd100` | Force attraction blends position toward the goal; vertex attraction blends history toward the new position. Force below `2^-23` skips position attraction; force above the compiled float `0.9999` resets both buffers. |
 | Raw attraction | `0x244411` | With `p = clamp(VA * dt)` and `f = 2 * FA * dt`, position receives `(goal - position) * (p + f)` and history receives `(goal - position) * p * (1 - p)`. |
 | Relaxation schedule | `0x2448ef`, `0x244fa0` | One base pass plus extra iterations, capped at 256. Goal passes run at the end of relaxation, with their own extra count. |
 | Kelager bends | `0x10d870` | Project the middle node's centroid-height excess using the three compiled signed weights directly. Do not clamp them to inverse masses. |
@@ -137,6 +137,7 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Local contact data | `0x131b9b`, `0x229f70` | The compiled per-node radii feed local body contacts as well as world collision. The additional world margin is not added here. |
 | Tapered capsule contact | `0x2d8770`, `0x22c500`, `0x235920` | Shift the sampled sphere along the axis by radius slope times radial distance, including the short-capsule endpoint case. |
 | Moving-body friction | `0x229ec0`, `0x22a060` | Transform the previous particle through the collider's relative motion, then limit the tangential correction to friction times penetration. Contact changes the current position only. |
+| Capsule center fallback | `0x22f810`, `0x22f8f0` | A nonempty friction array selects a full-radius Source Z correction when squared distance is below the compiled float `0.01`. Without that array, squared distance at most `2^-23` places the particle at the sampled sphere's Source Z pole. Zero-valued friction arrays still select the friction kernel. |
 | Contact scheduling | `0x244f0b`, `0x24538f`, `0x234a20`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Priority groups run last to first; each group visits capsules, spheres and boxes in reverse order, then planes in forward order. SDF remains unsupported. |
 | Collider vertex selections | `0x10c34b`, `0x2302a0`, `0x2309c0` | Build node membership from positive byte weights within each map's node span. Empty selections affect no nodes; out-of-range map indices use layer filtering. |
 | Quad elements | `0x111a40`, `0x111380`, `0x110900`, `0x10fa00` | Dispatch by fixed-node count. Two fixed corners define an axis fit. Free and one-fixed elements use a diagonal frame and one linearized angular correction from the live inertia tensor. Preserve packed gather/scatter, weighted center or fixed anchor, and collapsed-basis fallback. Run after rods/stray limits and before triangles. |
@@ -460,7 +461,30 @@ Yamato's per-node collision-plane math was also checked independently against
 fractional strengths. Maximum difference is `1.35e-6` Source units; this audit
 does not identify the cause of its folded garment shape.
 
-On Windows, 365 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
+The contact fallback is covered by 57 complete compiled capsule passes, including
+moving and rotating colliders, particle radii, short/tapered shapes, both center
+thresholds and absent versus zero-valued friction arrays. Particle history stays
+unchanged. The independent fixture bound is `2e-6` Source units. Another 24
+compiled goal-attraction cases cover both thresholds, clamping, displacement and
+history damping under identity instance coefficients.
+
+Yamato's 04:08 UTC report retains 12/12 pose checks and exactly the preceding
+saved particle positions and frozen-motion measurements. Side forward-run
+inspection still shows the skirt folds. Bebop's 04:10 UTC report also retains
+12/12 checks and unchanged frozen motion. Its sideways-run maximum rod residual
+rises from 3.304171 to 3.389062 Source units; contact and element residuals remain
+unchanged. Back forward-run and side sideways-run views preserve attachments.
+These edge-case corrections do not establish better garment shape or settling.
+Seven's 04:12 UTC repeat retains 12/12 checks, exactly the saved particle state,
+and unchanged rod/contact residuals and frozen motion; front idle was inspected.
+
+A separate startup experiment compared rigid-anchor rest seeding with generated
+animation-target seeding on Yamato. Idle and sideways running converge toward the
+same frozen particle state; forward running retains about three Source units of
+maximum difference after settling. Neither result provides an engine reference
+for initialization, so the production startup policy remains unchanged.
+
+On Windows, 452 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,

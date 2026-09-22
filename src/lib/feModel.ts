@@ -453,6 +453,7 @@ export interface ClothModel {
   goalDampedSpringIntegrators: number[];
   addWorldCollisionRadius: number;
   defaultGravityScale: number;
+  hasCollisionFriction: boolean;
   extraIterations: number;
   extraGoalIterations: number;
 
@@ -1206,6 +1207,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     staticNodeCount: num(fe.m_nStaticNodes),
     addWorldCollisionRadius: num(fe.m_flAddWorldCollisionRadius),
     defaultGravityScale: num(fe.m_flDefaultGravityScale, 1),
+    hasCollisionFriction: friction.length > 0,
     extraIterations: num(fe.m_nExtraIterations),
     extraGoalIterations: num(fe.m_nExtraGoalIterations),
 

@@ -56,6 +56,7 @@ export function capsuleDepth(
   c: Capsule,
   pr: number,
   outN: THREE.Vector3,
+  frictionEnabled = false,
 ): number {
   _capsuleAxis.subVectors(c.b, c.a);
   const length = _capsuleAxis.length();
@@ -74,10 +75,23 @@ export function capsuleDepth(
   _cp.copy(c.a).lerp(c.b, t);
   const r = c.ra + (c.rb - c.ra) * t + pr;
   outN.copy(p).sub(_cp);
-  const d = outN.length();
-  if (d >= r) return 0;
-  if (d < 1e-6) outN.set(0, 0, 1);
-  else outN.multiplyScalar(1 / d);
+  const distanceSq = outN.lengthSq();
+  if (r <= 0 || distanceSq >= r * r) return 0;
+  // Friction uses a full-radius correction from the current particle near the
+  // center. The position-only kernel instead places it on the sphere's +Z pole.
+  if (frictionEnabled && distanceSq < Math.fround(0.01)) {
+    outN.set(0, 0, 1);
+    return r;
+  }
+  if (!frictionEnabled && distanceSq <= 2 ** -23) {
+    outN.negate();
+    outN.z += r;
+    const correction = outN.length();
+    outN.multiplyScalar(1 / correction);
+    return correction;
+  }
+  const d = Math.sqrt(distanceSq);
+  outN.multiplyScalar(1 / d);
   return r - d;
 }
 
@@ -1282,7 +1296,7 @@ function solveCollisions(rt: ClothRuntime): void {
       if (node.kinematic) continue;
       if (!canCollide(node, collider.shape)) continue;
       const radius = Math.max(0, node.collideRadius);
-      const depth = collider.kind === 'capsule' ? capsuleDepth(node.pos, cap, radius, normal) : boxDepth(node.pos, box, radius, normal);
+      const depth = collider.kind === 'capsule' ? capsuleDepth(node.pos, cap, radius, normal, rt.model.hasCollisionFriction) : boxDepth(node.pos, box, radius, normal);
       projectClothContact(node.pos, node.prev, normal, depth, node.friction, colliderMotion);
     }
   }
@@ -1641,7 +1655,7 @@ export function createClothSimHarness(
         if (node.kinematic) continue;
         rt.capsules.forEach((rigid, index) => {
           if (!canCollide(node, rigid)) return;
-          const depth = capsuleDepth(node.pos, rigidToCapsule(rt, rigid, cap), Math.max(0, node.collideRadius), normal);
+          const depth = capsuleDepth(node.pos, rigidToCapsule(rt, rigid, cap), Math.max(0, node.collideRadius), normal, rt.model.hasCollisionFriction);
           if (depth > 1e-6) contacts.push({ node: node.index, shape: `capsule:${index}`, depth });
         });
         rt.boxes.forEach((rigid, index) => {

@@ -2,11 +2,13 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import strayReference from './__fixtures__/cloth/source2_stray_reference.json';
 import fitReference from './__fixtures__/cloth/source2_fit_reference.json';
+import frictionReference from './__fixtures__/cloth/source2_contact_friction_reference.json';
 import { parseFeModel } from './feModel';
 import type { ClothModel } from './feModel';
 import {
   animationAttraction,
   buildFitMatrixReconstructions,
+  capsuleDepth,
   closestPointOnSegment,
   clothAnchorMap,
   effectiveNodeGravity,
@@ -87,6 +89,26 @@ describe('pushOutsideCapsule', () => {
 });
 
 describe('projectClothContact', () => {
+  it.each(frictionReference.cases)('matches the complete runtime contact pass: $name', ({ position, previous, capsule, friction, current, old, radius, frictionEnabled, expected }) => {
+    const transform = (values: number[]) => new THREE.Matrix4().compose(
+      new THREE.Vector3().fromArray(values), new THREE.Quaternion().fromArray(values, 4), V(1, 1, 1),
+    );
+    const now = transform(current);
+    const motion = old ? now.clone().multiply(transform(old).invert()) : new THREE.Matrix4();
+    const shape = {
+      a: new THREE.Vector3().fromArray(capsule[0]).applyMatrix4(now),
+      b: new THREE.Vector3().fromArray(capsule[1]).applyMatrix4(now),
+      ra: capsule[0][3], rb: capsule[1][3],
+    };
+    const point = new THREE.Vector3().fromArray(position);
+    const history = new THREE.Vector3().fromArray(previous);
+    const normal = new THREE.Vector3();
+    const depth = capsuleDepth(point, shape, radius, normal, frictionEnabled);
+    projectClothContact(point, history, normal, depth, friction, motion);
+    expect(point.distanceTo(new THREE.Vector3().fromArray(expected))).toBeLessThan(2e-6);
+    expect(history.toArray()).toEqual(previous);
+  });
+
   it.each([{ friction: 0, x: 0 }, { friction: 0.25, x: 0.5 }, { friction: 10, x: 10 }])('limits sliding by friction times depth ($friction)', ({ friction, x }) => {
     const position = V(0, 0, 0);
     const previous = V(10, 2, 0);

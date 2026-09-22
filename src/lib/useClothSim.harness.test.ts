@@ -62,6 +62,7 @@ function syntheticClothModel(): ClothModel {
     staticNodeCount: 1,
     addWorldCollisionRadius: 0,
     defaultGravityScale: 1,
+    hasCollisionFriction: false,
     extraIterations: 8,
     extraGoalIterations: 0,
     twists: [],
@@ -119,6 +120,30 @@ describe('compiled collision selections and priority groups', () => {
     });
     if (name.includes('empty scope')) expect(snapshot.contacts).toEqual([]);
     harness.dispose();
+  });
+
+  it.each([
+    { friction: undefined, expected: [1, 0, 2] },
+    { friction: [0], expected: [0.05, 0, 3] },
+  ])('selects the compiled centerline response from friction data $friction', ({ friction, expected }) => {
+    const positions = [[0, 0, 0], [10, 0, 0], [0.05, 0, 2]];
+    const model = parseFeModel({ m_CtrlName: ['body', 'anchor', 'cloth'], m_nStaticNodes: 2,
+      m_nRotLockStaticNodes: 2, m_nDynamicNodeFlags: 0x2080, m_NodeInvMasses: [0, 0, 1],
+      m_InitPose: positions.map((position) => [...position, 1, ...Q]), m_DynNodeFriction: friction,
+      m_TaperedCapsuleRigids: [{ nNode: 0, vSphere: [[0, 0, 0, 1], [0, 0, 4, 1]] }],
+    })!;
+    const root = new THREE.Group();
+    model.nodes.forEach((node) => {
+      const bone = new THREE.Bone();
+      bone.name = node.name; bone.position.fromArray(node.initPos); root.add(bone);
+    });
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    const snapshot = harness.snapshot();
+    expect(snapshot.nodes[2].position).toEqual(expected);
+    expect(snapshot.nodes.slice(0, 2).map((node) => node.position)).toEqual(positions.slice(0, 2));
+    harness.dispose();
+    expect(root.children.map((bone) => bone.position.toArray())).toEqual(positions);
   });
 
   it('uses selection membership independently of collision layers', () => {
@@ -254,6 +279,7 @@ describe('local body contacts', () => {
 
   it('transfers tangential body motion through contact friction', () => {
     const model = syntheticClothModel();
+    model.hasCollisionFriction = true;
     model.nodes = [node('body', [0, 0, 0], true), node('anchor', [1, 0, 0], true),
       { ...node('cloth', [0, 1, 0]), gravity: 100, animForce: 0, animVertex: 0, friction: 0.2 }];
     model.dynamicNodeFlags = 0x2080;

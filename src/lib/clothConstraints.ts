@@ -13,12 +13,12 @@ export function applyGoalDampedAttraction(
   vertex: number,
 ): void {
   const attraction = unit(force);
-  if (attraction > 0.9999) {
+  if (attraction > Math.fround(0.9999)) {
     position.copy(goal);
     previous.copy(goal);
     return;
   }
-  position.lerp(goal, attraction);
+  if (attraction >= 2 ** -23) position.lerp(goal, attraction);
   previous.lerp(position, unit(vertex));
 }
 
