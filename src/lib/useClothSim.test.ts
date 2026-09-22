@@ -3,11 +3,13 @@ import * as THREE from 'three';
 import strayReference from './__fixtures__/cloth/source2_stray_reference.json';
 import fitReference from './__fixtures__/cloth/source2_fit_reference.json';
 import frictionReference from './__fixtures__/cloth/source2_contact_friction_reference.json';
+import boxSphereReference from './__fixtures__/cloth/source2_box_sphere_reference.json';
 import { parseFeModel } from './feModel';
 import type { ClothModel } from './feModel';
 import {
   animationAttraction,
   buildFitMatrixReconstructions,
+  boxDepth,
   capsuleDepth,
   closestPointOnSegment,
   clothAnchorMap,
@@ -89,6 +91,32 @@ describe('pushOutsideCapsule', () => {
 });
 
 describe('projectClothContact', () => {
+  it.each(boxSphereReference.cases)('matches the complete sphere/box contact pass: $name', (reference) => {
+    const transform = (values: number[]) => new THREE.Matrix4().compose(
+      new THREE.Vector3().fromArray(values), new THREE.Quaternion().fromArray(values, 4), V(1, 1, 1),
+    );
+    const now = transform(reference.current);
+    const motion = reference.old ? now.clone().multiply(transform(reference.old).invert()) : new THREE.Matrix4();
+    const point = new THREE.Vector3().fromArray(reference.position);
+    const history = new THREE.Vector3().fromArray(reference.previous);
+    const normal = new THREE.Vector3();
+    let depth: number;
+    if (reference.kind === 'sphere') {
+      const center = new THREE.Vector3().fromArray(reference.sphere).applyMatrix4(now);
+      depth = capsuleDepth(point, { a: center, b: center, ra: reference.sphere[3], rb: reference.sphere[3] }, reference.radius, normal, reference.frictionEnabled);
+    } else {
+      const frame = now.clone().multiply(transform(reference.frame));
+      depth = boxDepth(point, {
+        center: new THREE.Vector3().setFromMatrixPosition(frame),
+        rotation: new THREE.Quaternion().setFromRotationMatrix(frame),
+        halfSize: new THREE.Vector3().fromArray(reference.size),
+      }, reference.radius, normal, reference.frictionEnabled);
+    }
+    projectClothContact(point, history, normal, depth, reference.frictionEnabled ? reference.friction : 0, motion);
+    expect(point.distanceTo(new THREE.Vector3().fromArray(reference.expected))).toBeLessThan(2e-6);
+    expect(history.toArray()).toEqual(reference.previous);
+  });
+
   it.each(frictionReference.cases)('matches the complete runtime contact pass: $name', ({ position, previous, capsule, friction, current, old, radius, frictionEnabled, expected }) => {
     const transform = (values: number[]) => new THREE.Matrix4().compose(
       new THREE.Vector3().fromArray(values), new THREE.Quaternion().fromArray(values, 4), V(1, 1, 1),

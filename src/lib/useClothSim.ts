@@ -126,45 +126,46 @@ const _boxClosest = new THREE.Vector3();
 const _boxDelta = new THREE.Vector3();
 const _boxInvQ = new THREE.Quaternion();
 const _boxNormalLocal = new THREE.Vector3();
-export function boxDepth(p: THREE.Vector3, box: Box, pr: number, outN: THREE.Vector3): number {
+export function boxDepth(p: THREE.Vector3, box: Box, pr: number, outN: THREE.Vector3, frictionEnabled = false): number {
   const halfX = Math.max(0, box.halfSize.x);
   const halfY = Math.max(0, box.halfSize.y);
   const halfZ = Math.max(0, box.halfSize.z);
   _boxInvQ.copy(box.rotation).invert();
   _boxLocal.copy(p).sub(box.center).applyQuaternion(_boxInvQ);
-  _boxClosest.set(
-    THREE.MathUtils.clamp(_boxLocal.x, -halfX, halfX),
-    THREE.MathUtils.clamp(_boxLocal.y, -halfY, halfY),
-    THREE.MathUtils.clamp(_boxLocal.z, -halfZ, halfZ),
-  );
-
-  _boxDelta.copy(_boxLocal).sub(_boxClosest);
-  const outsideDistance = _boxDelta.length();
-  if (outsideDistance > 1e-6) {
-    if (outsideDistance >= pr) return 0;
-    outN.copy(_boxDelta).multiplyScalar(1 / outsideDistance).applyQuaternion(box.rotation);
-    return pr - outsideDistance;
+  if (frictionEnabled) {
+    _boxClosest.set(
+      THREE.MathUtils.clamp(_boxLocal.x, -halfX, halfX),
+      THREE.MathUtils.clamp(_boxLocal.y, -halfY, halfY),
+      THREE.MathUtils.clamp(_boxLocal.z, -halfZ, halfZ),
+    );
+    _boxDelta.copy(_boxLocal).sub(_boxClosest);
+    const outsideDistanceSq = _boxDelta.lengthSq();
+    if (outsideDistanceSq > Math.fround(1e-5)) {
+      const outsideDistance = Math.sqrt(outsideDistanceSq);
+      if (outsideDistance >= pr) return 0;
+      outN.copy(_boxDelta).multiplyScalar(1 / outsideDistance).applyQuaternion(box.rotation);
+      return pr - outsideDistance;
+    }
   }
 
-  const dx = halfX - Math.abs(_boxLocal.x);
-  const dy = halfY - Math.abs(_boxLocal.y);
-  const dz = halfZ - Math.abs(_boxLocal.z);
-  let axis: 'x' | 'y' | 'z' = 'x';
-  let depth = dx;
-  if (dy < depth) {
-    axis = 'y';
-    depth = dy;
+  // The position-only kernel expands each face by the particle radius and
+  // requires a unique nearest face. Friction uses rounded corners and breaks
+  // equal face distances in Z, Y, X order.
+  const expansion = frictionEnabled ? 0 : pr;
+  const dx = halfX + expansion - Math.abs(_boxLocal.x);
+  const dy = halfY + expansion - Math.abs(_boxLocal.y);
+  const dz = halfZ + expansion - Math.abs(_boxLocal.z);
+  const axis = dx < dy && dx < dz ? 'x' : dy < dz ? 'y' : 'z';
+  if (!frictionEnabled) {
+    if (dx < 0 || dy < 0 || dz < 0) return 0;
+    if (!(dx < dy && dx < dz) && !(dy < dx && dy < dz) && !(dz < dx && dz < dy)) return 0;
   }
-  if (dz < depth) {
-    axis = 'z';
-    depth = dz;
-  }
-
-  if (depth + pr <= 0) return 0;
+  const depth = (axis === 'x' ? dx : axis === 'y' ? dy : dz) + (frictionEnabled ? pr : 0);
+  if (depth <= 0) return 0;
   _boxNormalLocal.set(0, 0, 0);
   _boxNormalLocal[axis] = _boxLocal[axis] >= 0 ? 1 : -1;
   outN.copy(_boxNormalLocal).applyQuaternion(box.rotation);
-  return depth + pr;
+  return depth;
 }
 
 const _boxPush = new THREE.Vector3();
@@ -1296,7 +1297,7 @@ function solveCollisions(rt: ClothRuntime): void {
       if (node.kinematic) continue;
       if (!canCollide(node, collider.shape)) continue;
       const radius = Math.max(0, node.collideRadius);
-      const depth = collider.kind === 'capsule' ? capsuleDepth(node.pos, cap, radius, normal, rt.model.hasCollisionFriction) : boxDepth(node.pos, box, radius, normal);
+      const depth = collider.kind === 'capsule' ? capsuleDepth(node.pos, cap, radius, normal, rt.model.hasCollisionFriction) : boxDepth(node.pos, box, radius, normal, rt.model.hasCollisionFriction);
       projectClothContact(node.pos, node.prev, normal, depth, node.friction, colliderMotion);
     }
   }
@@ -1660,7 +1661,7 @@ export function createClothSimHarness(
         });
         rt.boxes.forEach((rigid, index) => {
           if (!canCollide(node, rigid)) return;
-          const depth = boxDepth(node.pos, rigidToBox(rt, rigid, box), Math.max(0, node.collideRadius), normal);
+          const depth = boxDepth(node.pos, rigidToBox(rt, rigid, box), Math.max(0, node.collideRadius), normal, rt.model.hasCollisionFriction);
           if (depth > 1e-6) contacts.push({ node: node.index, shape: `box:${index}`, depth });
         });
       }

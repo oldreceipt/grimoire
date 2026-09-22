@@ -160,6 +160,30 @@ describe('compiled collision selections and priority groups', () => {
     expect(snapshot.contacts).toEqual([]);
     harness.dispose();
   });
+
+  it.each([
+    { friction: undefined, expected: [1, 2, 3] },
+    { friction: [0], expected: [1, 2, 4] },
+  ])('selects the compiled box response from friction data $friction', ({ friction, expected }) => {
+    const positions = [[0, 0, 0], [10, 0, 0], [1, 2, 3]];
+    const model = parseFeModel({ m_CtrlName: ['body', 'anchor', 'cloth'], m_nStaticNodes: 2,
+      m_nRotLockStaticNodes: 2, m_nDynamicNodeFlags: 0x2080, m_NodeInvMasses: [0, 0, 1],
+      m_InitPose: positions.map((position) => [...position, 1, ...Q]), m_DynNodeFriction: friction,
+      m_BoxRigids: [{ nNode: 0, nCollisionMask: 0xffff, tmFrame2: [0, 0, 0, 1, ...Q], vSize: [2, 3, 4] }],
+    })!;
+    const root = new THREE.Group();
+    model.nodes.forEach((node) => {
+      const bone = new THREE.Bone();
+      bone.name = node.name; bone.position.fromArray(node.initPos); root.add(bone);
+    });
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    const snapshot = harness.snapshot();
+    expect(snapshot.nodes[2].position).toEqual(expected);
+    expect(snapshot.nodes.slice(0, 2).map((node) => node.position)).toEqual(positions.slice(0, 2));
+    harness.dispose();
+    expect(root.children.map((bone) => bone.position.toArray())).toEqual(positions);
+  });
 });
 
 describe('compiled quad integration', () => {
