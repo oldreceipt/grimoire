@@ -2,7 +2,8 @@
 
 The preview now uses compiled raw/goal-damped attraction, Kelager bends, directed
 twist/swing links, and rope bone reconstruction. The first rendered validation
-case is Seven's current base model with three animations. Physics remains behind
+cases are Seven and Vindicta's current base models with three animations each.
+Physics remains behind
 the existing developer toggle and is disabled by default. This is a tested
 preview implementation, not a claim of full Source 2 simulation parity.
 
@@ -14,12 +15,34 @@ The script uses the bundled vpkmerge, exports fresh assets from the base VPK, an
 serves `http://127.0.0.1:5176/cloth-preview.html`. `VPKMERGE_PATH` can select another
 exporter. Linux/macOS users can provide `--game` explicitly.
 
+For both cases and the S2V reference, build S2V's CLI in Release, then run:
+
+```powershell
+pnpm dev:cloth --case "seven,vindicta" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
+```
+
+`S2V_CLI` also accepts the CLI path. The script resolves each current model through
+the game's hero data, then exports identical clips through both tools. The case
+selector lists the exported subset; `yamato` and `necro` are also available for
+further investigation. Without S2V, the reference pane uses the vpkmerge animation.
+
 Choose a clip, use Play or Step 1 second, and compare Physics on/off after Reset.
 Freeze animation keeps physics advancing against a fixed animated pose. Settle
 10 seconds performs that comparison immediately. Run checks compares the real
 skinned skeleton at 30, 60, 144 and 360 render FPS; expand Check results or use
-Save report for its measurements and export identity. Camera controls and Show
-bones help inspect attachments. This page uses the production simulation harness
+Save report to write its measurements, export identity and detached solver
+snapshot under `.codex-run/source2-physics/reports`. It shows the saved path.
+Step 1 tick advances exactly 1/120 second. Replay to time resets and simulates
+from the start, so scrubbing does not reuse stale cloth history.
+
+The reference uses the same camera, clip clock and lighting. Neutral material
+removes material differences. Align reference motion removes the shared rigid
+motion at an animation-owned body control: S2V bakes locomotion into its root
+tracks, whereas vpkmerge exports an in-place animation. The report records this
+correction and its anchor. It does not deform or rescale the reference rig.
+Particle, rod, target, body-shape and bone overlays expose constraint errors;
+body penetration and rod limit residuals are reported in Source units.
+This page uses the production simulation harness
 with a simple Three.js renderer, not Grimoire's complete material pipeline.
 
 Generated GLBs, clips and metadata stay in ignored `.codex-run/source2-physics`.
@@ -33,6 +56,9 @@ Inspected on 2026-09-22:
 
 - Grimoire baseline: `Slush97/grimoire` main
   `c70c89b394394ef24c7763c485e1fa291c0979fe`. Fork main was synchronized first.
+- Current S2V master `67da658c2` was pulled and its GUI and CLI built in Release
+  with .NET 10.0.303, with zero warnings/errors. The reference pane loads its
+  exported animation, not a recording of S2V's renderer or a live cloth solver.
 - [S2V PR #1317](https://github.com/ValveResourceFormat/ValveResourceFormat/pull/1317),
   head `c22f897342e53f999bd7c466d648f5bbbe85bafa`, is a draft decompiler, not a
   finished runtime simulator.
@@ -42,6 +68,15 @@ Inspected on 2026-09-22:
   not be used as a per-frame integration equation.
 - Its [jiggle exporter](https://github.com/w1tcherrr/ValveResourceFormat/blob/c22f897342e53f999bd7c466d648f5bbbe85bafa/ValveResourceFormat/IO/Extract/ModelExtract.JiggleBones.cs)
   preserves the separate jiggle spring/limit model. That runtime remains pending.
+- Its FeModel reader identifies node collision radii and the additional world
+  radius as world-collision values. Local body contacts now use the authored
+  body surface directly, without that unrelated padding.
+- Its [box reconstruction](https://github.com/w1tcherrr/ValveResourceFormat/blob/c22f897342e53f999bd7c466d648f5bbbe85bafa/ValveResourceFormat/IO/Extract/ModelExtract.Cloth.Physics.cs)
+  identifies compiled `vSize` as half-extents. The preview previously halved
+  these again. `ClothBox.halfSize` now preserves the compiled dimensions.
+- Current master's [animation exporter](https://github.com/ValveResourceFormat/ValveResourceFormat/blob/67da658c2/ValveResourceFormat/IO/Gltf/GltfModelExporter.Anim.cs)
+  documents both cloth-root following and baked locomotion. Vindicta's run clips
+  exposed the latter difference directly in the comparison.
 
 Grimoire calls `vpkmerge model femodel`, which already serializes the raw KV3
 subtree. This path does not consume morphic's typed Rust FeModel, so the missing
@@ -111,8 +146,8 @@ Five seconds per clip at each of the four frame rates gives 600 simulation ticks
   positions differ by less than `7.1e-16` meters. This caught and fixed a real
   attachment drift that solver-space anchor metrics alone missed.
 - After freezing `primary_run_e` for ten seconds, damped cloth moves at most
-  `0.00000741` meters during the next second. Its largest orientation change is
-  `0.01856` radians. The undamped leg chain still moves by up to `0.02923` meters;
+  `0.00000561` meters during the next second. Its largest orientation change is
+  `0.0000274` radians. The undamped leg chain still moves by up to `0.02573` meters;
   the full model is not claimed to have settled.
 - Front, back and side inspection confirms attached cables/garment bones and no
   exploding mesh in these poses. The physics-off comparison uses the same clip
@@ -124,9 +159,27 @@ bounded motion for those nodes and settling for the damped nodes separately.
 `maxFrameMotion` measures successive solved positions, not the damping-modified
 Verlet history. A low history-buffer difference is not proof of settling.
 
+The contact corrections and S2V comparison were checked again at 00:06 UTC on
+2026-09-22. Seven's 12 cases have zero residual penetration against the modeled
+body shapes at the sampled endpoints, with a largest rod residual of 0.964
+Source units. These endpoints do not prove continuous collision freedom.
+
+Vindicta uses `models/heroes_staging/hornet_v3/hornet.vmdl_c`, 20 matched controls,
+8 static/12 dynamic nodes, 31 rods, 10 bends and 2 rope chains. All dynamic nodes
+are goal-damped. Its same three clips pass all 12 frame-rate/anchor cases, with
+zero endpoint body penetration and a maximum rod residual of 1.107 Source units.
+After freezing idle for ten seconds, the next second changes positions by less
+than `9e-14` meters. Front, back and side inspection shows the attached braid;
+the simulated tip differs from the animation-only reference as expected.
+
+With the shared rigid motion aligned, maximum control-position differences
+between the two exporters are `6.73e-7` meters for Seven and `2.81e-7` meters for
+Vindicta at the tested clip times. The export check allows `1e-5` meters for
+float32 coordinate/interpolation error. No in-game visual match is claimed.
+
 ## Verification and remaining work
 
-On Windows, 141 focused physics tests, ESLint, TypeScript, i18n key/manifest
+On Windows, 144 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -140,11 +193,13 @@ focused regressions and build; it does not claim the full suite is green.
 Next validation units:
 
 1. Capture matching Deadlock animation poses and compare garment fit, cable
-   curvature, contact and settling. Audit the inherited body-contact radius
-   policy, collision scheduling and friction against that reference. Positional
+   curvature, contact and settling. Continue auditing tapered body shapes,
+   collision scheduling and friction against that reference. Positional
    contact projection is still an approximation and can alter inferred velocity.
-2. Validate a raw-integrator asset and nonzero point damping in a rendered rig.
-   The raw path currently has isolated equation tests, not Seven coverage.
+2. Validate a larger garment rig and its node bases. A scan of the current VPK's
+   40 selectable hero entries found 35 with FeModel data; all examined dynamic
+   nodes selected goal-damped integration and had zero authored point damping.
+   Raw integration and nonzero damping still need a different reference asset.
 3. Add animated rod lengths and a separate jiggle-bone runtime, then validate
    garments using fit matrices/node bases and the effective mod stack.
 4. Gate supported model families and define an unsupported-data fallback before

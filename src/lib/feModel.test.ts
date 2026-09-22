@@ -165,7 +165,7 @@ describe('parseFeModel', () => {
     expect(m.boxes).toHaveLength(1);
     expect(m.boxes[0]).toMatchObject({ node: 0, mask: 15 });
     expect(m.boxes[0].pos).toEqual([1, 2, 3]);
-    expect(m.boxes[0].size).toEqual([4, 5, 6]);
+    expect(m.boxes[0].halfSize).toEqual([4, 5, 6]);
 
     expect(m.strayRadii).toHaveLength(1);
     expect(m.strayRadii[0].node).toEqual([1, 2]);

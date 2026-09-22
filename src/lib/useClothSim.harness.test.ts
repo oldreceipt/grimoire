@@ -88,6 +88,32 @@ function syntheticRoot(): { root: THREE.Group; anchor: THREE.Bone } {
   return { root, anchor };
 }
 
+describe('local body contacts', () => {
+  it.each(['sphere', 'box'])('does not expand a %s by world-collision radii', (shape) => {
+    const positions: number[] = [];
+    for (const margin of [0, 20]) {
+      const model = syntheticClothModel();
+      model.nodes = [node('body', [0, 0, 0], true),
+        { ...node('cloth', [0.5, 0, 0]), gravity: 0, animForce: 0, animVertex: 0, collideRadius: margin },
+        node('anchor', [0, 1, 0], true)];
+      model.rods = [];
+      model.addWorldCollisionRadius = margin;
+      if (shape === 'sphere') model.spheres = [{ node: 0, sphere: [0, 0, 0, 1], mask: 0xffff }];
+      else model.boxes = [{ node: 0, pos: [0, 0, 0], rot: Q, halfSize: [1, 1, 1], mask: 0xffff }];
+      const root = new THREE.Group();
+      model.nodes.forEach((item) => {
+        const bone = new THREE.Bone();
+        bone.name = item.name; bone.position.fromArray(item.initPos); root.add(bone);
+      });
+      const harness = createClothSimHarness(root, model);
+      harness.step(CLOTH_TIMESTEP);
+      positions.push(root.getObjectByName('cloth')!.getWorldPosition(new THREE.Vector3()).x);
+      harness.dispose();
+    }
+    expect(positions).toEqual([1, 1]);
+  });
+});
+
 function syntheticFitClothModel(): ClothModel {
   return {
     ...syntheticClothModel(),
@@ -416,6 +442,28 @@ describe('createClothSimHarness', () => {
     });
     expect(metrics.maxFrameMotion).toBeLessThan(0.02);
     expect(after.distanceTo(before)).toBeCloseTo(0, 8);
+  });
+
+  it('exposes detached diagnostics with the transform used for bone writeback', () => {
+    const { root } = syntheticRoot();
+    root.position.set(3, 4, 5);
+    root.scale.setScalar(0.0254);
+    const harness = createClothSimHarness(root, syntheticClothModel());
+    harness.step(CLOTH_TIMESTEP);
+    const before = harness.metrics();
+    const snapshot = harness.snapshot();
+    const transform = new THREE.Matrix4().fromArray(snapshot.modelToWorld);
+    for (const particle of snapshot.nodes) {
+      const bone = root.getObjectByName(particle.name)!;
+      const position = new THREE.Vector3().fromArray(particle.position).applyMatrix4(transform);
+      expect(position.distanceTo(bone.getWorldPosition(new THREE.Vector3()))).toBeLessThan(1e-10);
+    }
+    const original = snapshot.nodes[1].position[0];
+    snapshot.nodes[1].position[0] += 100;
+    snapshot.rods[0].min = 100;
+    expect(harness.snapshot().nodes[1].position[0]).toBe(original);
+    expect(harness.snapshot().rods[0].min).toBe(1.05);
+    expect(harness.metrics()).toEqual(before);
   });
 
   it('stays finite and bounded over a small 60fps run', () => {

@@ -535,7 +535,7 @@ interface BoxRuntime {
   mask: number;
   pos: Vec3;
   rot: Vec4;
-  size: Vec3;
+  halfSize: Vec3;
   dbgName: string;
 }
 
@@ -639,7 +639,18 @@ export interface ClothHarnessMetrics {
 export interface ClothSimHarness {
   step(delta: number, animate?: (delta: number) => void): ClothHarnessMetrics;
   metrics(): ClothHarnessMetrics;
+  snapshot(): ClothDebugSnapshot;
   dispose(): void;
+}
+
+/** Detached solver data in Source units, with its current transform to world space. */
+export interface ClothDebugSnapshot {
+  modelToWorld: number[];
+  nodes: { name: string; position: Vec3; target: Vec3; kinematic: boolean; collisionMask: number }[];
+  capsules: { a: Vec3; b: Vec3; ra: number; rb: number; mask: number; node: number }[];
+  boxes: { center: Vec3; rotation: Vec4; halfSize: Vec3; mask: number; node: number }[];
+  rods: { a: number; b: number; min: number; max: number; error: number }[];
+  contacts: { node: number; shape: string; depth: number }[];
 }
 
 export function clothSimulationCoverage(model: ClothModel): ClothSimulationCoverage {
@@ -890,8 +901,8 @@ function rigidToBox(rt: ClothRuntime, rigid: BoxRuntime, out: Box): Box {
   out.center.copy(anchor.pos).add(center);
   out.rotation.copy(anchor.solvedRot).multiply(quat(rigid.rot)).normalize();
   out.halfSize
-    .set(Math.abs(rigid.size[0]), Math.abs(rigid.size[1]), Math.abs(rigid.size[2]))
-    .multiplyScalar(0.5 * clothTuning.collisionScale);
+    .set(Math.abs(rigid.halfSize[0]), Math.abs(rigid.halfSize[1]), Math.abs(rigid.halfSize[2]))
+    .multiplyScalar(clothTuning.collisionScale);
   return out;
 }
 
@@ -921,7 +932,7 @@ function fromBox(b: ClothBox): BoxRuntime {
     mask: b.mask,
     pos: b.pos,
     rot: b.rot,
-    size: b.size,
+    halfSize: b.halfSize,
     dbgName: `node:${b.node}`,
   };
 }
@@ -1269,7 +1280,9 @@ function solveCollisions(rt: ClothRuntime): void {
   const normal = new THREE.Vector3();
   for (const node of rt.nodes) {
     if (isKinematicNode(node)) continue;
-    const particleRadius = node.collideRadius + rt.model.addWorldCollisionRadius;
+    // Per-node radii and the additional world margin belong to world traces.
+    // Local rigid shapes already describe the cloth exclusion surface.
+    const particleRadius = 0;
     // Preview contact approximation. Projection also changes the inferred Verlet
     // velocity; it is not a port of the engine's contact/friction pipeline.
     for (const rigid of rt.capsules) {
@@ -1601,6 +1614,44 @@ export function createClothSimHarness(
     },
     metrics(): ClothHarnessMetrics {
       return collectClothHarnessMetrics(rt);
+    },
+    snapshot(): ClothDebugSnapshot {
+      root.updateWorldMatrix(true, false);
+      const capsules = rt.capsules.map((rigid) => {
+        const cap = rigidToCapsule(rt, rigid, { a: new THREE.Vector3(), b: new THREE.Vector3(), ra: 0, rb: 0 });
+        return { a: v3Array(cap.a), b: v3Array(cap.b), ra: cap.ra, rb: cap.rb, mask: rigid.mask, node: rigid.node };
+      });
+      const boxes = rt.boxes.map((rigid) => {
+        const box = rigidToBox(rt, rigid, { center: new THREE.Vector3(), rotation: new THREE.Quaternion(), halfSize: new THREE.Vector3() });
+        return { center: v3Array(box.center), rotation: box.rotation.toArray(), halfSize: v3Array(box.halfSize), mask: rigid.mask, node: rigid.node };
+      });
+      const contacts: ClothDebugSnapshot['contacts'] = [];
+      const normal = new THREE.Vector3();
+      const cap = { a: new THREE.Vector3(), b: new THREE.Vector3(), ra: 0, rb: 0 };
+      const box = { center: new THREE.Vector3(), rotation: new THREE.Quaternion(), halfSize: new THREE.Vector3() };
+      for (const node of rt.nodes) {
+        if (node.kinematic) continue;
+        rt.capsules.forEach((rigid, index) => {
+          if (!canCollide(node.collisionMask, rigid.mask)) return;
+          const depth = capsuleDepth(node.pos, rigidToCapsule(rt, rigid, cap), 0, normal);
+          if (depth > 1e-6) contacts.push({ node: node.index, shape: `capsule:${index}`, depth });
+        });
+        rt.boxes.forEach((rigid, index) => {
+          if (!canCollide(node.collisionMask, rigid.mask)) return;
+          const depth = boxDepth(node.pos, rigidToBox(rt, rigid, box), 0, normal);
+          if (depth > 1e-6) contacts.push({ node: node.index, shape: `box:${index}`, depth });
+        });
+      }
+      return {
+        modelToWorld: root.matrixWorld.clone().multiply(rt.modelToRoot).toArray(),
+        nodes: rt.nodes.map((node) => ({ name: node.name, position: v3Array(node.pos), target: v3Array(node.target), kinematic: node.kinematic, collisionMask: node.collisionMask })),
+        capsules, boxes, contacts,
+        rods: rt.rods.map((rod) => {
+          const distance = rt.nodes[rod.a].pos.distanceTo(rt.nodes[rod.b].pos);
+          const error = Math.max(0, rod.min - distance, rod.max > 0 ? distance - rod.max : 0);
+          return { a: rod.a, b: rod.b, min: rod.min, max: rod.max, error };
+        }),
+      };
     },
     dispose(): void {
       restoreAnimationPose(rt);

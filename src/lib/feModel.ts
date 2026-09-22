@@ -55,7 +55,7 @@ export interface RawFeModel {
   m_BoxRigids?: Array<{
     nNode: number;
     tmFrame2: number[]; // [x,y,z,1, qx,qy,qz,qw]
-    vSize: number[];
+    vSize: number[]; // half-extents
     nCollisionMask?: number;
   }>;
   m_NodeCollisionRadii?: number[]; // dyn-slot indexed
@@ -157,9 +157,9 @@ export interface ClothNode {
   damping: number;
   animForce: number; // compiled flAnimationForceAttraction, interpreted by integrator mode
   animVertex: number; // compiled flAnimationVertexAttraction
-  initPos: Vec3; // model space, cm, Z-up
+  initPos: Vec3; // model space, Source units, Z-up
   initRot: Vec4; // [x,y,z,w]
-  collideRadius: number;
+  collideRadius: number; // world-collision radius; body rigids have their own surface
   friction: number;
   collisionMask: number; // AND-tested against a rigid's mask; 0xFFFF = collide-all
 }
@@ -195,7 +195,7 @@ export interface ClothSphere {
 export interface ClothBox {
   pos: Vec3; // box center, local to `node`
   rot: Vec4;
-  size: Vec3; // full extents
+  halfSize: Vec3; // compiled vSize is half-extents
   node: number;
   mask: number;
 }
@@ -614,7 +614,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
   const boxes: ClothBox[] = (fe.m_BoxRigids ?? []).map((b) => ({
     pos: vec3(b.tmFrame2),
     rot: [num(b.tmFrame2?.[4]), num(b.tmFrame2?.[5]), num(b.tmFrame2?.[6]), num(b.tmFrame2?.[7], 1)],
-    size: vec3(b.vSize),
+    halfSize: vec3(b.vSize),
     node: num(b.nNode),
     mask: num(b.nCollisionMask),
   }));

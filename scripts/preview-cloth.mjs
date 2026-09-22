@@ -1,4 +1,4 @@
-// Local Seven preview. Game assets stay in the ignored .codex-run directory.
+// Local cloth comparison. Game assets stay in the ignored .codex-run directory.
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,9 +7,20 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'vite';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const output = join(root, '.codex-run/source2-physics/seven');
-const entry = 'models/heroes_staging/gigawatt_prisoner/gigawatt_prisoner.vmdl_c';
+const outputRoot = join(root, '.codex-run/source2-physics');
+const cases = {
+  seven: { label: 'Seven', hero: 'gigawatt' },
+  vindicta: { label: 'Vindicta', hero: 'hornet' },
+  yamato: { label: 'Yamato', hero: 'yamato' },
+  necro: { label: 'Necro', hero: 'necro' },
+};
+const caseArgument = process.argv.indexOf('--case');
+const selected = (caseArgument >= 0 ? process.argv[caseArgument + 1] || '' : 'seven').split(',');
+if (selected.some((name) => !Object.hasOwn(cases, name))) throw new Error(`Choose --case ${Object.keys(cases).join(',')}, or a comma-separated subset.`);
 const gameArgument = process.argv.indexOf('--game');
+const s2vArgument = process.argv.indexOf('--s2v');
+const s2v = s2vArgument >= 0 ? process.argv[s2vArgument + 1] : process.env.S2V_CLI;
+if (s2vArgument >= 0 && !s2v) throw new Error('Pass --s2v <Source2Viewer-CLI.dll or executable>.');
 const settingsPath = process.env.APPDATA && join(process.env.APPDATA, 'grimoire/settings.json');
 const savedGame = settingsPath && existsSync(settingsPath)
   ? JSON.parse(readFileSync(settingsPath, 'utf8')).deadlockPath : null;
@@ -30,21 +41,74 @@ const run = (args) => {
   if (result.error || result.status !== 0) throw result.error || new Error(result.stderr || 'vpkmerge export failed');
   return result.stdout;
 };
-mkdirSync(output, { recursive: true });
-const select = ['--vpk', pak, '--entry', entry];
 const clips = ['primary_stand_idle', 'primary_run_n', 'primary_run_e'];
-console.log('Exporting Seven from the installed base VPK...');
-writeFileSync(join(output, 'cloth.json'), run(['model', 'femodel', ...select]));
-writeFileSync(join(output, 'clips.json'), run(['model', 'clips', ...select, '--json']));
-run(['model', 'export', ...select, ...clips.flatMap((clip) => ['--clip', clip]), '--out', join(output, 'model.glb')]);
-writeFileSync(join(output, 'metadata.json'), JSON.stringify({
-  exportedAt: new Date().toISOString(), entry, clips, exporter: run(['--version']).trim(),
-  vpk: { path: pak, modified: statSync(pak).mtime.toISOString(), directorySha256: sha256(pak) },
-  files: Object.fromEntries(['model.glb', 'cloth.json'].map((name) => [name, sha256(join(output, name))])),
-}, null, 2) + '\n');
+const exporterVersion = run(['--version']).trim();
+const vpk = { path: pak, modified: statSync(pak).mtime.toISOString(), directorySha256: sha256(pak) };
+if (s2v && !existsSync(s2v)) throw new Error(`S2V CLI not found: ${s2v}`);
+for (const name of new Set(selected)) {
+  const output = join(outputRoot, name);
+  mkdirSync(output, { recursive: true });
+  console.log(`Exporting ${cases[name].label} from the installed base VPK...`);
+  const live = JSON.parse(run(['model', 'live-materials', '--vpk', pak, '--hero', cases[name].hero, '--json']));
+  const entry = live[0]?.model_entry;
+  if (!entry) throw new Error(`No live model found for ${cases[name].hero}`);
+  const select = ['--vpk', pak, '--entry', entry];
+  const raw = run(['model', 'femodel', ...select]);
+  if (!JSON.parse(raw)) throw new Error(`${entry} has no FeModel.`);
+  writeFileSync(join(output, 'cloth.json'), raw);
+  writeFileSync(join(output, 'clips.json'), run(['model', 'clips', ...select, '--json']));
+  run(['model', 'export', ...select, ...clips.flatMap((clip) => ['--clip', clip]), '--out', join(output, 'model.glb')]);
+  let reference = null;
+  if (s2v) {
+    console.log(`Exporting ${cases[name].label} through Source 2 Viewer...`);
+    const referenceDirectory = join(output, 's2v');
+    const command = s2v.endsWith('.dll') ? 'dotnet' : s2v;
+    const prefix = s2v.endsWith('.dll') ? [s2v] : [];
+    const result = spawnSync(command, [...prefix, '-i', pak, '-f', entry, '-o', referenceDirectory, '-d',
+      '--gltf_export_format', 'glb', '--gltf_export_animations', '--gltf_animation_list', clips.join(','),
+      '--gltf_export_materials', '--gltf_textures_adapt'],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 300000, windowsHide: true });
+    if (result.error || result.status !== 0) throw result.error || new Error(result.stderr || result.stdout || 'S2V export failed');
+    const referenceEntry = entry.replace(/\.vmdl_c$/, '.glb');
+    reference = {
+      label: 'S2V exported animation', url: `/.codex-run/source2-physics/${name}/s2v/${referenceEntry}`,
+      cliSha256: sha256(s2v), modelSha256: sha256(join(referenceDirectory, referenceEntry)),
+    };
+  }
+  writeFileSync(join(output, 'metadata.json'), JSON.stringify({
+    exportedAt: new Date().toISOString(), name, label: cases[name].label, entry, clips, exporter: exporterVersion, vpk,
+    files: Object.fromEntries(['model.glb', 'cloth.json'].map((file) => [file, sha256(join(output, file))])), reference,
+  }, null, 2) + '\n');
+}
+writeFileSync(join(outputRoot, 'cases.json'), JSON.stringify([...new Set(selected)].map((name) => ({ name, label: cases[name].label })), null, 2));
+async function saveReport(request, response) {
+  if (request.method !== 'POST' || request.headers['content-type'] !== 'application/json'
+    || (request.headers.origin && request.headers.origin !== 'http://127.0.0.1:5176')) {
+    response.writeHead(400).end('Expected a local JSON report.');
+    return;
+  }
+  try {
+    let body = '';
+    for await (const chunk of request) {
+      body += chunk.toString();
+      if (body.length > 2 * 1024 * 1024) throw new Error('Report exceeds 2 MB.');
+    }
+    const report = JSON.parse(body);
+    const directory = join(outputRoot, 'reports');
+    mkdirSync(directory, { recursive: true });
+    const file = join(directory, `${new Date().toISOString().replaceAll(/[:.]/g, '-')}.json`);
+    writeFileSync(file, JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });
+    response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ file }));
+  } catch (error) {
+    response.writeHead(400).end(error instanceof Error ? error.message : 'Invalid report.');
+  }
+}
 const server = await createServer({
   configFile: false, root, publicDir: false,
+  cacheDir: join(outputRoot, 'vite-testbed'),
+  optimizeDeps: { entries: ['cloth-preview.html'] },
+  plugins: [{ name: 'cloth-local-reports', configureServer(server) { server.middlewares.use('/__cloth/report', saveReport); } }],
   server: { host: '127.0.0.1', port: 5176, strictPort: true, watch: { ignored: ['**/.codex-run/**', '**/.flatpak-builder/**'] } },
 });
 await server.listen();
-console.log('Seven cloth preview: http://127.0.0.1:5176/cloth-preview.html');
+console.log('Cloth comparison: http://127.0.0.1:5176/cloth-preview.html');
