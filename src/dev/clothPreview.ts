@@ -76,10 +76,15 @@ async function main() {
   const referenceScene = makeScene(referenceFrame);
   const referenceClips = reference?.animations ?? gltf.animations;
   comparison.options[1].textContent = reference ? 'S2V exported animation' : 'Animation without physics';
-  referenceLabel.textContent = comparison.options[1].textContent;
-  element('reference-note', HTMLParagraphElement).textContent = reference
-    ? 'Right: the same clip exported by S2V, in this renderer. It provides an animation baseline, not a live physics simulation.'
-    : 'Right: the same vpkmerge animation without physics. Start with --s2v <CLI path> to compare S2V exports.';
+  const updateReferenceCaption = () => {
+    referenceLabel.textContent = comparison.value === 'targets' ? 'Generated animation targets' : comparison.options[1].textContent;
+    element('reference-note', HTMLParagraphElement).textContent = comparison.value === 'targets'
+      ? `Right: compiled FeModel targets reconstructed from ${reference ? 'S2V' : 'vpkmerge'} animation, with no forces or constraint relaxation. This isolates the shape that drives the solver.`
+      : reference
+        ? 'Right: the same clip exported by S2V, in this renderer. It provides an animation baseline, not a live physics simulation.'
+        : 'Right: the same vpkmerge animation without physics. Start with --s2v <CLI path> to compare S2V exports.';
+  };
+  updateReferenceCaption();
   const overlay = new ClothOverlay();
   scene.add(overlay.group);
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -155,6 +160,7 @@ async function main() {
   };
   alignMotion.addEventListener('change', syncReferenceMotion);
   let harness: ClothSimHarness | null = null;
+  let referenceHarness: ClothSimHarness | null = null;
   let elapsed = 0;
   let playing = false;
   let checking = false;
@@ -164,6 +170,7 @@ async function main() {
   const missingReferenceInputs = inputIndices.filter((index) => !referenceRoot.getObjectByName(model.nodes[index].name)).map((index) => model.nodes[index].name);
   const reset = () => {
     harness?.dispose();
+    referenceHarness?.dispose();
     mixer.stopAllAction();
     referenceMixer.stopAllAction();
     for (const [object, pose] of bind) {
@@ -174,6 +181,7 @@ async function main() {
     root.updateWorldMatrix(true, true);
     referenceRoot.updateWorldMatrix(true, true);
     harness = physics.checked ? createClothSimHarness(root, model) : null;
+    referenceHarness = comparison.value === 'targets' ? createClothSimHarness(referenceRoot, model, { mode: 'targets' }) : null;
     mixer.time = 0;
     referenceMixer.time = 0;
     const clip = gltf.animations.find((item) => item.name === clipSelect.value);
@@ -182,13 +190,20 @@ async function main() {
     if (referenceClip) referenceMixer.clipAction(referenceClip).reset().play();
     mixer.update(0);
     referenceMixer.update(0);
+    referenceHarness?.step(CLOTH_TIMESTEP);
     syncReferenceMotion();
     elapsed = 0;
   };
+  comparison.addEventListener('change', () => {
+    updateReferenceCaption();
+    if ((comparison.value === 'targets') !== Boolean(referenceHarness)) reset();
+  });
   const advance = (dt: number) => {
     const animate = (delta: number) => {
       elapsed += delta;
-      if (!frozen.checked) { mixer.update(delta); referenceMixer.update(delta); }
+      if (!frozen.checked) mixer.update(delta);
+      if (referenceHarness) referenceHarness.step(delta, (tick) => { if (!frozen.checked) referenceMixer.update(tick); });
+      else if (!frozen.checked) referenceMixer.update(delta);
     };
     if (harness) harness.step(dt, animate);
     else animate(dt);
@@ -199,6 +214,7 @@ async function main() {
   const report = () => ({ metadata, clip: clipSelect.value, physics: physics.checked, frozen: frozen.checked,
     elapsed, animationTime: mixer.time, matched, controls: model.nodes.length, skinnedMeshes,
     generatedControlsWithoutBones: model.nodes.length - matched - missingInputs.length, missingInputs, missingReferenceInputs,
+    referencePose: comparison.value === 'targets' ? 'generated-targets' : 'exported-animation',
     referenceAlignment: { enabled: alignMotion.checked, anchor: motionAnchor?.name ?? null, correction: motionCorrection.toArray() },
     metrics: harness?.metrics() ?? null, snapshot: harness?.snapshot() ?? null, checks: checkReport });
   clipSelect.addEventListener('change', reset);
@@ -247,6 +263,9 @@ async function main() {
     inputs.forEach((input) => { input.disabled = true; });
     const cases = [];
     try {
+      comparison.value = 'reference';
+      updateReferenceCaption();
+      resizeViewport();
       alignMotion.checked = true;
       for (const clip of gltf.animations) {
         clipSelect.value = clip.name;
@@ -374,6 +393,6 @@ async function main() {
     }
     renderer.setScissorTest(false);
   });
-  window.addEventListener('pagehide', () => { harness?.dispose(); overlay.dispose(); neutral.dispose(); controls.dispose(); resize.disconnect(); renderer.dispose(); }, { once: true });
+  window.addEventListener('pagehide', () => { harness?.dispose(); referenceHarness?.dispose(); overlay.dispose(); neutral.dispose(); controls.dispose(); resize.disconnect(); renderer.dispose(); }, { once: true });
 }
 void main().catch((error: unknown) => { status.textContent = error instanceof Error ? error.message : String(error); console.error(error); });

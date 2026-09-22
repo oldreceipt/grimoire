@@ -45,6 +45,11 @@ tracks, whereas vpkmerge exports an in-place animation. The report records this
 correction and its anchor. It does not deform or rescale the reference rig.
 Particle, rod, target, body-shape and bone overlays expose constraint errors;
 body penetration and rod limit residuals are reported in Source units.
+Generated animation targets in the Reference selector reconstructs the target
+garment from that exported rig without gravity, contacts or rod relaxation.
+Switching into or out of this mode resets playback. This exposes target shape
+separately from the physics result; Run checks switches back to the exported
+animation baseline so the input comparison remains independent of reconstruction.
 This page uses the production simulation harness
 with a simple Three.js renderer, not Grimoire's complete material pipeline.
 
@@ -239,7 +244,7 @@ units, but its frozen full-rig motion drops to 2.41 mm and the damped subset to
 0.109 mm. Its forward skirt folds remain visible; rod ordering alone does not
 explain that shape.
 
-On Windows, 161 focused physics tests, ESLint, TypeScript, i18n key/manifest
+On Windows, 162 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,

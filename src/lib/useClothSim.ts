@@ -1501,6 +1501,7 @@ function stepClothRuntime(
   rt: ClothRuntime,
   delta: number,
   animate?: (delta: number) => void,
+  mode: 'simulation' | 'targets' = 'simulation',
 ): void {
   if (!Number.isFinite(delta) || delta <= 0) return;
   if (delta > CLOTH_RESUME_GAP) {
@@ -1524,6 +1525,16 @@ function stepClothRuntime(
     refreshTargets(root, rt);
     warmStartRuntime(rt, CLOTH_TIMESTEP);
     for (const node of rt.nodes) node.lastSolvedPos.copy(node.pos);
+    if (mode === 'targets') {
+      for (const node of rt.nodes) {
+        node.pos.copy(node.target);
+        node.prev.copy(node.target);
+        node.solvedRot.copy(node.targetRot);
+      }
+      writeBack(root, rt);
+      rt.simulationSteps++;
+      continue;
+    }
     applyRuntimeReverseOffsetReconstructions(rt);
     integrate(rt, gravity, CLOTH_TIMESTEP);
     applyRuntimeReverseOffsetReconstructions(rt);
@@ -1626,12 +1637,13 @@ function collectClothHarnessMetrics(rt: ClothRuntime): ClothHarnessMetrics {
 export function createClothSimHarness(
   root: THREE.Object3D,
   femodel: ClothModel,
+  options: { mode?: 'simulation' | 'targets' } = {},
 ): ClothSimHarness {
   const rt = buildRuntime(root, femodel);
   if (!rt) throw new Error('createClothSimHarness requires at least three matched cloth nodes');
   return {
     step(delta: number, animate?: (delta: number) => void): ClothHarnessMetrics {
-      stepClothRuntime(root, rt, delta, animate);
+      stepClothRuntime(root, rt, delta, animate, options.mode);
       return collectClothHarnessMetrics(rt);
     },
     metrics(): ClothHarnessMetrics {

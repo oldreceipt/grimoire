@@ -305,6 +305,21 @@ function syntheticJiggleRoot(): { root: THREE.Group; jiggle: THREE.Bone } {
 }
 
 describe('createClothSimHarness', () => {
+  it('can render generated targets without applying gravity, contacts or rod relaxation', () => {
+    const { root, anchor } = syntheticRoot();
+    const model = syntheticClothModel();
+    model.ctrlOffsets = [{ parent: 0, child: 1, offset: [1, 0.25, 0.2] }];
+    model.spheres = [{ node: 0, sphere: [0, 0, 0, 5], mask: 0xffff }];
+    const harness = createClothSimHarness(root, model, { mode: 'targets' });
+    for (let i = 0; i < 120; i++) harness.step(CLOTH_TIMESTEP, (dt) => { anchor.position.x += dt; });
+    const snapshot = harness.snapshot();
+    for (const particle of snapshot.nodes) expect(particle.position).toEqual(particle.target);
+    expect(root.getObjectByName('cloth_mid')!.position.x).toBeCloseTo(2, 8);
+    expect(harness.metrics().simulationSteps).toBe(120);
+    harness.dispose();
+    expect(root.getObjectByName('cloth_mid')!.position.x).toBe(1);
+  });
+
   it('keeps an animated attachment fixed when its simulated parent translates', () => {
     const model = syntheticClothModel();
     model.nodes = [
