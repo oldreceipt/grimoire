@@ -232,10 +232,19 @@ export function recoverSimilarity(source: Vec3[], target: Vec3[]): SimilarityFit
 }
 
 export function nodeBaseQuaternion(positions: Vec3[], base: ClothNodeBase): THREE.Quaternion {
-  const xSeed = v3(positions[base.x1]).sub(v3(positions[base.x0])).normalize();
-  const yAxis = v3(positions[base.y1]).sub(v3(positions[base.y0])).normalize();
-  const zAxis = new THREE.Vector3().crossVectors(xSeed, yAxis).normalize();
-  const xAxis = new THREE.Vector3().crossVectors(yAxis, zAxis).normalize();
+  const xAxis = v3(positions[base.x1]).sub(v3(positions[base.x0]));
+  const yAxis = v3(positions[base.y1]).sub(v3(positions[base.y0]));
+  if (yAxis.lengthSq() > 0) yAxis.normalize();
+  else yAxis.set(0, 0, 1);
+  xAxis.addScaledVector(yAxis, -xAxis.dot(yAxis));
+  // The runtime switches to a deterministic perpendicular when the projected
+  // span is at most 0.05 Source units, before normalizing that span.
+  if (xAxis.length() <= 0.05) {
+    xAxis.set(yAxis.z + (1 - yAxis.z) * yAxis.y ** 2, 0, -yAxis.x).normalize();
+    xAxis.addScaledVector(yAxis, -xAxis.dot(yAxis));
+  }
+  xAxis.normalize();
+  const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis);
   const basis = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
   return new THREE.Quaternion().setFromRotationMatrix(basis).multiply(q4(base.qAdjust)).normalize();
 }

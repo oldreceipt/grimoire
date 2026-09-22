@@ -85,6 +85,26 @@ describe('recoverWeightedRigidFit', () => {
 });
 
 describe('nodeBaseQuaternion', () => {
+  it('uses a deterministic perpendicular for a collapsed or nearly parallel basis', () => {
+    const base: ClothNodeBase = { node: 2, x0: 0, x1: 1, y0: 0, y1: 2, qAdjust: [0, 0, 0, 1] };
+    const positions: Vec3[] = [[0, 0, 0], [0, 8, -0.049], [0, 2, 0]];
+    const collapsed = nodeBaseQuaternion(positions, base);
+    expect(collapsed.angleTo(new THREE.Quaternion())).toBeLessThan(1e-10);
+    positions[1] = [0, 8, -0.051];
+    const separated = nodeBaseQuaternion(positions, base);
+    expect(new THREE.Vector3(1, 0, 0).applyQuaternion(separated).distanceTo(new THREE.Vector3(0, 0, -1))).toBeLessThan(1e-10);
+    positions[1] = [0, 8, 0];
+    expect(nodeBaseQuaternion(positions, base).angleTo(collapsed)).toBeLessThan(1e-10);
+  });
+
+  it('uses Source Z when the primary basis edge has no length', () => {
+    const base: ClothNodeBase = { node: 2, x0: 0, x1: 1, y0: 0, y1: 2, qAdjust: [0, 0, 0, 1] };
+    const q = nodeBaseQuaternion([[0, 0, 0], [0, 0, 0], [0, 0, 0]], base);
+    expect(q.length()).toBeCloseTo(1, 12);
+    expect(new THREE.Vector3(0, 1, 0).applyQuaternion(q).distanceTo(new THREE.Vector3(0, 0, 1))).toBeLessThan(1e-10);
+    expect(new THREE.Vector3(1, 0, 0).applyQuaternion(q).distanceTo(new THREE.Vector3(1, 0, 0))).toBeLessThan(1e-10);
+  });
+
   it('uses the validated absolute basis times qAdjust convention', () => {
     const qAdjust = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.2, 0.4, -0.1)).normalize();
     const positions: Vec3[] = [

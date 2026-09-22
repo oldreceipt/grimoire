@@ -130,6 +130,7 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Fixed rod batches | `0x111bc0` | Visit `m_SimdRods` in compiled order, gathering all four lanes before scattering endpoints. Padding copies within a batch do not add stiffness; repeated constraints in subsequent batches remain. |
 | Animated rod batches | `0x10d330`, `0x111ef0` | Derive target lengths from the clean animated controls every tick, then solve `m_SimdRodsAnim` with its compiled weight, relaxation and batch order. |
 | Reverse-offset writeback | `0x105b40`, `0x109b91` | Place the output bone from the solved target particle and bone orientation. This updates rendered transforms, without replacing particle positions or integration history. |
+| Node-basis reconstruction | `0x1098e0`, `0x081790` | Normalize the Y edge, remove it from the X edge, and use a deterministic perpendicular when the projected X span is at most 0.05 Source units. A collapsed Y edge uses Source Z. Apply `qAdjust` after constructing the basis. |
 
 The rope direction sign is recovered from the first rest segment and its bone X
 axis, since the runtime flip bitset is not exported. All 23 Seven chains use the
@@ -276,8 +277,11 @@ run inspection shows attached hair and tag geometry without mesh explosions;
 there is still no matched in-game capture.
 The reverse-offset correction also retains Yamato's 12/12 checks and the same
 sampled residuals and frozen motion. Its side-view skirt folds are unchanged.
+The node-basis audit agrees with S2V's Y-first Gram-Schmidt construction. It adds
+the runtime's collapsed-edge fallback; Yamato's sampled spans exceed its
+threshold, and the updated formula still passes all 12 regression cases.
 
-On Windows, 159 focused physics tests, ESLint, TypeScript, i18n key/manifest
+On Windows, 161 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
