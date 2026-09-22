@@ -751,12 +751,13 @@ describe('FitMatrix reconstruction', () => {
       ],
     });
 
-    expect(reconstructions).toHaveLength(1);
-    expect(reconstructions[0].node).toBe(6);
-    expect(reconstructions[0].targetNode).toBe(6);
-    expect(reconstructions[0].center).toEqual([0.25, 0.25, 0.25]);
-    expect(reconstructions[0].weights.map((w) => w.node)).toEqual([0, 1, 2, 3]);
-    expect(reconstructions[0].weights.map((w) => w.weight)).toEqual([4, 2, 3, 5]);
+    expect(reconstructions).toHaveLength(2);
+    expect(reconstructions[0].weights.map((w) => w.node)).toEqual([5]);
+    expect(reconstructions[1].node).toBe(6);
+    expect(reconstructions[1].targetNode).toBe(6);
+    expect(reconstructions[1].center).toEqual([0.25, 0.25, 0.25]);
+    expect(reconstructions[1].weights.map((w) => w.node)).toEqual([0, 1, 2, 3]);
+    expect(reconstructions[1].weights.map((w) => w.weight)).toEqual([4, 2, 3, 5]);
   });
 
   it('targets nCtrl when it differs from nNode', () => {

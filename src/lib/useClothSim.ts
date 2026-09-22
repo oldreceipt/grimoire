@@ -7,7 +7,7 @@ import {
   nodeBaseQuaternion,
   recoverOffsetSign,
   recoverSimilarity,
-  recoverWeightedRigidFit,
+  recoverClothFit,
 } from './clothMath';
 import type {
   ClothBox,
@@ -812,7 +812,7 @@ export function buildFitMatrixReconstructions(
       weights.push({ node: weight.node, weight: weight.weight });
     }
     const targetNode = fitMatrixTargetNode(fit, model.nodes.length);
-    if (targetNode >= 0 && weights.length >= 3) {
+    if (targetNode >= 0 && weights.length > 0) {
       reconstructions.push({
         node: fit.node,
         targetNode,
@@ -846,13 +846,12 @@ export function reconstructFitMatrixTransform(
     target.push(v3Array(node.pos));
     weights.push(entry.weight);
   }
-  if (source.length < 3) return null;
-
-  const rigid = recoverWeightedRigidFit(source, target, weights);
+  const rigid = recoverClothFit(source, target, weights, fit.center);
+  if (!rigid) return null;
   // The compiled bone transform is already relative to the fit center. It is
   // an output transform, separate from the particle and its integration history.
   return {
-    position: rigid.targetCenter.clone().add(vec3(fit.bone).applyQuaternion(rigid.rotation)),
+    position: rigid.position.add(vec3(fit.bone).applyQuaternion(rigid.rotation)),
     rotation: rigid.rotation.clone().multiply(quat(fit.boneRot)).normalize(),
   };
 }

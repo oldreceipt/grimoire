@@ -229,16 +229,31 @@ including a back-view running comparison. Explicit fit outputs also work for
 static, rotation-free controls; attached animation-owned controls keep their
 sampled world pose.
 
-Fourteen synthetic compiled-runtime cases cover nonzero rest centers, translation,
-rotation, planar sources and deformed weighted sources. Output positions match
-within `5e-5` Source units and rotations within `1e-4` radians; particle buffers
-remain unchanged. Bind-pose runtime probes also recover the shipped fit bones
-for Dynamo, Bebop and Warden. Fit coverage remains approximate because the preview
-uses a quaternion fit instead of the runtime's finite-sweep SVD and its degenerate
-fallbacks. Dynamo's three clips pass all 12 input/anchor/frame-rate checks. The
+Thirty synthetic compiled-runtime cases cover nonzero rest centers, translation,
+rotation, deformed/planar sources, reflections, one/two-point sources, rotated
+lines, collapsed sources and the covariance threshold. The preview follows the
+runtime's six cyclic Jacobi sweeps, axis ordering and perpendicular fallback.
+When the largest transformed axis is shorter than `2^-23`, the fit frame becomes
+identity at the origin, before composing the stored bone offset. Collapsed input
+no longer throws, and a harness test verifies recovery and particle preservation.
+Maximum numerical differences are `5.04e-6` Source units and `9.76e-7` radians,
+within the existing `5e-5`/`1e-4` bounds. All particle/history buffers stay untouched.
+
+The six fit transforms in saved animated Dynamo/Bebop particle snapshots also
+agree with isolated runtime output within `6.10e-6` Source units and `3e-7` radians.
+Their regular poses were already close under the previous quaternion fit; this
+change adds the defined finite-sweep and degenerate behavior. Bind-pose probes
+also recover Warden's fit bone. Coverage remains marked approximate because
+non-unit animated control scale and float-sensitive near-degenerate sources
+have not been validated through the full preview path.
+
+Dynamo's three clips pass all 12 input/anchor/frame-rate checks. The
 largest sampled rod error is `2.2553` Source units; sampled endpoint penetration
 is zero and frozen rig drift is below `0.0005` mm. These results establish the
-bag-placement fix, not an in-game cloth match.
+bag-placement fix, not an in-game cloth match. The 03:46/03:48 UTC Bebop/Dynamo
+rechecks preserve every particle position from their preceding reports and both
+pass 12/12 pose checks. Front idle and back run inspection keeps the bag and cable
+attachments in place; the finite-sweep update makes no new visual-parity claim.
 
 The shared 1/120-second clock advances animation before targets/colliders and
 simulation. Physics-written local transforms are restored before each clean
@@ -445,7 +460,7 @@ Yamato's per-node collision-plane math was also checked independently against
 fractional strengths. Maximum difference is `1.35e-6` Source units; this audit
 does not identify the cause of its folded garment shape.
 
-On Windows, 347 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
+On Windows, 365 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -476,9 +491,9 @@ Next validation units:
    40 selectable hero entries found 35 with FeModel data; all examined dynamic
    nodes selected goal-damped integration and had zero authored point damping.
    Raw integration and nonzero damping still need a different reference asset.
-3. Validate degenerate fit sources and their runtime SVD fallback, then extend
-   coverage to jiggle bones and the effective mod stack. Fit output/particle
-   separation and relative offsets now have independent runtime regressions.
+3. Validate non-unit control scale through fit output, then extend coverage to
+   jiggle bones and the effective mod stack. Fit output/particle separation,
+   relative offsets and degenerate sources now have independent regressions.
 4. Gate supported model families and define an unsupported-data fallback before
    considering physics enabled by default.
 

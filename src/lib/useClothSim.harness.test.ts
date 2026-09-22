@@ -764,6 +764,30 @@ describe('createClothSimHarness', () => {
     expect(metrics.maxFrameMotion).toBeLessThan(0.04);
   });
 
+  it('uses the compiled collapsed-fit fallback and resumes without changing particles', () => {
+    const model = syntheticFitClothModel();
+    model.nodes.slice(0, 3).forEach((source) => { source.pinned = true; });
+    model.staticNodeCount = 3;
+    model.firstPositionDrivenNode = 3;
+    model.rods = [];
+    const root = syntheticFitRoot();
+    const control = root.getObjectByName('fit_ctrl')!;
+    const original = control.position.clone();
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP, () => {
+      model.nodes.slice(0, 3).forEach((source) => root.getObjectByName(source.name)!.position.set(5, 6, 7));
+    });
+    expect(control.position.distanceTo(new THREE.Vector3().fromArray(model.fitMatrices[0].bone))).toBeLessThan(1e-8);
+    expect(harness.snapshot().nodes[3].position).toEqual(original.toArray());
+    harness.step(CLOTH_TIMESTEP, () => {
+      model.nodes.slice(0, 3).forEach((source) => root.getObjectByName(source.name)!.position.fromArray(source.initPos));
+    });
+    expect(control.position.distanceTo(original)).toBeLessThan(1e-8);
+    expect(harness.snapshot().nodes[3].position).toEqual(original.toArray());
+    harness.dispose();
+    expect(control.position.distanceTo(original)).toBeLessThan(1e-8);
+  });
+
   it.each([false, true])('writes a fit transform separately from its particle and attached animation-owned controls (pinned=%s)', (pinned) => {
     const model = syntheticFitClothModel();
     model.nodes.slice(0, 3).forEach((source) => { source.pinned = true; });

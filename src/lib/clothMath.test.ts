@@ -5,7 +5,7 @@ import {
   nodeBaseQuaternion,
   recoverOffsetSign,
   recoverSimilarity,
-  recoverWeightedRigidFit,
+  recoverClothFit,
 } from './clothMath';
 import type { ClothNodeBase, Vec3, Vec4 } from './feModel';
 
@@ -41,7 +41,7 @@ describe('recoverSimilarity', () => {
   });
 });
 
-describe('recoverWeightedRigidFit', () => {
+describe('recoverClothFit', () => {
   it('returns an identity no-scale fit at rest', () => {
     const source: Vec3[] = [
       [0, 0, 0],
@@ -51,12 +51,11 @@ describe('recoverWeightedRigidFit', () => {
     ];
     const weights = [2, 1, 3, 4];
 
-    const fit = recoverWeightedRigidFit(source, source, weights);
+    const center: Vec3 = [0.2, 0.9, 1.6];
+    const fit = recoverClothFit(source, source, weights, center)!;
 
-    expect(fit.rmse).toBeLessThan(1e-10);
-    expect(fit.totalWeight).toBe(10);
-    expect(fit.rotation.angleTo(new THREE.Quaternion())).toBeLessThan(1e-10);
-    expect(fit.sourceCenter.distanceTo(fit.targetCenter)).toBeLessThan(1e-10);
+    expect(fit.rotation.angleTo(new THREE.Quaternion())).toBeLessThan(1e-6);
+    expect(fit.position.distanceTo(new THREE.Vector3(...center))).toBeLessThan(1e-10);
   });
 
   it('recovers a weighted rigid rotation and translation without scale', () => {
@@ -75,12 +74,19 @@ describe('recoverWeightedRigidFit', () => {
       return [v.x, v.y, v.z] as Vec3;
     });
 
-    const fit = recoverWeightedRigidFit(source, target, weights);
+    const center = source.reduce((sum, p, i) => sum.addScaledVector(new THREE.Vector3(...p), weights[i]), new THREE.Vector3()).multiplyScalar(1 / 15);
+    const fit = recoverClothFit(source, target, weights, [center.x, center.y, center.z])!;
 
-    expect(fit.rmse).toBeLessThan(1e-10);
-    expect(fit.rotation.angleTo(rotation)).toBeLessThan(1e-10);
-    const movedCenter = fit.sourceCenter.clone().applyQuaternion(fit.rotation).add(translation);
-    expect(movedCenter.distanceTo(fit.targetCenter)).toBeLessThan(1e-10);
+    expect(fit.rotation.angleTo(rotation)).toBeLessThan(1e-6);
+    const movedCenter = center.applyQuaternion(rotation).add(translation);
+    expect(movedCenter.distanceTo(fit.position)).toBeLessThan(1e-10);
+  });
+
+  it('returns no fit for invalid pairs or weights', () => {
+    expect(recoverClothFit([], [], [], [0, 0, 0])).toBeNull();
+    expect(recoverClothFit([[0, 0, 0]], [], [1], [0, 0, 0])).toBeNull();
+    expect(recoverClothFit([[0, 0, 0]], [[1, 2, 3]], [0], [0, 0, 0])).toBeNull();
+    expect(recoverClothFit([[0, 0, 0]], [[NaN, 2, 3]], [1], [0, 0, 0])).toBeNull();
   });
 });
 
