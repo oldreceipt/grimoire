@@ -225,9 +225,9 @@ function syntheticFitClothModel(): ClothModel {
       node: 3,
       endWeight: 3,
       beginDynamic: 0,
-      bone: [0.55, 0.55, 0.35],
+      bone: [0.2625, 0.2625, 0.35],
       boneRot: Q,
-      center: [0.35, 0.35, 0],
+      center: [0.2875, 0.2875, 0],
       ctrl: 3,
     }],
     fitWeights: [
@@ -694,6 +694,43 @@ describe('createClothSimHarness', () => {
     expect(metrics.kinematicCount).toBe(2);
     expect(metrics.maxDistanceFromInit).toBeLessThan(0.75);
     expect(metrics.maxFrameMotion).toBeLessThan(0.04);
+  });
+
+  it.each([false, true])('writes a fit transform separately from its particle and attached animation-owned controls (pinned=%s)', (pinned) => {
+    const model = syntheticFitClothModel();
+    model.nodes.slice(0, 3).forEach((source) => { source.pinned = true; });
+    model.nodes[3].pinned = pinned;
+    model.nodes.push(node('attachment', [0.55, 1.55, 0.35]));
+    model.firstPositionDrivenNode = 3;
+    model.staticNodeCount = pinned ? 4 : 3;
+    model.rods = [];
+    model.skelParents.push(3);
+    const root = syntheticFitRoot();
+    const control = root.getObjectByName('fit_ctrl')!;
+    const attachment = new THREE.Bone();
+    attachment.name = 'attachment';
+    attachment.position.set(0, 1, 0);
+    control.add(attachment);
+    const initial = new THREE.Vector3().fromArray(model.nodes[3].initPos);
+    const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.6);
+    const translation = new THREE.Vector3(3, -2, 1);
+    const expected = initial.clone().applyQuaternion(rotation).add(translation);
+    const harness = createClothSimHarness(root, model);
+    for (let tick = 0; tick < 2; tick++) {
+      harness.step(CLOTH_TIMESTEP, () => {
+        model.nodes.slice(0, 3).forEach((source) => {
+          root.getObjectByName(source.name)!.position.fromArray(source.initPos).applyQuaternion(rotation).add(translation);
+        });
+      });
+      expect(control.getWorldPosition(new THREE.Vector3()).distanceTo(expected)).toBeLessThan(1e-8);
+      expect(control.getWorldQuaternion(new THREE.Quaternion()).angleTo(rotation)).toBeLessThan(1e-7);
+      expect(harness.snapshot().nodes[3].position).toEqual(initial.toArray());
+      expect(attachment.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(0.55, 1.55, 0.35))).toBeLessThan(1e-8);
+      expect(harness.metrics().maxAnchorError).toBeLessThan(1e-8);
+    }
+    harness.dispose();
+    expect(control.position.distanceTo(initial)).toBeLessThan(1e-8);
+    expect(attachment.position.distanceTo(new THREE.Vector3(0, 1, 0))).toBeLessThan(1e-8);
   });
 
   it('keeps a stray-radius clamp finite and bounded over repeated steps', () => {

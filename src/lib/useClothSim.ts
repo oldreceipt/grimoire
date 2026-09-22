@@ -300,7 +300,6 @@ export function isPositionDrivenNode(
   index: number,
   model: Pick<ClothModel, 'firstPositionDrivenNode' | 'fitMatrices'>,
 ): boolean {
-  if (model.fitMatrices.length > 0) return false;
   return Number.isFinite(model.firstPositionDrivenNode) && index >= model.firstPositionDrivenNode;
 }
 
@@ -813,17 +812,14 @@ export function buildFitMatrixReconstructions(
   return reconstructions;
 }
 
-export function reconstructFitMatrixPosition(
+export function reconstructFitMatrixTransform(
   fit: FitMatrixReconstruction,
   nodes: Array<{
     initPos: Vec3;
     pos: THREE.Vector3;
-    prev: THREE.Vector3;
-    solvedRot: THREE.Quaternion;
   } | undefined>,
-): THREE.Vector3 | null {
-  const driven = nodes[fit.targetNode];
-  if (!driven) return null;
+): { position: THREE.Vector3; rotation: THREE.Quaternion } | null {
+  if (!nodes[fit.targetNode]) return null;
 
   const source: Vec3[] = [];
   const target: Vec3[] = [];
@@ -838,28 +834,12 @@ export function reconstructFitMatrixPosition(
   if (source.length < 3) return null;
 
   const rigid = recoverWeightedRigidFit(source, target, weights);
-  const reconstructed = rigid.targetCenter.clone().add(vec3(fit.bone).sub(vec3(fit.center)).applyQuaternion(rigid.rotation));
-  const reconstructedRot = rigid.rotation.clone().multiply(quat(fit.boneRot)).normalize();
-  driven.pos.copy(reconstructed);
-  driven.prev.copy(reconstructed);
-  driven.solvedRot.copy(reconstructedRot);
-  return reconstructed;
-}
-
-export function applyFitMatrixReconstructions(
-  fits: Iterable<FitMatrixReconstruction>,
-  nodes: Array<{
-    initPos: Vec3;
-    pos: THREE.Vector3;
-    prev: THREE.Vector3;
-    solvedRot: THREE.Quaternion;
-  } | undefined>,
-): number {
-  let reconstructed = 0;
-  for (const fit of fits) {
-    if (reconstructFitMatrixPosition(fit, nodes)) reconstructed += 1;
-  }
-  return reconstructed;
+  // The compiled bone transform is already relative to the fit center. It is
+  // an output transform, separate from the particle and its integration history.
+  return {
+    position: rigid.targetCenter.clone().add(vec3(fit.bone).applyQuaternion(rigid.rotation)),
+    rotation: rigid.rotation.clone().multiply(quat(fit.boneRot)).normalize(),
+  };
 }
 
 function rigidToCapsule(rt: ClothRuntime, rigid: RigidRuntime, out: Capsule): Capsule {
@@ -1159,10 +1139,6 @@ function warmStartRuntime(rt: ClothRuntime, substepDt: number): void {
   rt.warmStarted = true;
 }
 
-function applyRuntimeSettledReconstructions(rt: ClothRuntime): void {
-  applyFitMatrixReconstructions(rt.fitReconstructions, rt.nodes);
-}
-
 function integrate(rt: ClothRuntime, gravity: THREE.Vector3, dt: number): void {
   const dt2 = dt * dt;
   const lastDt = rt.lastSubstepDt;
@@ -1327,7 +1303,14 @@ function solveRods(rt: ClothRuntime): void {
 
 function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
   updateSolvedRotations(rt);
-  applyRuntimeSettledReconstructions(rt);
+
+  const fitWrites = new Map<THREE.Bone, { position: THREE.Vector3; rotation: THREE.Quaternion }>();
+  for (const fit of rt.fitReconstructions) {
+    const node = rt.nodes[fit.targetNode];
+    if (!node?.bone || node.jiggleDriven) continue;
+    const transform = reconstructFitMatrixTransform(fit, rt.nodes);
+    if (transform) fitWrites.set(node.bone, transform);
+  }
 
   const rotationWrites = new Map<THREE.Bone, THREE.Quaternion>();
   for (const index of rt.rotationNodes) {
@@ -1341,12 +1324,7 @@ function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
     }
   }
 
-  for (const fit of rt.fitReconstructions) {
-    const fitNode = rt.nodes[fit.targetNode];
-    if (fitNode?.bone && !fitNode.pinned && !fitNode.jiggleDriven) {
-      rotationWrites.set(fitNode.bone, fitNode.solvedRot.clone());
-    }
-  }
+  for (const [bone, transform] of fitWrites) rotationWrites.set(bone, transform.rotation);
 
   for (const node of rt.nodes) {
     if (!node.bone || rotationWrites.has(node.bone)) continue;
@@ -1385,11 +1363,7 @@ function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
     if (position) positionWrites.set(boneNode.bone, position);
   }
 
-  for (const fit of rt.fitReconstructions) {
-    const fitNode = rt.nodes[fit.targetNode];
-    if (!fitNode?.bone || fitNode.pinned || fitNode.jiggleDriven) continue;
-    positionWrites.set(fitNode.bone, fitNode.pos.clone());
-  }
+  for (const [bone, transform] of fitWrites) positionWrites.set(bone, transform.position);
 
   [...positionWrites.entries()]
     .sort(([a], [b]) => objectDepth(a) - objectDepth(b))
@@ -1531,7 +1505,6 @@ function stepClothRuntime(
     }
     if (collideAfterConstraints) solveCollisions(rt);
     restorePinnedSolverNodes(rt.nodes);
-    applyRuntimeSettledReconstructions(rt);
     writeBack(root, rt);
     rt.simulationSteps++;
   }

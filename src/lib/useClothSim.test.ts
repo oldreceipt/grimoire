@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import strayReference from './__fixtures__/cloth/source2_stray_reference.json';
+import fitReference from './__fixtures__/cloth/source2_fit_reference.json';
+import { parseFeModel } from './feModel';
 import type { ClothModel } from './feModel';
 import {
-  applyFitMatrixReconstructions,
   animationAttraction,
   buildFitMatrixReconstructions,
   closestPointOnSegment,
@@ -21,6 +22,7 @@ import {
   projectAnimStrayRadiusBatch,
   pushOutsideBox,
   pushOutsideCapsule,
+  reconstructFitMatrixTransform,
   reconstructReverseOffsetPosition,
   rigidAnchorSeed,
   restoreBoneBindTransform,
@@ -500,11 +502,12 @@ describe('position-driven classification', () => {
     expect(isPositionDrivenNode(3, model)).toBe(true);
   });
 
-  it('disables position-driven classification when FitMatrix data is present', () => {
+  it('preserves the explicit position-driven boundary when FitMatrix data is present', () => {
     const model = { firstPositionDrivenNode: 1, fitMatrices: [{}] } as Parameters<typeof isPositionDrivenNode>[1];
 
-    expect(isPositionDrivenNode(1, model)).toBe(false);
-    expect(isPositionDrivenNode(2, model)).toBe(false);
+    expect(isPositionDrivenNode(0, model)).toBe(false);
+    expect(isPositionDrivenNode(1, model)).toBe(true);
+    expect(isPositionDrivenNode(2, model)).toBe(true);
   });
 
   it('treats pinned, position-driven, and lock-to-goal nodes as kinematic', () => {
@@ -633,7 +636,7 @@ describe('reconstructReverseOffsetPosition', () => {
     expect(boneNode.prev.toArray()).toEqual([-1, 0, 0]);
   });
 
-  it('reads a fit-driven target without moving the reverse-offset particle', () => {
+  it('keeps fit output separate from the particle read by a reverse offset', () => {
     const current = [
       V(10, 0, 0),
       V(11, 0, 0),
@@ -661,8 +664,8 @@ describe('reconstructReverseOffsetPosition', () => {
       reverseBone,
     ];
 
-    const count = applyFitMatrixReconstructions(
-      [{
+    const fit = reconstructFitMatrixTransform(
+      {
         node: 4,
         targetNode: 4,
         bone: [0, 0, 0],
@@ -674,19 +677,40 @@ describe('reconstructReverseOffsetPosition', () => {
           { node: 2, weight: 1 },
           { node: 3, weight: 1 },
         ],
-      }],
+      },
       nodes,
     );
 
     const rendered = reconstructReverseOffsetPosition({ boneCtrl: 5, targetNode: 4, offset: [1, 0, 0], sign: 1 }, nodes);
-    expect(count).toBe(1);
-    expect(fitTarget.pos.x).toBeCloseTo(10.25, 6);
-    expect(rendered!.x).toBeCloseTo(11.25, 6);
+    expect(fit!.position.x).toBeCloseTo(10.25, 6);
+    expect(fitTarget.pos.x).toBe(0);
+    expect(rendered!.x).toBe(1);
     expect(reverseBone.pos.x).toBe(-100);
   });
 });
 
 describe('FitMatrix reconstruction', () => {
+  it.each(fitReference.cases)('matches the compiled output transform: $name', ({ initial, positions, fit, weights, expected }) => {
+    const model = parseFeModel({
+      m_CtrlName: initial.map((_, index) => String(index)),
+      m_InitPose: initial.map((point) => [...point, 1, 0, 0, 0, 1]),
+      m_FitMatrices: [fit], m_FitWeights: weights,
+    })!;
+    const nodes = model.nodes.map((node, index) => ({
+      initPos: node.initPos, pos: new THREE.Vector3().fromArray(positions[index]),
+      prev: new THREE.Vector3().fromArray(positions[index]).addScalar(-1), solvedRot: Q(),
+    }));
+    const before = nodes.map((node) => ({ pos: node.pos.clone(), prev: node.prev.clone(), rotation: node.solvedRot.clone() }));
+    const output = reconstructFitMatrixTransform(buildFitMatrixReconstructions(model)[0], nodes)!;
+    expect(output.position.distanceTo(new THREE.Vector3().fromArray(expected))).toBeLessThan(5e-5);
+    expect(output.rotation.angleTo(new THREE.Quaternion().fromArray(expected, 4).normalize())).toBeLessThan(1e-4);
+    nodes.forEach((node, index) => {
+      expect(node.pos).toEqual(before[index].pos);
+      expect(node.prev).toEqual(before[index].prev);
+      expect(node.solvedRot).toEqual(before[index].rotation);
+    });
+  });
+
   it('builds spans from previous endWeight and keeps the static prefix before beginDynamic', () => {
     const reconstructions = buildFitMatrixReconstructions({
       nodes: [
@@ -796,11 +820,11 @@ describe('FitMatrix reconstruction', () => {
       { initPos: [0, 0, 3] as [number, number, number], pos: current[3], prev: current[3].clone(), solvedRot: Q() },
       driven,
     ];
-    const expectedPos = targetCenter.clone().add(bone.clone().sub(authoredCenter).applyQuaternion(rotation));
+    const expectedPos = targetCenter.clone().add(bone.clone().applyQuaternion(rotation));
     const expectedRot = rotation.clone().multiply(boneRot).normalize();
 
-    const count = applyFitMatrixReconstructions(
-      [{
+    const transform = reconstructFitMatrixTransform(
+      {
         node: 4,
         targetNode: 4,
         bone: [bone.x, bone.y, bone.z],
@@ -812,14 +836,15 @@ describe('FitMatrix reconstruction', () => {
           { node: 2, weight: weights[2] },
           { node: 3, weight: weights[3] },
         ],
-      }],
+      },
       nodes,
     );
 
-    expect(count).toBe(1);
-    expect(driven.pos.distanceTo(expectedPos)).toBeLessThan(1e-9);
-    expect(driven.prev.distanceTo(expectedPos)).toBeLessThan(1e-9);
-    expect(driven.solvedRot.angleTo(expectedRot)).toBeLessThan(1e-9);
+    expect(transform!.position.distanceTo(expectedPos)).toBeLessThan(1e-9);
+    expect(transform!.rotation.angleTo(expectedRot)).toBeLessThan(1e-7);
+    expect(driven.pos.toArray()).toEqual([-100, 0, 0]);
+    expect(driven.prev.toArray()).toEqual([-101, 0, 0]);
+    expect(driven.solvedRot.equals(Q())).toBe(true);
   });
 
   it('reconstructs the ctrl target when ctrl differs from node', () => {
@@ -851,8 +876,8 @@ describe('FitMatrix reconstruction', () => {
       ctrl,
     ];
 
-    const count = applyFitMatrixReconstructions(
-      [{
+    const transform = reconstructFitMatrixTransform(
+      {
         node: 4,
         targetNode: 5,
         bone: [0, 0, 0],
@@ -864,12 +889,12 @@ describe('FitMatrix reconstruction', () => {
           { node: 2, weight: 1 },
           { node: 3, weight: 1 },
         ],
-      }],
+      },
       nodes,
     );
 
-    expect(count).toBe(1);
-    expect(ctrl.pos.x).toBeCloseTo(5.25, 6);
+    expect(transform!.position.x).toBeCloseTo(5.25, 6);
+    expect(ctrl.pos.x).toBe(-200);
     expect(dynamicCenter.pos.equals(V(-100, 0, 0))).toBe(true);
   });
 });

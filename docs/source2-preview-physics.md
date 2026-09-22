@@ -1,8 +1,9 @@
 # Source 2 preview physics
 
 The preview now uses compiled raw/goal-damped attraction, fixed and animated rod
-batches, Kelager bends, hinge limits, directed twist/swing links, and rope bone reconstruction.
-The rendered validation cases include Seven, Vindicta, Yamato and Necro's current
+batches, triangle elements, animation stray limits, Kelager bends, hinge limits,
+directed twist/swing links, and rope bone reconstruction.
+The rendered validation cases include Seven, Vindicta, Yamato, Necro and Dynamo's current
 base models with three animations each.
 Physics remains behind
 the existing developer toggle and is disabled by default. This is a tested
@@ -16,17 +17,18 @@ The script uses the bundled vpkmerge, exports fresh assets from the base VPK, an
 serves `http://127.0.0.1:5176/cloth-preview.html`. `VPKMERGE_PATH` can select another
 exporter. Linux/macOS users can provide `--game` explicitly.
 
-For all four cases and the S2V reference, build S2V's CLI in Release, then run:
+For all five cases and the S2V reference, build S2V's CLI in Release, then run:
 
 ```powershell
-pnpm dev:cloth --case "seven,vindicta,yamato,necro" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
+pnpm dev:cloth --case "seven,vindicta,yamato,necro,dynamo" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
 ```
 
 `S2V_CLI` also accepts the CLI path. The script resolves each current model through
 the game's hero data, then exports identical clips through both tools. The case
 selector lists the exported subset. Missing requested clips stop export with an
 error. Yamato uses `primary_run275_n/e`; Necro uses `weapon_stand_idle`, `run_n`
-and `respawn_countdown_idle`.
+and `respawn_countdown_idle`. Dynamo uses `primary_stand_idle` and
+`primary_run_250_n/e`.
 Without S2V, the reference pane uses the vpkmerge animation.
 
 Choose a clip, use Play or Step 1 second, and compare Physics on/off after Reset.
@@ -210,6 +212,27 @@ its order relative to goal attraction. Seven, Vindicta and Necro retain all 36
 rendered pose/anchor checks and their preceding sampled metrics; their current
 clips do not demonstrate a measurable fidelity improvement from this correction.
 
+Fit matrices now write bone transforms without overwriting particles, history or
+solver orientations. S2V identifies each matrix's own weighted source span and
+output bone; its presence does not cancel the model's position-driven boundary.
+The compiled routine `0x108cd0` confirms that `bone.position` is already an offset
+from the rest fit center. Subtracting that center again displaced Dynamo's bag
+down to its feet. The corrected composition keeps the bag attached at its side,
+including a back-view running comparison. Explicit fit outputs also work for
+static, rotation-free controls; attached animation-owned controls keep their
+sampled world pose.
+
+Fourteen synthetic compiled-runtime cases cover nonzero rest centers, translation,
+rotation, planar sources and deformed weighted sources. Output positions match
+within `5e-5` Source units and rotations within `1e-4` radians; particle buffers
+remain unchanged. Bind-pose runtime probes also recover the shipped fit bones
+for Dynamo, Bebop and Warden. Fit coverage remains approximate because the preview
+uses a quaternion fit instead of the runtime's finite-sweep SVD and its degenerate
+fallbacks. Dynamo's three clips pass all 12 input/anchor/frame-rate checks. The
+largest sampled rod error is `2.2553` Source units; sampled endpoint penetration
+is zero and frozen rig drift is below `0.0005` mm. These results establish the
+bag-placement fix, not an in-game cloth match.
+
 The shared 1/120-second clock advances animation before targets/colliders and
 simulation. Physics-written local transforms are restored before each clean
 animation sample. Rotation-free static cloth bases can rotate, while the body's
@@ -343,7 +366,7 @@ The node-basis audit agrees with S2V's Y-first Gram-Schmidt construction. It add
 the runtime's collapsed-edge fallback; Yamato's sampled spans exceed its
 threshold, and the updated formula still passes all 12 regression cases.
 
-On Windows, 242 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
+On Windows, 258 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -373,9 +396,9 @@ Next validation units:
    40 selectable hero entries found 35 with FeModel data; all examined dynamic
    nodes selected goal-damped integration and had zero authored point damping.
    Raw integration and nonzero damping still need a different reference asset.
-3. Add a separate jiggle-bone runtime, then validate garments using fit matrices,
-   node bases and the effective mod stack. Fit-matrix reconstruction still uses
-   an older approximation and needs the same output/particle separation audit.
+3. Validate degenerate fit sources and their runtime SVD fallback, then extend
+   coverage to jiggle bones and the effective mod stack. Fit output/particle
+   separation and relative offsets now have independent runtime regressions.
 4. Gate supported model families and define an unsupported-data fallback before
    considering physics enabled by default.
 

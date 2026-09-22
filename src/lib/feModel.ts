@@ -289,11 +289,11 @@ export interface ClothTwist {
 }
 
 export interface ClothFitMatrix {
-  bone: Vec3; // CTransform translation part [x,y,z]
+  bone: Vec3; // CTransform offset from the rest fit center [x,y,z]
   boneRot: Vec4; // CTransform rotation [qx,qy,qz,qw]
   center: Vec3; // vCenter: rest-pose center of mass
   endWeight: number; // nEnd: end index (exclusive) into fitWeights
-  node: number; // dynamic center node to back-solve
+  node: number; // control receiving the reconstructed output transform
   beginDynamic: number; // first dynamic-node weight index in [begin,end)
   ctrl: number; // ctrl whose sim transform FitTransforms writes
 }
