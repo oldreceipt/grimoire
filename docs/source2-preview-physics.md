@@ -6,8 +6,9 @@ Kelager bends, hinge limits,
 directed twist/swing links, and rope bone reconstruction.
 The rendered validation cases include Seven, Vindicta, Yamato, Necro, Dynamo, Bebop and Doorman's current
 base models with three animations each.
-Physics remains behind
-the existing developer toggle and is disabled by default. This is a tested
+The 3D viewer's **Physics preview** button opts into animated cloth and accessories
+in development and release builds. It is disabled by default and remembers the
+choice locally. This is a tested
 preview implementation, not a claim of full Source 2 simulation parity.
 
 ## Reproduce the comparison
@@ -31,6 +32,14 @@ error. Yamato uses `primary_run275_n/e`; Necro uses `weapon_stand_idle`, `run_n`
 and `respawn_countdown_idle`. Dynamo uses `primary_stand_idle` and
 `primary_run_250_n/e`.
 Without S2V, the reference pane uses the vpkmerge animation.
+
+Add `--grimoire` to export a static menu pose and single idle clip for each case,
+then open `http://127.0.0.1:5176/hero-preview.html`. This page runs the actual
+`HeroPoseViewer`, including its materials, lighting, animation, cloth hook,
+turntable and physics button. Only Electron's asset transport is replaced with
+the exported local files. Use the hero selector to exercise cleanup and the
+Physics data selector to test delayed/missing sidecars. It tests base assets,
+not an installed mod stack or Electron's protocol implementation.
 
 Choose a clip, use Play or Step 1 second, and compare Physics on/off after Reset.
 Freeze animation keeps physics advancing against a fixed animated pose. Settle
@@ -531,6 +540,15 @@ before mounting animation so the solver calibrates against the bind pose.
 Missing physics leaves animation available. Rigged cache version 8 regenerates
 old exports; a missing sidecar or interrupted export is not a cache hit. Cache
 sweeps retain current rigged-only entries independently of static pose versions.
+
+The full-viewer browser check exercised the default static pose, enabling physics,
+hero switching and cleanup, cancelling a delayed sidecar by disabling physics,
+and the animation-only
+fallback with a visible missing-physics notice. All seven cases were inspected
+with Grimoire's normal materials and lighting. There were no
+captured console errors; existing selective-bloom and shader precision warnings
+also appear on static previews. The test page does not validate a packaged
+Electron install or arbitrary mod skins.
 
 On Windows, 677 focused physics and preview tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for

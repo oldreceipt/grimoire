@@ -54,6 +54,9 @@ async function main() {
   ]);
   const model = parseFeModel(raw);
   if (!model) throw new Error('Export did not contain a FeModel.');
+  const grimoireLink = element('grimoire-link', HTMLAnchorElement);
+  grimoireLink.hidden = !metadata.viewer;
+  grimoireLink.href = `/hero-preview.html?case=${selected.name}`;
   const coverage = clothSimulationCoverage(model);
   const gaps = (status: 'not-implemented' | 'approximate') => coverage.featureGaps
     .filter((gap) => gap.status === status).map((gap) => `${gap.label.toLowerCase()} (${gap.count})`).join(', ');

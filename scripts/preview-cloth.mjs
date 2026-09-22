@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const outputRoot = join(root, '.codex-run/source2-physics');
@@ -22,6 +23,7 @@ const selected = (caseArgument >= 0 ? process.argv[caseArgument + 1] || '' : 'se
 if (selected.some((name) => !Object.hasOwn(cases, name))) throw new Error(`Choose --case ${Object.keys(cases).join(',')}, or a comma-separated subset.`);
 const gameArgument = process.argv.indexOf('--game');
 const s2vArgument = process.argv.indexOf('--s2v');
+const grimoire = process.argv.includes('--grimoire');
 const s2v = s2vArgument >= 0 ? process.argv[s2vArgument + 1] : process.env.S2V_CLI;
 if (s2vArgument >= 0 && !s2v) throw new Error('Pass --s2v <Source2Viewer-CLI.dll or executable>.');
 const settingsPath = process.env.APPDATA && join(process.env.APPDATA, 'grimoire/settings.json');
@@ -65,6 +67,18 @@ for (const name of new Set(selected)) {
   if (missingClips.length > 0) throw new Error(`${entry} is missing requested clips: ${missingClips.join(', ')}`);
   writeFileSync(join(output, 'clips.json'), clipList);
   run(['model', 'export', ...select, ...clips.flatMap((clip) => ['--clip', clip]), '--out', join(output, 'model.glb')]);
+  let viewer = null;
+  if (grimoire) {
+    run(['model', 'export', ...select, '--clip', clips[0], '--out', join(output, 'model-viewer.glb')]);
+    let posed = null;
+    try {
+      run(['model', 'export', ...select, '--pose', '--require-pose', '--out', join(output, 'model-posed.glb')]);
+      posed = { file: 'model-posed.glb', sha256: sha256(join(output, 'model-posed.glb')) };
+    } catch (error) {
+      console.warn(`${cases[name].label} has no usable static preview: ${error.message}`);
+    }
+    viewer = { rigged: { file: 'model-viewer.glb', sha256: sha256(join(output, 'model-viewer.glb')) }, posed };
+  }
   let reference = null;
   if (s2v) {
     console.log(`Exporting ${cases[name].label} through Source 2 Viewer...`);
@@ -84,7 +98,7 @@ for (const name of new Set(selected)) {
   }
   writeFileSync(join(output, 'metadata.json'), JSON.stringify({
     exportedAt: new Date().toISOString(), name, label: cases[name].label, entry, clips, exporter: exporterVersion, vpk,
-    files: Object.fromEntries(['model.glb', 'cloth.json'].map((file) => [file, sha256(join(output, file))])), reference,
+    files: Object.fromEntries(['model.glb', 'cloth.json'].map((file) => [file, sha256(join(output, file))])), reference, viewer,
   }, null, 2) + '\n');
 }
 writeFileSync(join(outputRoot, 'cases.json'), JSON.stringify([...new Set(selected)].map((name) => ({ name, label: cases[name].label })), null, 2));
@@ -111,11 +125,13 @@ async function saveReport(request, response) {
   }
 }
 const server = await createServer({
-  configFile: false, root, publicDir: false,
+  configFile: false, root,
+  esbuild: { jsx: 'automatic' },
   cacheDir: join(outputRoot, 'vite-testbed'),
-  optimizeDeps: { entries: ['cloth-preview.html'] },
-  plugins: [{ name: 'cloth-local-reports', configureServer(server) { server.middlewares.use('/__cloth/report', saveReport); } }],
+  optimizeDeps: { entries: ['cloth-preview.html', 'hero-preview.html'] },
+  plugins: [tailwindcss(), { name: 'cloth-local-reports', configureServer(server) { server.middlewares.use('/__cloth/report', saveReport); } }],
   server: { host: '127.0.0.1', port: 5176, strictPort: true, watch: { ignored: ['**/.codex-run/**', '**/.flatpak-builder/**'] } },
 });
 await server.listen();
 console.log('Cloth comparison: http://127.0.0.1:5176/cloth-preview.html');
+if (grimoire) console.log('Grimoire viewer: http://127.0.0.1:5176/hero-preview.html');
