@@ -36,6 +36,7 @@ function syntheticClothModel(): ClothModel {
     ],
     capsules: [],
     animatedRods: [],
+    rodBatches: [],
     decodeIssues: [],
     staticNodeFlags: null,
     dynamicNodeFlags: null,

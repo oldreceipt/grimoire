@@ -29,6 +29,13 @@ export interface RawFeModel {
     flRelaxationFactor?: number;
     flWeight0?: number;
   }>;
+  m_SimdRods?: Array<{
+    nNode?: number[] | number[][];
+    f4MinDist?: number[];
+    f4MaxDist?: number[];
+    f4Weight0?: number[];
+    f4RelaxationFactor?: number[];
+  }>;
   m_SimdRodsAnim?: Array<{
     nNode?: number[] | number[][];
     f4Weight0?: number[];
@@ -314,9 +321,9 @@ export interface ClothKelagerBend {
 }
 
 export interface ClothDecodeIssue {
-  array: 'm_KelagerBends' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
+  array: 'm_KelagerBends' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
   record: number;
-  reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets';
+  reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-limits' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets';
 }
 
 export type ClothIntegratorMode = 'goal-damped' | 'raw' | 'unknown';
@@ -324,6 +331,7 @@ export type ClothIntegratorMode = 'goal-damped' | 'raw' | 'unknown';
 export interface ClothModel {
   nodes: ClothNode[];
   rods: ClothRod[];
+  rodBatches: ClothRod[][]; // compiled SIMD order; all lanes read before any write
   animatedRods: ClothAnimatedRod[];
   decodeIssues: ClothDecodeIssue[];
   capsules: ClothCapsule[];
@@ -462,6 +470,41 @@ function parseAnimatedRods(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothAni
     }
   }
   return rods;
+}
+
+function parseRodBatches(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothRod[][] {
+  const batches: ClothRod[][] = [];
+  let invalid = false;
+  for (const [record, entry] of (fe.m_SimdRods ?? []).entries()) {
+    const indices = Array.isArray(entry.nNode) ? entry.nNode.flat() : [];
+    if (indices.length !== 8 || !indices.every((index) => isNodeIndex(index, fe.m_CtrlName.length))) {
+      issues.push({ array: 'm_SimdRods', record, reason: 'invalid-nodes' });
+      invalid = true;
+      continue;
+    }
+    const batch: ClothRod[] = [];
+    for (let lane = 0; lane < 4; lane++) {
+      const min = entry.f4MinDist?.[lane];
+      const max = entry.f4MaxDist?.[lane];
+      const weight = entry.f4Weight0?.[lane];
+      const relax = entry.f4RelaxationFactor?.[lane];
+      if (!isFiniteNumber(min) || !isFiniteNumber(max) || min < 0 || max < min) {
+        issues.push({ array: 'm_SimdRods', record, reason: 'invalid-limits' });
+        invalid = true;
+        break;
+      }
+      if (!isFiniteNumber(weight) || !isFiniteNumber(relax)) {
+        issues.push({ array: 'm_SimdRods', record, reason: 'invalid-weights' });
+        invalid = true;
+        break;
+      }
+      batch.push({ a: indices[lane], b: indices[lane + 4], min, max, weight, relax });
+    }
+    batches.push(batch);
+  }
+  // Keep a complete scalar fallback if any packed record is malformed. Never
+  // deduplicate valid batches: repeated rods can encode authored extra passes.
+  return invalid ? [] : batches;
 }
 
 function parseKelagerBends(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothKelagerBend[] {
@@ -704,6 +747,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
   }));
 
   const animatedRods = parseAnimatedRods(fe, decodeIssues);
+  const rodBatches = parseRodBatches(fe, decodeIssues);
   const kelagerBends = parseKelagerBends(fe, decodeIssues);
   const ropeChains = parseRopeChains(fe, decodeIssues);
   const bitset = fe.m_GoalDampedSpringIntegrators ?? [];
@@ -715,6 +759,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
   return {
     nodes,
     rods,
+    rodBatches,
     animatedRods,
     decodeIssues,
     staticNodeFlags: isUint32(fe.m_nStaticNodeFlags) ? fe.m_nStaticNodeFlags : null,

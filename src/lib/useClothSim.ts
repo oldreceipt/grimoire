@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { clothIntegratorMode } from './feModel';
-import { applyGoalDampedAttraction, applyRawAttraction, projectKelagerBend, reconstructClothRope, reconstructClothTwist } from './clothConstraints';
+import { applyGoalDampedAttraction, applyRawAttraction, projectKelagerBend, projectRodBatch, reconstructClothRope, reconstructClothTwist } from './clothConstraints';
 import {
   applyOffset,
   nodeBaseQuaternion,
@@ -1256,6 +1256,10 @@ function solveGoalDampedNodes(rt: ClothRuntime): void {
 }
 
 function solveRods(rt: ClothRuntime): void {
+  if (rt.model.rodBatches.length > 0) {
+    for (const batch of rt.model.rodBatches) projectRodBatch(rt.nodes, batch);
+    return;
+  }
   for (const rod of rt.rods) {
     const a = rt.nodes[rod.a];
     const b = rt.nodes[rod.b];

@@ -41,6 +41,31 @@ const raw: RawFeModel = {
 };
 
 describe('parseFeModel', () => {
+  it('preserves packed fixed-rod order and padding independently from the scalar list', () => {
+    const model = parseFeModel(gigawattRaw)!;
+    expect(model.rods).toHaveLength(157);
+    expect(model.rodBatches).toHaveLength(40);
+    expect(model.rodBatches[0].map(({ a, b }) => [a, b])).toEqual([[17, 59], [16, 57], [128, 127], [125, 124]]);
+    expect(model.rodBatches[0][0]).toMatchObject({ weight: 0, relax: 1, min: 7.988489151000977, max: 7.988489151000977 });
+    expect(model.rodBatches.flat()).toHaveLength(160);
+  });
+
+  it('reports a malformed packed rod and retains the complete scalar fallback', () => {
+    const model = parseFeModel({
+      ...raw,
+      m_SimdRods: [
+        { nNode: [[0, 1, 1, 1], [1, 2, 2, 99]] },
+        { nNode: [[0, 1, 1, 1], [1, 2, 2, 2]], f4MinDist: [2, 2, 2, 2], f4MaxDist: [1, 1, 1, 1] },
+      ],
+    })!;
+    expect(model.rodBatches).toEqual([]);
+    expect(model.rods).toHaveLength(1);
+    expect(model.decodeIssues).toEqual([
+      { array: 'm_SimdRods', record: 0, reason: 'invalid-nodes' },
+      { array: 'm_SimdRods', record: 1, reason: 'invalid-limits' },
+    ]);
+  });
+
   it('preserves the shipped Gigawatt bend indices and signed weights', () => {
     const model = parseFeModel(gigawattRaw)!;
     expect(model.twists).toHaveLength(42);

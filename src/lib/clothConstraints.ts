@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ClothKelagerBend, ClothTwist, Vec3, Vec4 } from './feModel';
+import type { ClothKelagerBend, ClothRod, ClothTwist, Vec3, Vec4 } from './feModel';
 
 // Compiled coefficients, not authoring strengths. See docs/source2-preview-physics.md.
 const unit = (value: number) => Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0, 1) : 0;
@@ -40,6 +40,34 @@ export function applyRawAttraction(
 interface BendNode {
   pos: THREE.Vector3;
   kinematic: boolean;
+}
+
+const _rodA = Array.from({ length: 4 }, () => new THREE.Vector3());
+const _rodB = Array.from({ length: 4 }, () => new THREE.Vector3());
+
+export function projectRodBatch(nodes: readonly BendNode[], rods: readonly ClothRod[]): void {
+  // The compiled block gathers four lanes, computes them from the same pose,
+  // then scatters all first endpoints followed by all second endpoints. Padding
+  // lanes can repeat a rod; applying those sequentially adds unwanted stiffness.
+  for (let lane = 0; lane < rods.length; lane++) {
+    const rod = rods[lane];
+    const a = nodes[rod.a];
+    const b = nodes[rod.b];
+    _delta.subVectors(b.pos, a.pos);
+    const distance = Math.sqrt(Math.max(_delta.lengthSq(), 2 ** -30));
+    const wanted = THREE.MathUtils.clamp(distance, rod.min, rod.max);
+    _delta.multiplyScalar((distance - wanted) / distance * rod.relax);
+    _rodA[lane].copy(a.pos).addScaledVector(_delta, rod.weight);
+    _rodB[lane].copy(b.pos).addScaledVector(_delta, rod.weight - 1);
+  }
+  for (let lane = 0; lane < rods.length; lane++) {
+    const a = nodes[rods[lane].a];
+    if (!a.kinematic) a.pos.copy(_rodA[lane]);
+  }
+  for (let lane = 0; lane < rods.length; lane++) {
+    const b = nodes[rods[lane].b];
+    if (!b.kinematic) b.pos.copy(_rodB[lane]);
+  }
 }
 
 export function projectKelagerBend(nodes: readonly BendNode[], bend: ClothKelagerBend): void {

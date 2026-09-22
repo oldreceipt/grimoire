@@ -1,10 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applyGoalDampedAttraction, applyRawAttraction, projectKelagerBend, reconstructClothRope, reconstructClothTwist, type TwistNode } from './clothConstraints';
-import type { ClothKelagerBend, ClothTwist } from './feModel';
+import { applyGoalDampedAttraction, applyRawAttraction, projectKelagerBend, projectRodBatch, reconstructClothRope, reconstructClothTwist, type TwistNode } from './clothConstraints';
+import type { ClothKelagerBend, ClothRod, ClothTwist } from './feModel';
 
 const v = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const axisZ = v(0, 0, 1);
+
+describe('compiled rod batches', () => {
+  it('does not apply padded copies repeatedly, but preserves subsequent batches', () => {
+    const nodes = [{ pos: v(0), kinematic: true }, { pos: v(10), kinematic: false }];
+    const rod: ClothRod = { a: 0, b: 1, min: 2, max: 2, relax: 0.5, weight: 0 };
+    projectRodBatch(nodes, [rod, rod, rod, rod]);
+    expect(nodes[1].pos.x).toBe(6);
+    projectRodBatch(nodes, [rod, rod, rod, rod]);
+    expect(nodes[1].pos.x).toBe(4);
+    expect(nodes[0].pos.x).toBe(0);
+  });
+
+  it('gathers every lane before scattering the corrected endpoints', () => {
+    const nodes = [0, 4, 8].map((x) => ({ pos: v(x), kinematic: false }));
+    const first: ClothRod = { a: 0, b: 1, min: 2, max: 2, relax: 1, weight: 0.5 };
+    const second: ClothRod = { ...first, a: 1, b: 2 };
+    projectRodBatch(nodes, [first, second]);
+    // Both read the original middle position. The first rod's second endpoint
+    // is scattered after the second rod's first endpoint.
+    expect(nodes.map((node) => node.pos.x)).toEqual([1, 3, 7]);
+  });
+});
 
 describe('compiled animation attraction', () => {
   it('uses force for goal displacement and vertex for velocity damping in goal mode', () => {

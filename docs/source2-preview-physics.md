@@ -116,6 +116,7 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Tapered capsule contact | `0x2d8770`, `0x22c500`, `0x235920` | Shift the sampled sphere along the axis by radius slope times radial distance, including the short-capsule endpoint case. |
 | Moving-body friction | `0x229ec0`, `0x22a060` | Transform the previous particle through the collider's relative motion, then limit the tangential correction to friction times penetration. Contact changes the current position only. |
 | Contact scheduling | `0x244f0b`, `0x24538f`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Each collider type is visited in reverse serialized order. |
+| Fixed rod batches | `0x111bc0` | Visit `m_SimdRods` in compiled order, gathering all four lanes before scattering endpoints. Padding copies within a batch do not add stiffness; repeated constraints in subsequent batches remain. |
 
 The rope direction sign is recovered from the first rest segment and its bone X
 axis, since the runtime flip bitset is not exported. All 23 Seven chains use the
@@ -128,6 +129,12 @@ records, and integrator selectors. Malformed records produce decode diagnostics
 instead of fabricated node-zero links. Animated rod connections remain separate
 from fixed-length scalar rods. Unknown integrator selectors retain the earlier
 preview approximation; coefficient magnitudes are not used to guess a mode.
+
+Fixed rods use the compiled SIMD batches when available. Seven has 40 batches
+for 157 scalar rods, Vindicta has 9 for 31, and Yamato has 684 for 2,712. The
+extra lanes are preserved as packed, rather than flattened into extra sequential
+passes. A malformed packed record reports a decode issue and retains the whole
+scalar fallback. Scalar rods also remain available for residual diagnostics.
 
 The shared 1/120-second clock advances animation before targets/colliders and
 simulation. Physics-written local transforms are restored before each clean
@@ -226,7 +233,13 @@ agreed within `9e-7` meters at ticks 1, 120 and 600 across all three clips. Runn
 cloth positions still diverged over five seconds; neither deterministic FPS
 results nor matching inputs establish contact fidelity or in-game parity.
 
-On Windows, 157 focused physics tests, ESLint, TypeScript, i18n key/manifest
+The packed rod update preserves the 12/12 input, anchor and frame-rate checks
+on all three cases. Yamato's maximum sampled rod residual remains 5.104 Source
+units, but its frozen full-rig motion drops to 2.41 mm and the damped subset to
+0.109 mm. Its forward skirt folds remain visible; rod ordering alone does not
+explain that shape.
+
+On Windows, 161 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -242,8 +255,8 @@ focused regressions and build; it does not claim the full suite is green.
 
 Next validation units:
 
-1. Audit compiled SIMD rod ordering and node-basis reconstruction against
-   Yamato's larger garment. Capture matching Deadlock animation poses to compare
+1. Isolate generated target shape and node-basis reconstruction against Yamato's
+   larger garment. Capture matching Deadlock animation poses to compare
    garment fit, cable curvature, contact and settling.
 2. Continue validating overlapping contacts, priority groups, inverted and
    vertex-scoped shapes, and engine instance overrides. A scan of the current VPK's
