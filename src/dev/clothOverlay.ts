@@ -72,7 +72,8 @@ export class ClothOverlay {
       const length = this.direction.length();
       shaft.visible = length > 1e-6;
       if (shaft instanceof THREE.Mesh && shaft.visible) {
-        // The collision helper interpolates radius along the segment.
+        // End spheres plus a tapered shaft show the shape's extent. Contact
+        // sampling shifts toward the larger sphere; diagnostics use that solver.
         const positions = shaft.geometry.getAttribute('position');
         const original = this.cylinder.getAttribute('position');
         for (let i = 0; i < positions.count; i++) {

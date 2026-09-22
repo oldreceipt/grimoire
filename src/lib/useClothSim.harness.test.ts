@@ -89,12 +89,12 @@ function syntheticRoot(): { root: THREE.Group; anchor: THREE.Bone } {
 }
 
 describe('local body contacts', () => {
-  it.each(['sphere', 'box'])('does not expand a %s by world-collision radii', (shape) => {
+  it.each(['sphere', 'box'])('expands a %s by the particle radius but not the extra world margin', (shape) => {
     const positions: number[] = [];
     for (const margin of [0, 20]) {
       const model = syntheticClothModel();
       model.nodes = [node('body', [0, 0, 0], true),
-        { ...node('cloth', [0.5, 0, 0]), gravity: 0, animForce: 0, animVertex: 0, collideRadius: margin },
+        { ...node('cloth', [0.5, 0, 0]), gravity: 0, animForce: 0, animVertex: 0, collideRadius: 0.5 },
         node('anchor', [0, 1, 0], true)];
       model.rods = [];
       model.addWorldCollisionRadius = margin;
@@ -110,7 +110,46 @@ describe('local body contacts', () => {
       positions.push(root.getObjectByName('cloth')!.getWorldPosition(new THREE.Vector3()).x);
       harness.dispose();
     }
-    expect(positions).toEqual([1, 1]);
+    expect(positions).toEqual([1.5, 1.5]);
+  });
+
+  it.each([{ flags: 0x80, x: 0.5 }, { flags: 0x2080, x: 1 }])('honors the contact phase selected by compiled flags $flags', ({ flags, x }) => {
+    const model = syntheticClothModel();
+    model.nodes = [node('body', [0, 0, 0], true),
+      { ...node('cloth', [0.5, 0, 0]), gravity: 0, animForce: 1, animVertex: 0 },
+      node('anchor', [0, 1, 0], true)];
+    model.dynamicNodeFlags = flags;
+    model.rods = [];
+    model.spheres = [{ node: 0, sphere: [0, 0, 0, 1], mask: 0xffff }];
+    const root = new THREE.Group();
+    model.nodes.forEach((item) => {
+      const bone = new THREE.Bone();
+      bone.name = item.name; bone.position.fromArray(item.initPos); root.add(bone);
+    });
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    expect(root.getObjectByName('cloth')!.position.x).toBeCloseTo(x, 8);
+    harness.dispose();
+  });
+
+  it('transfers tangential body motion through contact friction', () => {
+    const model = syntheticClothModel();
+    model.nodes = [node('body', [0, 0, 0], true), node('anchor', [1, 0, 0], true),
+      { ...node('cloth', [0, 1, 0]), gravity: 100, animForce: 0, animVertex: 0, friction: 0.2 }];
+    model.dynamicNodeFlags = 0x2080;
+    model.rods = [];
+    model.boxes = [{ node: 0, pos: [0, 0, 0], rot: Q, halfSize: [10, 1, 10], mask: 0xffff }];
+    const root = new THREE.Group();
+    model.nodes.forEach((item) => {
+      const bone = new THREE.Bone();
+      bone.name = item.name; bone.position.fromArray(item.initPos); root.add(bone);
+    });
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    harness.step(CLOTH_TIMESTEP, () => { root.getObjectByName('body')!.position.x = 0.001; });
+    expect(root.getObjectByName('cloth')!.position.x).toBeCloseTo(0.001, 8);
+    expect(root.getObjectByName('cloth')!.position.y).toBeCloseTo(1, 8);
+    harness.dispose();
   });
 });
 

@@ -159,7 +159,7 @@ export interface ClothNode {
   animVertex: number; // compiled flAnimationVertexAttraction
   initPos: Vec3; // model space, Source units, Z-up
   initRot: Vec4; // [x,y,z,w]
-  collideRadius: number; // world-collision radius; body rigids have their own surface
+  collideRadius: number; // particle radius, also used by local body contacts
   friction: number;
   collisionMask: number; // AND-tested against a rigid's mask; 0xFFFF = collide-all
 }

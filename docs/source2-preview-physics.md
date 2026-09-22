@@ -71,9 +71,10 @@ Inspected on 2026-09-22:
   not be used as a per-frame integration equation.
 - Its [jiggle exporter](https://github.com/w1tcherrr/ValveResourceFormat/blob/c22f897342e53f999bd7c466d648f5bbbe85bafa/ValveResourceFormat/IO/Extract/ModelExtract.JiggleBones.cs)
   preserves the separate jiggle spring/limit model. That runtime remains pending.
-- Its FeModel reader identifies node collision radii and the additional world
-  radius as world-collision values. Local body contacts now use the authored
-  body surface directly, without that unrelated padding.
+- Its FeModel reader identifies the per-node collision radii and the separate
+  additional world radius. Runtime tracing corrected an earlier interpretation
+  of the reader's world-collision label: local body contacts also use the
+  per-node radius. The additional world margin remains separate.
 - Its [box reconstruction](https://github.com/w1tcherrr/ValveResourceFormat/blob/c22f897342e53f999bd7c466d648f5bbbe85bafa/ValveResourceFormat/IO/Extract/ModelExtract.Cloth.Physics.cs)
   identifies compiled `vSize` as half-extents. The preview previously halved
   these again. `ClothBox.halfSize` now preserves the compiled dimensions.
@@ -111,6 +112,10 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Kelager bends | `0x10d870` | Project the middle node's centroid-height excess using the three compiled signed weights directly. Do not clamp them to inverse masses. |
 | Twist/swing reconstruction | `0x105f70` | Reconstruct the directed segment from its rest axis and the end node's relative rotation, then relax twist and swing separately. |
 | Rope reconstruction | `0x105bf0` | Align each animated X axis with its solved segment. Two-node tips keep their own animated twist; longer chains copy the penultimate rotation to the tip. |
+| Local contact data | `0x131b9b`, `0x229f70` | The compiled per-node radii feed local body contacts as well as world collision. The additional world margin is not added here. |
+| Tapered capsule contact | `0x2d8770`, `0x22c500`, `0x235920` | Shift the sampled sphere along the axis by radius slope times radial distance, including the short-capsule endpoint case. |
+| Moving-body friction | `0x229ec0`, `0x22a060` | Transform the previous particle through the collider's relative motion, then limit the tangential correction to friction times penetration. Contact changes the current position only. |
+| Contact scheduling | `0x244f0b`, `0x24538f`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Each collider type is visited in reverse serialized order. |
 
 The rope direction sign is recovered from the first rest segment and its bone X
 axis, since the runtime flip bitset is not exported. All 23 Seven chains use the
@@ -160,9 +165,9 @@ Five seconds per clip at each of the four frame rates gives 600 simulation ticks
   positions differ by less than `7.1e-16` meters. This caught and fixed a real
   attachment drift that solver-space anchor metrics alone missed.
 - After freezing `primary_run_e` for ten seconds, damped cloth moves at most
-  `0.00000561` meters during the next second. Its largest orientation change is
-  `0.0000274` radians. The undamped leg chain still moves by up to `0.02573` meters;
-  the full model is not claimed to have settled.
+  `0.00000473` meters during the next second. The full rig moves by at most
+  `0.0000574` meters, with `0.000733` radians maximum orientation change.
+  Authored contact friction substantially reduces the leg-chain motion.
 - Front, back and side inspection confirms attached cables/garment bones and no
   exploding mesh in these poses. The physics-off comparison uses the same clip
   time. No matched in-game reference capture has been completed.
@@ -173,17 +178,18 @@ bounded motion for those nodes and settling for the damped nodes separately.
 `maxFrameMotion` measures successive solved positions, not the damping-modified
 Verlet history. A low history-buffer difference is not proof of settling.
 
-The contact corrections and S2V comparison were checked again at 00:06 UTC on
-2026-09-22. Seven's 12 cases have zero residual penetration against the modeled
-body shapes at the sampled endpoints, with a largest rod residual of 0.964
-Source units. These endpoints do not prove continuous collision freedom.
+The contact corrections and S2V comparison were checked again at 00:46 UTC on
+2026-09-22. Seven's 12 cases pass input, anchor and frame-rate checks. Its largest
+sampled rod residual is 2.915 Source units, and local body contact depth reaches
+0.495 Source units. The checks do not treat these residuals as a collision pass.
+Overlapping contacts and continuous collision behavior still need validation.
 
 Vindicta uses `models/heroes_staging/hornet_v3/hornet.vmdl_c`, 20 matched controls,
 8 static/12 dynamic nodes, 31 rods, 10 bends and 2 rope chains. All dynamic nodes
 are goal-damped. Its same three clips pass all 12 frame-rate/anchor cases, with
-zero endpoint body penetration and a maximum rod residual of 1.107 Source units.
+zero endpoint body penetration and a maximum rod residual of 1.351 Source units.
 After freezing idle for ten seconds, the next second changes positions by less
-than `9e-14` meters. Front, back and side inspection shows the attached braid;
+than `5e-14` meters. Front, back and side inspection shows the attached braid;
 the simulated tip differs from the animation-only reference as expected.
 
 With the shared rigid motion aligned, maximum control-position differences
@@ -201,16 +207,18 @@ an animation input produced a false failure: S2V pins those roots to one cloth
 anchor, whereas vpkmerge follows per-node anchors. Their raw difference remains
 in the report, separately from the input check.
 
-At 00:30 UTC, all 12 Yamato cases pass frame-rate, input and anchor checks. The
+At 00:47 UTC, all 12 Yamato cases pass frame-rate, input and anchor checks. The
 largest input-position difference is `2.50e-7` meters. The sampled endpoints have
 zero measured body penetration and a maximum rod residual of 5.104 Source units.
 Correcting the target blends reduced the saved one-second idle rod residual from
 14.08 to 4.85 Source units. Some conflicting posed rods join particles whose
 force attraction is exactly one; residual alone is not a tuning objective.
 After freezing the run pose, the next second after ten seconds changes the full
-rig by up to 2.34 mm and the vertex-damped subset by 0.104 mm. The bind-pose
-garment remains close to its exported rest shape after eleven seconds, with
-0.198 Source units maximum rod residual.
+rig by up to 8.85 mm and the vertex-damped subset by 0.334 mm. Side inspection
+still shows excessive forward skirt folds. These results are not sufficient to
+enable physics by default. The earlier target-only bind-pose check remained
+close to the exported rest shape after eleven seconds, with 0.198 Source units
+maximum rod residual; that measurement predates the contact changes.
 
 A separate diagnostic fed both exported rigs through the solver, removing S2V's
 shared root motion before each input sample. Their reconstructed target positions
@@ -218,11 +226,14 @@ agreed within `9e-7` meters at ticks 1, 120 and 600 across all three clips. Runn
 cloth positions still diverged over five seconds; neither deterministic FPS
 results nor matching inputs establish contact fidelity or in-game parity.
 
-On Windows, 146 focused physics tests, ESLint, TypeScript, i18n key/manifest
+On Windows, 157 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
-fixed-step animation, render-FPS equivalence, and the complete real-data fixture.
+fixed-step animation, render-FPS equivalence, moving-body friction, contact
+scheduling, particle radii, and the complete real-data fixture. The numerical
+rest-pose check allows twenty seconds to settle before measuring late motion;
+its original 0.005 Source-unit per-tick bound is unchanged.
 
 The preceding foundation stage also ran the full suite: four files failed on
 Unix executable/symlink fixtures and CRLF handling (12 tests and one suite setup).
@@ -231,11 +242,11 @@ focused regressions and build; it does not claim the full suite is green.
 
 Next validation units:
 
-1. Capture matching Deadlock animation poses and compare garment fit, cable
-   curvature, contact and settling. Continue auditing tapered body shapes,
-   collision scheduling and friction against that reference. Positional
-   contact projection is still an approximation and can alter inferred velocity.
-2. Continue Yamato's larger garment and node-basis validation. A scan of the current VPK's
+1. Audit compiled SIMD rod ordering and node-basis reconstruction against
+   Yamato's larger garment. Capture matching Deadlock animation poses to compare
+   garment fit, cable curvature, contact and settling.
+2. Continue validating overlapping contacts, priority groups, inverted and
+   vertex-scoped shapes, and engine instance overrides. A scan of the current VPK's
    40 selectable hero entries found 35 with FeModel data; all examined dynamic
    nodes selected goal-damped integration and had zero authored point damping.
    Raw integration and nonzero damping still need a different reference asset.

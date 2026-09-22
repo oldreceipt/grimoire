@@ -17,6 +17,7 @@ import {
   jiggleDrivenNodeSet,
   orderBonesParentFirst,
   projectCollisionPlane,
+  projectClothContact,
   projectAnimStrayRadius,
   pushOutsideBox,
   pushOutsideCapsule,
@@ -56,22 +57,61 @@ describe('pushOutsideCapsule', () => {
     expect(p.length()).toBeCloseTo(6, 4); // 5 (collider) + 1 (particle)
   });
 
-  it('uses the tapered radius along a capsule', () => {
-    // segment x in [0,10], radius 1 at a -> 5 at b. midpoint radius is 3.
-    // point off-axis (y=1) so there's a push direction.
+  it('shifts the contact sphere toward the wider end of a tapered capsule', () => {
     const p = V(5, 1, 0);
     pushOutsideCapsule(p, { a: V(0, 0, 0), b: V(10, 0, 0), ra: 1, rb: 5 }, 0);
-    expect(Math.hypot(p.y, p.z)).toBeCloseTo(3, 4);
-    expect(p.x).toBeCloseTo(5, 4);
+    expect(p.x).toBeCloseTo(4.226405462721032, 8);
+    expect(p.y).toBeCloseTo(2.933986343197419, 8);
+    expect(p.z).toBe(0);
   });
 
-  it('bails (no NaN) on a point exactly on the centerline', () => {
-    // measure-zero degenerate: no escape direction. Returns false, leaves p put;
-    // next frame's gravity nudges it off-axis. ponytail: not worth a special case.
+  it('uses a deterministic escape direction on the centerline', () => {
     const p = V(5, 0, 0);
     const hit = pushOutsideCapsule(p, { a: V(0, 0, 0), b: V(10, 0, 0), ra: 1, rb: 5 }, 0);
-    expect(hit).toBe(false);
-    expect(Number.isNaN(p.y)).toBe(false);
+    expect(hit).toBe(true);
+    expect(p.toArray()).toEqual([5, 0, 3]);
+  });
+
+  it('collapses an engulfed small end to the larger sphere', () => {
+    const p = V(0, 1, 0);
+    pushOutsideCapsule(p, { a: V(0, 0, 0), b: V(1, 0, 0), ra: 1, rb: 3 }, 0);
+    expect(p.distanceTo(V(1, 0, 0))).toBeCloseTo(3, 8);
+  });
+
+  it('keeps the cylindrical contact normal perpendicular for equal radii', () => {
+    const p = V(5, 1, 0);
+    pushOutsideCapsule(p, { a: V(0, 0, 0), b: V(10, 0, 0), ra: 3, rb: 3 }, 0);
+    expect(p.toArray()).toEqual([5, 3, 0]);
+  });
+});
+
+describe('projectClothContact', () => {
+  it.each([{ friction: 0, x: 0 }, { friction: 0.25, x: 0.5 }, { friction: 10, x: 10 }])('limits sliding by friction times depth ($friction)', ({ friction, x }) => {
+    const position = V(0, 0, 0);
+    const previous = V(10, 2, 0);
+    projectClothContact(position, previous, V(0, 1, 0), 2, friction, new THREE.Matrix4());
+    expect(position.toArray()).toEqual([x, 2, 0]);
+    expect(previous.toArray()).toEqual([10, 2, 0]);
+  });
+
+  it('carries friction with a translating body', () => {
+    const position = V(0, 0, 0);
+    projectClothContact(position, V(0, 0, 0), V(0, 1, 0), 2, 0.5, new THREE.Matrix4().makeTranslation(4, 0, 0));
+    expect(position.toArray()).toEqual([1, 2, 0]);
+  });
+
+  it('uses rotation of the previous contact frame as well as translation', () => {
+    const position = V(0, 0, 0);
+    projectClothContact(position, V(2, 0, 0), V(0, 0, 1), 1, 0.5, new THREE.Matrix4().makeRotationZ(Math.PI / 2));
+    expect(position.x).toBeCloseTo(0, 8);
+    expect(position.y).toBeCloseTo(0.5, 8);
+    expect(position.z).toBe(1);
+  });
+
+  it('does not apply friction without contact', () => {
+    const position = V(0, 0, 0);
+    projectClothContact(position, V(10, 2, 0), V(0, 1, 0), 0, 1, new THREE.Matrix4());
+    expect(position.toArray()).toEqual([0, 0, 0]);
   });
 });
 
@@ -371,7 +411,7 @@ describe('projectAnimStrayRadius', () => {
 });
 
 describe('projectCollisionPlane', () => {
-  it('pushes the child along the parent-rotated positive normal and preserves velocity', () => {
+  it('projects current position along the parent-rotated plane normal', () => {
     const parent = {
       pos: V(10, 0, 0),
       prev: V(10, 0, 0),
@@ -382,20 +422,16 @@ describe('projectCollisionPlane', () => {
       prev: V(9.5, 1.5, 0),
       solvedRot: Q(),
     };
-    const beforeVelocity = child.pos.clone().sub(child.prev);
-
     const changed = projectCollisionPlane(
       [parent, child],
       { ctrlParent: 0, childNode: 1, normal: [1, 0, 0], offset: 2, strength: 1 },
-      0.5,
     );
 
-    const afterVelocity = child.pos.clone().sub(child.prev);
     expect(changed).toBe(true);
     expect(child.pos.x).toBeCloseTo(10, 6);
-    expect(child.pos.y).toBeCloseTo(2.5, 6);
+    expect(child.pos.y).toBeCloseTo(2, 6);
     expect(child.pos.z).toBeCloseTo(0, 6);
-    expect(afterVelocity.distanceTo(beforeVelocity)).toBeLessThan(1e-9);
+    expect(child.prev.toArray()).toEqual([9.5, 1.5, 0]);
   });
 
   it('scales correction by clamped strength', () => {
@@ -406,20 +442,18 @@ describe('projectCollisionPlane', () => {
     const changed = projectCollisionPlane(
       [parent, child],
       { ctrlParent: 0, childNode: 1, normal: [0, 1, 0], offset: 0, strength: 0.25 },
-      1,
     );
 
     expect(changed).toBe(true);
-    expect(child.pos.y).toBeCloseTo(-0.5, 6);
-    expect(child.prev.y).toBeCloseTo(-1.5, 6);
+    expect(child.pos.y).toBeCloseTo(-0.75, 6);
+    expect(child.prev.y).toBeCloseTo(-2, 6);
 
     projectCollisionPlane(
       [parent, clampedChild],
       { ctrlParent: 0, childNode: 1, normal: [0, 1, 0], offset: 0, strength: 5 },
-      1,
     );
-    expect(clampedChild.pos.y).toBeCloseTo(1, 6);
-    expect(clampedChild.prev.y).toBeCloseTo(0, 6);
+    expect(clampedChild.pos.y).toBeCloseTo(0, 6);
+    expect(clampedChild.prev.y).toBeCloseTo(-2, 6);
   });
 
   it('leaves nodes alone when the plane reference or normal is invalid', () => {
@@ -431,12 +465,10 @@ describe('projectCollisionPlane', () => {
     expect(projectCollisionPlane(
       [parent, child],
       { ctrlParent: 9, childNode: 1, normal: [0, 1, 0], offset: 0, strength: 1 },
-      1,
     )).toBe(false);
     expect(projectCollisionPlane(
       [parent, child],
       { ctrlParent: 0, childNode: 1, normal: [0, 0, 0], offset: 0, strength: 1 },
-      1,
     )).toBe(false);
 
     expect(child.pos.equals(beforePos)).toBe(true);
@@ -450,7 +482,6 @@ describe('projectCollisionPlane', () => {
     const changed = projectCollisionPlane(
       [parent, child],
       { ctrlParent: 0, childNode: 1, normal: [0, 1, 0], offset: 0, strength: 1 },
-      1,
     );
 
     expect(changed).toBe(false);

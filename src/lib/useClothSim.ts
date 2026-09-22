@@ -48,19 +48,54 @@ interface Box {
 }
 
 const _cp = new THREE.Vector3();
+const _capsuleAxis = new THREE.Vector3();
+const _capsuleRadial = new THREE.Vector3();
 export function capsuleDepth(
   p: THREE.Vector3,
   c: Capsule,
   pr: number,
   outN: THREE.Vector3,
 ): number {
-  const { point, t } = closestPointOnSegment(p, c.a, c.b, _cp);
+  _capsuleAxis.subVectors(c.b, c.a);
+  const length = _capsuleAxis.length();
+  let t = 0;
+  if (length < 1e-6) t = c.rb > c.ra ? 1 : 0;
+  else if (length - (c.rb - c.ra) <= 0.5) t = 1;
+  else {
+    _capsuleAxis.multiplyScalar(1 / length);
+    _capsuleRadial.subVectors(p, c.a);
+    const axial = _capsuleRadial.dot(_capsuleAxis);
+    const radial = _capsuleRadial.addScaledVector(_capsuleAxis, -axial).length();
+    // The tapered contact path shifts the sampled sphere toward the larger
+    // endpoint by radius slope * radial distance before projecting out of it.
+    t = THREE.MathUtils.clamp((axial + (c.rb - c.ra) / length * radial) / length, 0, 1);
+  }
+  _cp.copy(c.a).lerp(c.b, t);
   const r = c.ra + (c.rb - c.ra) * t + pr;
-  outN.copy(p).sub(point);
+  outN.copy(p).sub(_cp);
   const d = outN.length();
-  if (d >= r || d < 1e-6) return 0;
-  outN.multiplyScalar(1 / d);
+  if (d >= r) return 0;
+  if (d < 1e-6) outN.set(0, 0, 1);
+  else outN.multiplyScalar(1 / d);
   return r - d;
+}
+
+const _contactTangent = new THREE.Vector3();
+export function projectClothContact(
+  position: THREE.Vector3,
+  previous: THREE.Vector3,
+  normal: THREE.Vector3,
+  depth: number,
+  friction: number,
+  colliderMotion: THREE.Matrix4,
+): void {
+  if (depth <= 0) return;
+  _contactTangent.copy(previous).applyMatrix4(colliderMotion).sub(position);
+  _contactTangent.addScaledVector(normal, -_contactTangent.dot(normal));
+  const distance = _contactTangent.length();
+  const limit = Math.max(0, friction) * depth;
+  if (distance > 0) position.addScaledVector(_contactTangent, Math.min(1, limit / distance));
+  position.addScaledVector(normal, depth);
 }
 
 const _push = new THREE.Vector3();
@@ -566,6 +601,7 @@ interface ClothRuntime {
   capsules: RigidRuntime[];
   boxes: BoxRuntime[];
   collisionPlanes: CollisionPlaneRuntime[];
+  colliderTransforms: Map<number, THREE.Matrix4>;
   ctrlOffsets: OffsetRuntime[];
   reverseOffsets: ReverseOffsetRuntime[];
   fitReconstructions: FitMatrixReconstruction[];
@@ -709,7 +745,6 @@ const _planeDelta = new THREE.Vector3();
 export function projectCollisionPlane(
   nodes: readonly (CollisionPlaneNode | undefined)[],
   plane: Pick<ClothCollisionPlane, 'ctrlParent' | 'childNode' | 'normal' | 'offset' | 'strength'>,
-  particleRadius: number,
 ): boolean {
   const parent = nodes[plane.ctrlParent];
   const child = nodes[plane.childNode];
@@ -724,14 +759,12 @@ export function projectCollisionPlane(
   const strength = THREE.MathUtils.clamp(Number.isFinite(plane.strength) ? plane.strength : 0, 0, 1);
   if (strength <= 0) return false;
 
-  const radius = Number.isFinite(particleRadius) ? Math.max(0, particleRadius) : 0;
   _planePoint.copy(parent.pos).addScaledVector(_planeNormal, plane.offset);
   const signed = _planeDelta.copy(child.pos).sub(_planePoint).dot(_planeNormal);
-  if (signed >= radius) return false;
+  if (signed >= 0) return false;
 
-  _planeDelta.copy(_planeNormal).multiplyScalar((radius - signed) * strength);
+  _planeDelta.copy(_planeNormal).multiplyScalar(-signed * strength);
   child.pos.add(_planeDelta);
-  child.prev.add(_planeDelta);
   return true;
 }
 
@@ -1046,10 +1079,11 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
     rotationNodes: new Set([...model.twists.map((link) => link.nodeOrient), ...model.ropeChains.flat()].filter((index) => (
       index >= model.rotLockStaticNodeCount && index < nodes.length && !nodes[index].jiggleDriven
     ))),
-    capsules: [...model.capsules.map(fromCapsule), ...model.spheres.map(fromSphere)].filter(
+    capsules: [...model.capsules.map(fromCapsule).reverse(), ...model.spheres.map(fromSphere).reverse()].filter(
       (rigid) => rigid.node >= 0 && rigid.node < nodes.length,
     ),
-    boxes: model.boxes.map(fromBox).filter((rigid) => rigid.node >= 0 && rigid.node < nodes.length),
+    boxes: model.boxes.map(fromBox).reverse().filter((rigid) => rigid.node >= 0 && rigid.node < nodes.length),
+    colliderTransforms: new Map(),
     collisionPlanes: model.collisionPlanes.map(fromCollisionPlane).filter((plane) => (
       plane.ctrlParent >= 0
       && plane.ctrlParent < nodes.length
@@ -1250,32 +1284,44 @@ function solveCollisions(rt: ClothRuntime): void {
     halfSize: new THREE.Vector3(),
   };
   const normal = new THREE.Vector3();
-  for (const node of rt.nodes) {
-    if (isKinematicNode(node)) continue;
-    // Per-node radii and the additional world margin belong to world traces.
-    // Local rigid shapes already describe the cloth exclusion surface.
-    const particleRadius = 0;
-    // Preview contact approximation. Projection also changes the inferred Verlet
-    // velocity; it is not a port of the engine's contact/friction pipeline.
-    for (const rigid of rt.capsules) {
+  const transforms = new Map<number, THREE.Matrix4>();
+  const motions = new Map<number, THREE.Matrix4>();
+  const unitScale = new THREE.Vector3(1, 1, 1);
+  const motion = (index: number) => {
+    const cached = motions.get(index);
+    if (cached) return cached;
+    const parent = rt.nodes[index];
+    const transform = new THREE.Matrix4().compose(parent.pos, parent.solvedRot, unitScale);
+    const previous = rt.colliderTransforms.get(index);
+    const delta = previous ? transform.clone().multiply(previous.clone().invert()) : new THREE.Matrix4();
+    transforms.set(index, transform);
+    motions.set(index, delta);
+    return delta;
+  };
+  // Each type visits its serialized colliders in reverse order. Priority groups
+  // and inverted/vertex-scoped shapes need separate support.
+  for (const rigid of rt.capsules) {
+    rigidToCapsule(rt, rigid, cap);
+    const colliderMotion = motion(rigid.node);
+    for (const node of rt.nodes) {
+      if (node.kinematic) continue;
       if (!canCollide(node.collisionMask, rigid.mask)) continue;
-      rigidToCapsule(rt, rigid, cap);
-      const depth = capsuleDepth(node.pos, cap, particleRadius, normal);
-      if (depth <= 0) continue;
-      node.pos.addScaledVector(normal, depth);
-    }
-    for (const rigid of rt.boxes) {
-      if (!canCollide(node.collisionMask, rigid.mask)) continue;
-      rigidToBox(rt, rigid, box);
-      const depth = boxDepth(node.pos, box, particleRadius, normal);
-      if (depth <= 0) continue;
-      node.pos.addScaledVector(normal, depth);
-    }
-    for (const plane of rt.collisionPlanes) {
-      if (plane.childNode !== node.index) continue;
-      projectCollisionPlane(rt.nodes, plane, particleRadius);
+      const depth = capsuleDepth(node.pos, cap, Math.max(0, node.collideRadius), normal);
+      projectClothContact(node.pos, node.prev, normal, depth, node.friction, colliderMotion);
     }
   }
+  for (const rigid of rt.boxes) {
+    rigidToBox(rt, rigid, box);
+    const colliderMotion = motion(rigid.node);
+    for (const node of rt.nodes) {
+      if (node.kinematic) continue;
+      if (!canCollide(node.collisionMask, rigid.mask)) continue;
+      const depth = boxDepth(node.pos, box, Math.max(0, node.collideRadius), normal);
+      projectClothContact(node.pos, node.prev, normal, depth, node.friction, colliderMotion);
+    }
+  }
+  for (const plane of rt.collisionPlanes) projectCollisionPlane(rt.nodes, plane);
+  for (const [index, transform] of transforms) rt.colliderTransforms.set(index, transform);
 }
 
 function solveAnimStrayRadii(rt: ClothRuntime): void {
@@ -1455,6 +1501,7 @@ function stepClothRuntime(
   if (!Number.isFinite(delta) || delta <= 0) return;
   if (delta > CLOTH_RESUME_GAP) {
     rt.accumulator = 0;
+    rt.colliderTransforms.clear();
     for (const node of rt.nodes) node.prev.copy(node.pos);
     return;
   }
@@ -1466,6 +1513,7 @@ function stepClothRuntime(
     .applyQuaternion(rt.rootToModelRot);
 
   const { constraintIterations, goalIterations } = solverIterationPhases(rt.model, clothTuning.iterationOverride);
+  const collideAfterConstraints = (rt.model.dynamicNodeFlags & 0x2000) !== 0;
   for (let step = 0; step < count; step++) {
     restoreAnimationPose(rt);
     animate?.(CLOTH_TIMESTEP);
@@ -1478,7 +1526,7 @@ function stepClothRuntime(
 
     solveGoals(rt, CLOTH_TIMESTEP);
     applyRuntimeReverseOffsetReconstructions(rt);
-    solveCollisions(rt);
+    if (!collideAfterConstraints) solveCollisions(rt);
     applyRuntimeReverseOffsetReconstructions(rt);
 
     for (let i = 0; i < constraintIterations; i++) {
@@ -1488,9 +1536,7 @@ function stepClothRuntime(
       restorePinnedSolverNodes(rt.nodes);
       applyRuntimeReverseOffsetReconstructions(rt);
     }
-    // Close the preview contact pass after rods can move particles into a body.
-    // The engine's flag-dependent contact schedule is not yet reproduced here.
-    solveCollisions(rt);
+    if (collideAfterConstraints) solveCollisions(rt);
     solveAnimStrayRadii(rt);
     restorePinnedSolverNodes(rt.nodes);
     applyRuntimeReverseOffsetReconstructions(rt);
@@ -1605,12 +1651,12 @@ export function createClothSimHarness(
         if (node.kinematic) continue;
         rt.capsules.forEach((rigid, index) => {
           if (!canCollide(node.collisionMask, rigid.mask)) return;
-          const depth = capsuleDepth(node.pos, rigidToCapsule(rt, rigid, cap), 0, normal);
+          const depth = capsuleDepth(node.pos, rigidToCapsule(rt, rigid, cap), Math.max(0, node.collideRadius), normal);
           if (depth > 1e-6) contacts.push({ node: node.index, shape: `capsule:${index}`, depth });
         });
         rt.boxes.forEach((rigid, index) => {
           if (!canCollide(node.collisionMask, rigid.mask)) return;
-          const depth = boxDepth(node.pos, rigidToBox(rt, rigid, box), 0, normal);
+          const depth = boxDepth(node.pos, rigidToBox(rt, rigid, box), Math.max(0, node.collideRadius), normal);
           if (depth > 1e-6) contacts.push({ node: node.index, shape: `box:${index}`, depth });
         });
       }
