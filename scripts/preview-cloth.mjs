@@ -11,7 +11,7 @@ const outputRoot = join(root, '.codex-run/source2-physics');
 const cases = {
   seven: { label: 'Seven', hero: 'gigawatt' },
   vindicta: { label: 'Vindicta', hero: 'hornet' },
-  yamato: { label: 'Yamato', hero: 'yamato' },
+  yamato: { label: 'Yamato', hero: 'yamato', clips: ['primary_stand_idle', 'primary_run275_n', 'primary_run275_e'] },
   necro: { label: 'Necro', hero: 'necro' },
 };
 const caseArgument = process.argv.indexOf('--case');
@@ -41,7 +41,6 @@ const run = (args) => {
   if (result.error || result.status !== 0) throw result.error || new Error(result.stderr || 'vpkmerge export failed');
   return result.stdout;
 };
-const clips = ['primary_stand_idle', 'primary_run_n', 'primary_run_e'];
 const exporterVersion = run(['--version']).trim();
 const vpk = { path: pak, modified: statSync(pak).mtime.toISOString(), directorySha256: sha256(pak) };
 if (s2v && !existsSync(s2v)) throw new Error(`S2V CLI not found: ${s2v}`);
@@ -53,10 +52,15 @@ for (const name of new Set(selected)) {
   const entry = live[0]?.model_entry;
   if (!entry) throw new Error(`No live model found for ${cases[name].hero}`);
   const select = ['--vpk', pak, '--entry', entry];
+  const clips = cases[name].clips ?? ['primary_stand_idle', 'primary_run_n', 'primary_run_e'];
   const raw = run(['model', 'femodel', ...select]);
   if (!JSON.parse(raw)) throw new Error(`${entry} has no FeModel.`);
   writeFileSync(join(output, 'cloth.json'), raw);
-  writeFileSync(join(output, 'clips.json'), run(['model', 'clips', ...select, '--json']));
+  const clipList = run(['model', 'clips', ...select, '--json']);
+  const availableClips = JSON.parse(clipList).map((clip) => clip.name);
+  const missingClips = clips.filter((clip) => !availableClips.includes(clip));
+  if (missingClips.length > 0) throw new Error(`${entry} is missing requested clips: ${missingClips.join(', ')}`);
+  writeFileSync(join(output, 'clips.json'), clipList);
   run(['model', 'export', ...select, ...clips.flatMap((clip) => ['--clip', clip]), '--out', join(output, 'model.glb')]);
   let reference = null;
   if (s2v) {

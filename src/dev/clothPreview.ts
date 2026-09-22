@@ -54,6 +54,8 @@ async function main() {
   ]);
   const model = parseFeModel(raw);
   if (!model) throw new Error('Export did not contain a FeModel.');
+  const generatedNodes = new Set([...model.ctrlOffsets, ...model.softOffsets].map((offset) => offset.child));
+  const inputIndices = model.nodes.map((_, index) => index).filter((index) => !generatedNodes.has(index));
   const root = gltf.scene;
   const makeScene = (object: THREE.Object3D) => {
     const result = new THREE.Scene();
@@ -125,9 +127,13 @@ async function main() {
     originalMaterials.forEach((material, mesh) => { mesh.material = enabled ? neutral : material; });
   });
   for (const clip of gltf.animations) clipSelect.add(new Option(clip.name, clip.name));
+  clipSelect.add(new Option('Bind pose', '__bind'));
+  if (gltf.animations.some((clip) => clip.name === metadata.clips[0])) clipSelect.value = metadata.clips[0];
   const mixer = new THREE.AnimationMixer(root);
   const referenceMixer = new THREE.AnimationMixer(referenceRoot);
-  const motionAnchor = model.nodes.slice(0, model.rotLockStaticNodeCount)
+  const bodyIndices = model.nodes.map((_, index) => index)
+    .filter((index) => index < model.rotLockStaticNodeCount && !generatedNodes.has(index));
+  const motionAnchor = bodyIndices.map((index) => model.nodes[index])
     .find((node) => root.getObjectByName(node.name) && referenceRoot.getObjectByName(node.name));
   const motionCorrection = new THREE.Matrix4();
   const unitScale = new THREE.Vector3(1, 1, 1);
@@ -154,6 +160,8 @@ async function main() {
   let checking = false;
   let checkReport: unknown = null;
   const matched = model.nodes.filter((node) => root.getObjectByName(node.name)).length;
+  const missingInputs = inputIndices.filter((index) => !root.getObjectByName(model.nodes[index].name)).map((index) => model.nodes[index].name);
+  const missingReferenceInputs = inputIndices.filter((index) => !referenceRoot.getObjectByName(model.nodes[index].name)).map((index) => model.nodes[index].name);
   const reset = () => {
     harness?.dispose();
     mixer.stopAllAction();
@@ -190,6 +198,7 @@ async function main() {
   };
   const report = () => ({ metadata, clip: clipSelect.value, physics: physics.checked, frozen: frozen.checked,
     elapsed, animationTime: mixer.time, matched, controls: model.nodes.length, skinnedMeshes,
+    generatedControlsWithoutBones: model.nodes.length - matched - missingInputs.length, missingInputs, missingReferenceInputs,
     referenceAlignment: { enabled: alignMotion.checked, anchor: motionAnchor?.name ?? null, correction: motionCorrection.toArray() },
     metrics: harness?.metrics() ?? null, snapshot: harness?.snapshot() ?? null, checks: checkReport });
   clipSelect.addEventListener('change', reset);
@@ -221,6 +230,15 @@ async function main() {
     position: Math.max(0, ...before.slice(0, count).map((node, index) => node.position.distanceTo(after[index].position))),
     angle: Math.max(0, ...before.slice(0, count).map((node, index) => node.rotation.angleTo(after[index].rotation))),
   });
+  const staticTargetWritebackError = () => {
+    const snapshot = harness?.snapshot();
+    if (!snapshot) return 0;
+    const transform = new THREE.Matrix4().fromArray(snapshot.modelToWorld);
+    return Math.max(0, ...snapshot.nodes.slice(0, model.staticNodeCount).map((node) => {
+      const bone = root.getObjectByName(node.name);
+      return bone ? bone.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3().fromArray(node.target).applyMatrix4(transform)) : 0;
+    }));
+  };
   checks.addEventListener('click', async () => {
     if (checking) return;
     checking = true;
@@ -237,7 +255,9 @@ async function main() {
         reset();
         for (let i = 0; i < 600; i++) advance(CLOTH_TIMESTEP);
         const animatedPose = pose();
-        const exportDifference = poseDifference(animatedPose, pose(referenceRoot));
+        const referencePose = pose(referenceRoot);
+        const exportDifference = poseDifference(animatedPose, referencePose);
+        const inputDifference = poseDifference(inputIndices.map((index) => animatedPose[index]), inputIndices.map((index) => referencePose[index]));
         const referenceMotionCorrection = motionCorrection.toArray();
         const referenceMatched = model.nodes.filter((node) => referenceRoot.getObjectByName(node.name)).length;
         let reference: ReturnType<typeof pose> | undefined;
@@ -255,11 +275,12 @@ async function main() {
           const snapshot = harness?.snapshot();
           cases.push({ clip: clip.name, fps, milliseconds: duration,
             exportPositionDifference: exportDifference.position,
+            animationInputDifference: inputDifference,
             referenceMotionCorrection,
             referenceControlsMatched: referenceMatched,
             frameRateDifference: poseDifference(reference, solvedPose),
-            bodyAnchorDifference: poseDifference(animatedPose, solvedPose, model.rotLockStaticNodeCount),
-            staticPositionError: poseDifference(animatedPose, solvedPose, model.staticNodeCount).position,
+            bodyAnchorDifference: poseDifference(bodyIndices.map((index) => animatedPose[index]), bodyIndices.map((index) => solvedPose[index])),
+            staticPositionError: staticTargetWritebackError(),
             metrics: harness?.metrics(),
             maxContactDepth: Math.max(0, ...snapshot?.contacts.map((contact) => contact.depth) ?? []),
             maxRodError: Math.max(0, ...snapshot?.rods.map((rod) => rod.error) ?? []),
@@ -273,14 +294,17 @@ async function main() {
       const after = pose();
       const damped = model.nodes.map((node, index) => ({ node, index }))
         .filter(({ node }) => !node.pinned && node.animVertex > 0).map(({ index }) => index);
-      const passed = cases.filter((test) => matched === model.nodes.length
-        && test.referenceControlsMatched === model.nodes.length && test.exportPositionDifference < 1e-5
+      const passed = cases.filter((test) => missingInputs.length === 0 && missingReferenceInputs.length === 0
+        && test.referenceControlsMatched === matched && test.animationInputDifference.position < 1e-5
         && test.metrics?.finite === 1 && test.metrics.simulationSteps === 600
         && test.frameRateDifference.position < 1e-7 && test.frameRateDifference.angle < 1e-6
         && test.bodyAnchorDifference.position < 1e-7 && test.bodyAnchorDifference.angle < 1e-6
         && test.staticPositionError < 1e-7).length;
       checkReport = {
         poseChecks: { passed, total: cases.length },
+        renderedControls: matched, generatedControlsWithoutBones: model.nodes.length - matched - missingInputs.length,
+        animationInputs: inputIndices.length,
+        missingInputs, missingReferenceInputs,
         units: { posePosition: 'meters', poseAngle: 'radians', solverDistance: 'Source units' },
         cases,
         frozenPoseChangeAfterTenSeconds: poseDifference(settledPose, after),
@@ -288,7 +312,7 @@ async function main() {
         settled: harness?.metrics(),
         reference: metadata.reference?.label ?? 'vpkmerge animation without physics',
         referenceAlignmentAnchor: motionAnchor?.name ?? null,
-        note: 'Exporter checks compare clean control positions. Zero-damping chains may keep swinging. These checks do not establish in-game visual parity.',
+        note: 'Exporter checks require matching animation inputs. Generated cloth roots use different static anchoring in the two exporters; their raw position difference is reported separately. Zero-damping chains may keep swinging. These checks do not establish in-game visual parity.',
       };
       checksResult.textContent = JSON.stringify(checkReport, null, 2);
       checksSummary.textContent = `${passed}/${cases.length} pose and anchor checks passed`;
@@ -330,7 +354,7 @@ async function main() {
         diagnostics.textContent = snapshot ? `Body penetration: ${worstContact?.depth.toFixed(4) ?? '0'} Source units\nRod limit error: ${worstRod?.error.toFixed(4) ?? '0'} Source units`
           + (worstContact ? `\nContact: ${snapshot.nodes[worstContact.node].name} / ${worstContact.shape}` : '')
           + (worstRod && worstRod.error > 1e-4 ? `\nRod: ${snapshot.nodes[worstRod.a].name} -> ${snapshot.nodes[worstRod.b].name}` : '') : 'Enable physics to inspect solver data.';
-        status.textContent = `${elapsed.toFixed(3)} seconds | animation ${mixer.time.toFixed(3)}\n${matched}/${model.nodes.length} controls matched | ${skinnedMeshes} skinned meshes`;
+        status.textContent = `${elapsed.toFixed(3)} seconds | animation ${mixer.time.toFixed(3)}\n${matched} rendered controls | ${model.nodes.length - matched - missingInputs.length} generated controls | ${missingInputs.length} unresolved`;
         metrics.textContent = JSON.stringify(harness?.metrics() ?? { physics: 'off' }, null, 2);
         lastDiagnostics = time;
       }

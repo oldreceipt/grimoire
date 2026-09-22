@@ -483,6 +483,65 @@ describe('createClothSimHarness', () => {
     expect(metrics.maxFrameMotion).toBeLessThan(0.05);
   });
 
+  it.each([{ freeNodes: [] }, { freeNodes: [2] }])('simulates positive-mass node bases independently of the free-orientation list $freeNodes', ({ freeNodes }) => {
+    const { root } = syntheticRoot();
+    const model = syntheticClothModel();
+    model.freeNodes = freeNodes;
+    model.dynamicNodeFlags = 0x80;
+    model.rods = [];
+    model.nodeBases = [{ node: 1, x0: 0, x1: 1, y0: 0, y1: 2, qAdjust: Q }];
+    for (const particle of model.nodes.slice(1)) {
+      particle.gravity = 100;
+      particle.animForce = 0;
+      particle.animVertex = 0.2;
+    }
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    expect(harness.metrics().kinematicCount).toBe(1);
+    for (const particle of model.nodes.slice(1)) {
+      expect(root.getObjectByName(particle.name)!.position.y).toBeCloseTo(particle.initPos[1] - 100 * CLOTH_TIMESTEP ** 2, 8);
+    }
+    expect(root.getObjectByName('cloth_anchor')!.position.toArray()).toEqual([0, 0, 0]);
+  });
+
+  it.each([{ pinned: false }, { pinned: true }])('reconstructs ordered soft-offset targets even for exported bones (pinned=$pinned)', ({ pinned }) => {
+    const model = syntheticClothModel();
+    model.nodes = [
+      node('a', [0, 0, 0], true), node('b', [2, 0, 0], true), node('c', [0, 2, 0], true),
+      { ...node('generated', [1, 0, 0], pinned), animForce: 1, animVertex: 0, gravity: 0 },
+    ];
+    model.staticNodeCount = pinned ? 4 : 3;
+    model.firstPositionDrivenNode = 4;
+    model.rods = [];
+    model.dynamicNodeFlags = 0x80;
+    model.ctrlOffsets = [{ parent: 0, child: 3, offset: [1, 0, 0] }];
+    model.softOffsets = [
+      { parent: 1, child: 3, offset: [-1, 0, 0], alpha: 0.75 },
+      { parent: 2, child: 3, offset: [1, -2, 0], alpha: 0.6 },
+    ];
+    const root = new THREE.Group();
+    const bones = model.nodes.map((particle) => {
+      const bone = new THREE.Bone();
+      bone.name = particle.name;
+      bone.position.fromArray(particle.initPos);
+      root.add(bone);
+      return bone;
+    });
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP, () => {
+      bones[0].position.x = 10;
+      bones[1].position.x = 22;
+      bones[2].position.y = 32;
+    });
+    // ((11,0) * .75 + (21,0) * .25) * .6 + (1,30) * .4.
+    expect(bones[3].position.x).toBeCloseTo(8.5, 8);
+    expect(bones[3].position.y).toBeCloseTo(12, 8);
+    expect(harness.metrics().maxAnchorError).toBeLessThan(1e-8);
+    harness.dispose();
+    expect(bones[3].position.toArray()).toEqual([1, 0, 0]);
+    expect(bones[0].position.x).toBe(10);
+  });
+
   it('keeps a FitMatrix control bounded while source nodes settle', () => {
     const root = syntheticFitRoot();
     const harness = createClothSimHarness(root, syntheticFitClothModel());

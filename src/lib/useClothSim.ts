@@ -300,29 +300,6 @@ export function fitMatrixTargetNode(
   return hasNode ? fit.node : -1;
 }
 
-export function freeSimNodeSet(
-  model: Pick<ClothModel, 'nodes' | 'freeNodes'>,
-): Set<number> {
-  const authored = new Set<number>();
-  for (const index of model.freeNodes) {
-    if (Number.isInteger(index) && index >= 0 && index < model.nodes.length) authored.add(index);
-  }
-  if (authored.size > 0) return authored;
-
-  const fallback = new Set<number>();
-  model.nodes.forEach((node, index) => {
-    if (node.invMass > 0) fallback.add(index);
-  });
-  return fallback;
-}
-
-export function isFreeSimNode(
-  index: number,
-  model: Pick<ClothModel, 'nodes' | 'freeNodes'>,
-): boolean {
-  return freeSimNodeSet(model).has(index);
-}
-
 export function jiggleDrivenNodeSet(
   model: Pick<ClothModel, 'jiggleBones' | 'nodes'>,
 ): Set<number> {
@@ -504,6 +481,7 @@ interface NodeRuntime {
   lockToGoal: boolean;
   jiggleDriven: boolean;
   kinematic: boolean;
+  generatedTarget: boolean;
   integratorMode: ReturnType<typeof clothIntegratorMode>;
   gravity: number;
   damping: number;
@@ -980,10 +958,10 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
 
   const fit = recoverSimilarity(source, target);
   const lockToGoalNodes = new Set(model.lockToGoal);
-  const freeSimNodes = freeSimNodeSet(model);
   const reverseOffsetDrivenNodes = reverseOffsetDrivenNodeSet(model);
   const fitMatrixDrivenNodes = fitMatrixDrivenNodeSet(model);
   const jiggleDrivenNodes = jiggleDrivenNodeSet(model);
+  const generatedTargets = new Set([...model.ctrlOffsets, ...model.softOffsets].map((offset) => offset.child));
   const nodes: NodeRuntime[] = model.nodes.map((node, index) => {
     const bone = bones.get(node.name) ?? null;
     const initPos = vec3(node.initPos);
@@ -996,15 +974,15 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
       animationQuaternion: bone ? bone.quaternion.clone() : null,
       animationScale: bone ? bone.scale.clone() : null,
       invMass: node.invMass,
-      // m_FreeNodes is Source 2's authored sim-positioned set. Positive invMass
-      // alone is too broad on several preview exports, so use invMass only when
-      // the payload does not provide m_FreeNodes.
-      pinned: node.pinned || !freeSimNodes.has(index),
+      // FreeNodes selects an orientation path; nodes with a reconstructed basis
+      // still simulate their positions. Explicit driven-node flags are separate.
+      pinned: node.pinned,
       positionDriven: isPositionDrivenNode(index, model) || fitMatrixDrivenNodes.has(index),
       reverseOffsetDriven: reverseOffsetDrivenNodes.has(index),
       lockToGoal: lockToGoalNodes.has(index),
       jiggleDriven: jiggleDrivenNodes.has(index),
       kinematic: false,
+      generatedTarget: generatedTargets.has(index),
       integratorMode: clothIntegratorMode(model, index),
       gravity: effectiveNodeGravity(node.gravity, model.defaultGravityScale),
       damping: node.damping,
@@ -1129,29 +1107,23 @@ function refreshTargets(root: THREE.Object3D, rt: ClothRuntime): void {
   for (const offset of rt.ctrlOffsets) {
     const parent = rt.nodes[offset.parent];
     const child = rt.nodes[offset.child];
-    if (!parent || !child || child.bone) continue;
+    if (!parent || !child) continue;
     child.target.copy(applyOffset(v3Array(parent.target), [parent.targetRot.x, parent.targetRot.y, parent.targetRot.z, parent.targetRot.w], offset.offset, offset.sign));
   }
 
-  const softPos = new Map<number, { pos: THREE.Vector3; weight: number }>();
   for (const offset of rt.softOffsets) {
     const parent = rt.nodes[offset.parent];
     const child = rt.nodes[offset.child];
-    if (!parent || !child || child.bone) continue;
+    if (!parent || !child || !Number.isFinite(offset.alpha)) continue;
     const target = applyOffset(
       v3Array(parent.target),
       [parent.targetRot.x, parent.targetRot.y, parent.targetRot.z, parent.targetRot.w],
       offset.offset,
       offset.sign,
-    ).multiplyScalar(offset.alpha);
-    const acc = softPos.get(offset.child) ?? { pos: new THREE.Vector3(), weight: 0 };
-    acc.pos.add(target);
-    acc.weight += offset.alpha;
-    softPos.set(offset.child, acc);
-  }
-  for (const [index, acc] of softPos) {
-    if (acc.weight <= 0) continue;
-    rt.nodes[index]?.target.lerp(acc.pos.multiplyScalar(1 / acc.weight), Math.min(acc.weight, 1));
+    );
+    // The serialized network is an ordered series of lerps. Alpha retains the
+    // previous result, while this parent's influence receives 1 - alpha.
+    child.target.lerp(target, 1 - THREE.MathUtils.clamp(offset.alpha, 0, 1));
   }
 
   const positions = rt.nodes.map((node) => v3Array(node.target));
@@ -1364,11 +1336,11 @@ function writeBack(root: THREE.Object3D, rt: ClothRuntime): void {
     rt.writtenBones.add(bone);
   }
 
-  const movedBones = new Set(rt.nodes.filter((node) => !node.kinematic && node.bone).map((node) => node.bone));
+  const movedBones = new Set(rt.nodes.filter((node) => (!node.kinematic || node.generatedTarget) && node.bone).map((node) => node.bone));
   const positionWrites = new Map<THREE.Bone, THREE.Vector3>();
   for (const node of rt.nodes) {
     if (!node.bone) continue;
-    if (node.kinematic) {
+    if (node.kinematic && !node.generatedTarget) {
       // A simulated ancestor must not carry an animation-owned attachment away
       // from its sampled world position, even when that ancestor only translates.
       let parent: THREE.Object3D | null = node.bone;
@@ -1552,7 +1524,7 @@ function collectClothHarnessMetrics(rt: ClothRuntime): ClothHarnessMetrics {
     }
     if (isKinematicNode(node)) {
       kinematicCount += 1;
-      maxAnchorError = Math.max(maxAnchorError, targetDistance);
+      if (!node.positionDriven && !node.reverseOffsetDriven) maxAnchorError = Math.max(maxAnchorError, targetDistance);
     }
 
     const values = [

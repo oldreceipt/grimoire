@@ -12,8 +12,6 @@ import {
   effectiveNodeGravity,
   fitMatrixDrivenNodeSet,
   fitMatrixTargetNode,
-  freeSimNodeSet,
-  isFreeSimNode,
   isKinematicNode,
   isPositionDrivenNode,
   jiggleDrivenNodeSet,
@@ -36,20 +34,6 @@ import {
 const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 const Q = (x = 0, y = 0, z = 0) => new THREE.Quaternion().setFromEuler(new THREE.Euler(x, y, z));
 const jiggleParams = {} as NonNullable<Parameters<typeof jiggleDrivenNodeSet>[0]['jiggleBones'][number]['params']>;
-const simNode = (invMass: number): ClothModel['nodes'][number] => ({
-  name: '',
-  invMass,
-  pinned: invMass <= 0,
-  gravity: 0,
-  damping: 0,
-  animForce: 0,
-  animVertex: 0,
-  initPos: [0, 0, 0],
-  initRot: [0, 0, 0, 1],
-  collideRadius: 0,
-  friction: 0,
-  collisionMask: 0xffff,
-});
 
 describe('pushOutsideCapsule', () => {
   it('pushes a point inside a sphere out to the surface', () => {
@@ -562,40 +546,6 @@ describe('position-driven classification', () => {
     expect(fitMatrixTargetNode({ node: 4, ctrl: -1 }, 8)).toBe(4);
   });
 
-  it('uses authored freeNodes as the free simulation set when present', () => {
-    const model = {
-      freeNodes: [2, 99, -1],
-      nodes: [
-        simNode(0),
-        simNode(1),
-        simNode(1),
-      ],
-    };
-
-    const freeNodes = freeSimNodeSet(model);
-
-    expect(freeNodes.has(1)).toBe(false);
-    expect(freeNodes.has(2)).toBe(true);
-    expect(freeNodes.has(99)).toBe(false);
-    expect(isFreeSimNode(2, model)).toBe(true);
-  });
-
-  it('falls back to positive invMass when freeNodes are absent', () => {
-    const model = {
-      freeNodes: [],
-      nodes: [
-        simNode(0),
-        simNode(0.5),
-        simNode(1),
-      ],
-    };
-
-    const freeNodes = freeSimNodeSet(model);
-
-    expect(freeNodes.has(0)).toBe(false);
-    expect(freeNodes.has(1)).toBe(true);
-    expect(freeNodes.has(2)).toBe(true);
-  });
 });
 
 describe('restorePinnedSolverNodes', () => {
