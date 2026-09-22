@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ClothKelagerBend, ClothRod, ClothTwist, Vec3, Vec4 } from './feModel';
+import type { ClothHingeLimit, ClothKelagerBend, ClothRod, ClothTwist, Vec3, Vec4 } from './feModel';
 
 // Compiled coefficients, not authoring strengths. See docs/source2-preview-physics.md.
 const unit = (value: number) => Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0, 1) : 0;
@@ -83,6 +83,96 @@ export function projectKelagerBend(nodes: readonly BendNode[], bend: ClothKelage
   if (!a.kinematic) a.pos.addScaledVector(_delta, bend.weight[0]);
   if (!b.kinematic) b.pos.addScaledVector(_delta, bend.weight[1]);
   if (!c.kinematic) c.pos.addScaledVector(_delta, bend.weight[2]);
+}
+
+const _hingePoints = Array.from({ length: 4 }, () => new THREE.Vector3());
+const _hingeGradients = Array.from({ length: 4 }, () => new THREE.Vector3());
+const _hingeDeltas = Array.from({ length: 4 }, () => new THREE.Vector3());
+const _hingeAxis = new THREE.Vector3();
+const _hingeReference = new THREE.Vector3();
+const _hingeArm = new THREE.Vector3();
+const _hingePerpendicular = new THREE.Vector3();
+const _hingeMasses = [0, 0, 0, 0];
+
+function readHingePoints(nodes: readonly BendNode[], hinge: ClothHingeLimit): void {
+  for (let i = 0; i < 4; i++) _hingePoints[i].copy(nodes[hinge.node[i]].pos);
+  _hingePoints[2].lerp(nodes[hinge.node[4]].pos, hinge.weight4);
+  _hingePoints[3].lerp(nodes[hinge.node[5]].pos, hinge.weight5);
+}
+
+function hingeGeometry(center: number): { error: number; valid: boolean } {
+  const [a, b, reference, arm] = _hingePoints;
+  _hingeAxis.subVectors(b, a);
+  const length = _hingeAxis.length();
+  _hingeAxis.normalize();
+  _hingeReference.subVectors(reference, a);
+  _hingeArm.subVectors(arm, a);
+  const referenceHeight = _hingeReference.dot(_hingeAxis);
+  const armHeight = _hingeArm.dot(_hingeAxis);
+  _hingeReference.addScaledVector(_hingeAxis, -referenceHeight);
+  _hingeArm.addScaledVector(_hingeAxis, -armHeight);
+  const referenceRadius = _hingeReference.length();
+  const armRadius = _hingeArm.length();
+  if (length < 0.01 || referenceRadius < 0.01 || armRadius < 0.01) return { error: 0, valid: false };
+  _hingeReference.multiplyScalar(1 / referenceRadius);
+  _hingeArm.multiplyScalar(1 / armRadius);
+  _hingePerpendicular.crossVectors(_hingeAxis, _hingeReference);
+  const cosine = _hingeReference.dot(_hingeArm);
+  const sine = _hingePerpendicular.dot(_hingeArm);
+  let error = Math.atan2(sine, cosine) - center;
+  if (error > Math.PI) error -= Math.PI * 2;
+  else if (error < -Math.PI) error += Math.PI * 2;
+  const [g0, g1, g2, g3] = _hingeGradients;
+  g2.copy(_hingePerpendicular).multiplyScalar(-1 / referenceRadius);
+  g3.copy(_hingePerpendicular).multiplyScalar(cosine).addScaledVector(_hingeReference, -sine).multiplyScalar(1 / armRadius);
+  g1.copy(g2).multiplyScalar(-referenceHeight / length).addScaledVector(g3, -armHeight / length);
+  g0.copy(g1).add(g2).add(g3).negate();
+  return { error, valid: true };
+}
+
+export function projectHingeLimit(nodes: readonly (BendNode & { invMass: number })[], hinge: ClothHingeLimit): void {
+  readHingePoints(nodes, hinge);
+  for (let i = 0; i < 4; i++) _hingeMasses[i] = nodes[hinge.node[i]].invMass;
+  _hingeMasses[2] *= 1 - hinge.weight4;
+  _hingeMasses[3] *= 1 - hinge.weight5;
+  let geometry = hingeGeometry(hinge.center);
+  const tolerance = Math.PI / 180;
+  if (!geometry.valid || Math.abs(geometry.error) <= hinge.extents + tolerance) return;
+  const target = Math.sign(geometry.error) * hinge.extents;
+  for (let iteration = 0; iteration < 5; iteration++) {
+    if (!geometry.valid) return;
+    const correction = target - geometry.error;
+    const denominator = _hingeGradients.reduce((sum, gradient, i) => sum + _hingeMasses[i] * gradient.lengthSq(), 0);
+    if (denominator < 2 ** -23) return;
+    const scale = THREE.MathUtils.clamp(correction, -Math.PI / 4, Math.PI / 4) / denominator;
+    for (let i = 0; i < 4; i++) {
+      _hingeDeltas[i].copy(_hingeGradients[i]).multiplyScalar(_hingeMasses[i] * scale);
+      _hingePoints[i].add(_hingeDeltas[i]);
+    }
+    if (Math.abs(correction) < Math.PI / 45) break;
+    geometry = hingeGeometry(hinge.center);
+    if (Math.abs(geometry.error - target) <= tolerance) break;
+  }
+  for (let i = 0; i < 4; i++) {
+    if (_hingeMasses[i] <= 0) continue;
+    const node = nodes[hinge.node[i]];
+    const weight = i === 2 ? hinge.weight4 : i === 3 ? hinge.weight5 : 0;
+    if (weight === 0) {
+      if (!node.kinematic) node.pos.copy(_hingePoints[i]);
+    } else {
+      // The compiled scatter uses the last correction for blended references.
+      if (!node.kinematic) node.pos.addScaledVector(_hingeDeltas[i], weight / (1 - weight));
+      const other = nodes[hinge.node[i + 2]];
+      if (!other.kinematic) other.pos.addScaledVector(_hingeDeltas[i], (1 - weight) / weight);
+    }
+  }
+}
+
+/** Angular excess in radians, or null when the hinge geometry has collapsed. */
+export function hingeLimitExcess(nodes: readonly BendNode[], hinge: ClothHingeLimit): number | null {
+  readHingePoints(nodes, hinge);
+  const geometry = hingeGeometry(hinge.center);
+  return geometry.valid ? Math.max(0, Math.abs(geometry.error) - hinge.extents) : null;
 }
 
 export interface TwistNode {

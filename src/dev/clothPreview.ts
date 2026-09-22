@@ -380,7 +380,9 @@ async function main() {
       if (time - lastDiagnostics > 150) {
         const worstContact = snapshot?.contacts.sort((a, b) => b.depth - a.depth)[0];
         const worstRod = snapshot?.rods.sort((a, b) => b.error - a.error)[0];
+        const hingeErrors = snapshot?.hinges.flatMap((hinge) => hinge.excess === null ? [] : [hinge.excess]) ?? [];
         diagnostics.textContent = snapshot ? `Body penetration: ${worstContact?.depth.toFixed(4) ?? '0'} Source units\nRod limit error: ${worstRod?.error.toFixed(4) ?? '0'} Source units`
+          + (snapshot.hinges.length > 0 ? `\nHinge limit error: ${hingeErrors.length ? THREE.MathUtils.radToDeg(Math.max(...hingeErrors)).toFixed(2) + ' degrees' : 'unavailable'}` : '')
           + (worstContact ? `\nContact: ${snapshot.nodes[worstContact.node].name} / ${worstContact.shape}` : '')
           + (worstRod && worstRod.error > 1e-4 ? `\nRod: ${snapshot.nodes[worstRod.a].name} -> ${snapshot.nodes[worstRod.b].name}` : '') : 'Enable physics to inspect solver data.';
         status.textContent = `${elapsed.toFixed(3)} seconds | animation ${mixer.time.toFixed(3)}\n${matched} rendered controls | ${model.nodes.length - matched - missingInputs.length} generated controls | ${missingInputs.length} unresolved`;

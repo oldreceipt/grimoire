@@ -40,6 +40,7 @@ function syntheticClothModel(): ClothModel {
     rodBatches: [],
     decodeIssues: [],
     featureGaps: [],
+    hingeLimits: [],
     staticNodeFlags: null,
     dynamicNodeFlags: null,
     goalDampedSpringIntegrators: [],

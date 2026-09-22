@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applyGoalDampedAttraction, applyRawAttraction, projectKelagerBend, projectRodBatch, reconstructClothRope, reconstructClothTwist, type TwistNode } from './clothConstraints';
+import { applyGoalDampedAttraction, applyRawAttraction, projectHingeLimit, projectKelagerBend, projectRodBatch, reconstructClothRope, reconstructClothTwist, type TwistNode } from './clothConstraints';
+import { parseFeModel } from './feModel';
+import hingeReference from './__fixtures__/cloth/source2_hinge_reference.json';
+
+describe('compiled hinge limits', () => {
+  it.each(hingeReference.cases)('matches the runtime reference: $name', ({ positions, invMasses, hinge, expected }) => {
+    const model = parseFeModel({ m_CtrlName: positions.map((_, i) => String(i)), m_HingeLimits: [hinge] })!;
+    const nodes = positions.map((position, i) => ({ pos: new THREE.Vector3().fromArray(position), invMass: invMasses[i], kinematic: invMasses[i] === 0 }));
+    projectHingeLimit(nodes, model.hingeLimits[0]);
+    nodes.forEach((node, i) => {
+      expect(node.pos.distanceTo(new THREE.Vector3().fromArray(expected[i]))).toBeLessThan(1e-6);
+      if (node.kinematic) expect(node.pos.toArray()).toEqual(positions[i]);
+    });
+  });
+});
 import type { ClothKelagerBend, ClothRod, ClothTwist } from './feModel';
 
 const v = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);

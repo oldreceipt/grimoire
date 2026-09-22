@@ -109,7 +109,14 @@ export interface RawFeModel {
   m_nRopeCount?: number;
   m_JiggleBones?: Array<{ m_nNode?: number; m_nJiggleParent?: number; m_jiggleBone?: RawJiggleBoneParams }>;
   m_KelagerBends?: Array<{ flHeight0?: number; nNode?: number[]; flWeight?: number[] }>;
-  m_HingeLimits?: unknown[];
+  m_HingeLimits?: Array<{
+    nNode?: number[];
+    nFlags?: number;
+    flWeight4?: number;
+    flWeight5?: number;
+    flAngleCenter?: number;
+    flAngleExtents?: number;
+  }>;
   m_Tris?: unknown[];
   m_SimdTris?: unknown[];
   m_Quads?: unknown[];
@@ -331,10 +338,18 @@ export interface ClothKelagerBend {
   weight: Vec3; // signed solver shares, not inverse masses or flags
 }
 
+export interface ClothHingeLimit {
+  node: [number, number, number, number, number, number];
+  weight4: number;
+  weight5: number;
+  center: number;
+  extents: number;
+}
+
 export interface ClothDecodeIssue {
-  array: 'm_KelagerBends' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
+  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
   record: number;
-  reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-limits' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets';
+  reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-limits' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets' | 'unsupported-flags';
 }
 
 export type ClothIntegratorMode = 'goal-damped' | 'raw' | 'unknown';
@@ -347,6 +362,7 @@ export interface ClothModel {
   animatedRodBatches: ClothAnimatedRod[][];
   decodeIssues: ClothDecodeIssue[];
   featureGaps: ClothFeatureGap[];
+  hingeLimits: ClothHingeLimit[];
   capsules: ClothCapsule[];
   spheres: ClothSphere[];
   boxes: ClothBox[];
@@ -447,7 +463,6 @@ function clothFeatureGaps(fe: RawFeModel): ClothFeatureGap[] {
   };
   add(fe.m_Tris?.length ? 'm_Tris' : 'm_SimdTris', fe.m_Tris?.length ? 'Triangle constraints' : 'Triangle batches');
   add(fe.m_Quads?.length ? 'm_Quads' : 'm_SimdQuads', fe.m_Quads?.length ? 'Quad constraints' : 'Quad batches');
-  add('m_HingeLimits', 'Hinge limits');
   add('m_AxialEdges', 'Axial edges');
   add('m_FollowNodes', 'Follow links');
   add('m_RigidColliderPriorities', 'Collider priority groups');
@@ -582,6 +597,32 @@ function parseKelagerBends(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothKel
     });
   }
   return bends;
+}
+
+function parseHingeLimits(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothHingeLimit[] {
+  const hinges: ClothHingeLimit[] = [];
+  for (const [record, hinge] of (fe.m_HingeLimits ?? []).entries()) {
+    const n = hinge.nNode;
+    if (!Array.isArray(n) || n.length !== 6 || !n.every((index) => isNodeIndex(index, fe.m_CtrlName.length))) {
+      issues.push({ array: 'm_HingeLimits', record, reason: 'invalid-nodes' });
+      continue;
+    }
+    if ((hinge.nFlags ?? 0) !== 0) {
+      issues.push({ array: 'm_HingeLimits', record, reason: 'unsupported-flags' });
+      continue;
+    }
+    const { flWeight4: weight4, flWeight5: weight5, flAngleCenter: center, flAngleExtents: extents } = hinge;
+    if (!isFiniteNumber(weight4) || !isFiniteNumber(weight5) || weight4 < 0 || weight4 > 1 || weight5 < 0 || weight5 > 1) {
+      issues.push({ array: 'm_HingeLimits', record, reason: 'invalid-weights' });
+      continue;
+    }
+    if (!isFiniteNumber(center) || !isFiniteNumber(extents) || extents < 0 || extents > Math.PI) {
+      issues.push({ array: 'm_HingeLimits', record, reason: 'invalid-limits' });
+      continue;
+    }
+    hinges.push({ node: [n[0], n[1], n[2], n[3], n[4], n[5]], weight4, weight5, center, extents });
+  }
+  return hinges;
 }
 
 const parseJiggleBoneParams = (p: RawJiggleBoneParams | undefined): ClothJiggleBoneParams | null => {
@@ -814,6 +855,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     animatedRodBatches,
     decodeIssues,
     featureGaps: clothFeatureGaps(fe),
+    hingeLimits: parseHingeLimits(fe, decodeIssues),
     staticNodeFlags: isUint32(fe.m_nStaticNodeFlags) ? fe.m_nStaticNodeFlags : null,
     dynamicNodeFlags: isUint32(fe.m_nDynamicNodeFlags) ? fe.m_nDynamicNodeFlags : null,
     goalDampedSpringIntegrators: validBitset ? bitset : [],

@@ -1,7 +1,7 @@
 # Source 2 preview physics
 
 The preview now uses compiled raw/goal-damped attraction, fixed and animated rod
-batches, Kelager bends, directed twist/swing links, and rope bone reconstruction.
+batches, Kelager bends, hinge limits, directed twist/swing links, and rope bone reconstruction.
 The rendered validation cases include Seven, Vindicta, Yamato and Necro's current
 base models with three animations each.
 Physics remains behind
@@ -124,6 +124,7 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Raw attraction | `0x244411` | With `p = clamp(VA * dt)` and `f = 2 * FA * dt`, position receives `(goal - position) * (p + f)` and history receives `(goal - position) * p * (1 - p)`. |
 | Relaxation schedule | `0x2448ef`, `0x244fa0` | One base pass plus extra iterations, capped at 256. Goal passes run at the end of relaxation, with their own extra count. |
 | Kelager bends | `0x10d870` | Project the middle node's centroid-height excess using the three compiled signed weights directly. Do not clamp them to inverse masses. |
+| Hinge limits | `0x10d5a0`, `0x14e3e0`, `0x14e060` | Measure the signed angle between two blended arms around the hinge axis. Apply the compiled angular range with a one-degree tolerance, at most five bounded gradient corrections, and the runtime's mass weighting and scatter. |
 | Twist/swing reconstruction | `0x105f70` | Reconstruct the directed segment from its rest axis and the end node's relative rotation, then relax twist and swing separately. |
 | Rope reconstruction | `0x105bf0` | Align each animated X axis with its solved segment. Two-node tips keep their own animated twist; longer chains copy the penultimate rotation to the tip. |
 | Local contact data | `0x131b9b`, `0x229f70` | The compiled per-node radii feed local body contacts as well as world collision. The additional world margin is not added here. |
@@ -160,6 +161,23 @@ unique connection count is separate from repeated packed lanes in diagnostics.
 Reverse offsets now apply only during rendered-bone writeback. Explicit driven
 node boundaries still apply, so Yamato retains its 13 position-driven controls
 while Necro's three reverse-offset particles can simulate.
+
+Hinge limits run after Kelager bends and before rods, matching `0x2450a0` through
+`0x245129`. S2V's `HingeRestAngle` and `HingeLimitsOf` explain the six references,
+two blend weights, and center/extents representation. The preview preserves the
+runtime's 45-degree correction cap and four-degree early exit. Degenerate
+geometry leaves the original particles unchanged. Only the zero-flag records
+present in the installed hero inventory are supported; other flags produce a
+decode diagnostic.
+
+Twenty synthetic hinge cases in `source2_hinge_reference.json` were evaluated
+by the compiled x64 routine in Unicorn 2.1.4. The only substituted math import
+is `V_atan2f`, implemented with Python `math.atan2` rounded to float32. The
+fixture contains synthetic inputs and resulting positions, with the binary
+hash and entry point, and contains no game assets. Tests compare the preview
+against those independent outputs within `1e-6` Source units. The measured
+maximum difference was `2.77e-7`; this does not claim bit-identical math imports
+or a match to the engine's complete simulation loop.
 
 The shared 1/120-second clock advances animation before targets/colliders and
 simulation. Physics-written local transforms are restored before each clean
@@ -278,15 +296,19 @@ After a ten-second frozen settle, the next second changes positions by less
 than `4e-16` meters and orientations by 0.000140 radians. Front/back idle and side
 run inspection shows attached hair and tag geometry without mesh explosions;
 there is still no matched in-game capture.
-Its two triangle constraints and three hinge limits remain unimplemented and
-are now explicitly reported by the testbed and saved metrics.
+Its two triangle constraints remain unimplemented and are explicitly reported
+by the testbed and saved metrics. All three hinge limits now run. The resulting
+12/12 checks still pass, with maximum sampled rod residual 0.781 Source units
+and zero sampled endpoint penetration. The frozen jar-tag hinge excess drops
+from 9.657 to 3.885 degrees. Later rods and attraction can reintroduce angular
+error, so the testbed reports this residual independently of pose checks.
 The reverse-offset correction also retains Yamato's 12/12 checks and the same
 sampled residuals and frozen motion. Its side-view skirt folds are unchanged.
 The node-basis audit agrees with S2V's Y-first Gram-Schmidt construction. It adds
 the runtime's collapsed-edge fallback; Yamato's sampled spans exceed its
 threshold, and the updated formula still passes all 12 regression cases.
 
-On Windows, 162 focused physics tests, ESLint, TypeScript, i18n key/manifest
+On Windows, 183 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -320,7 +342,7 @@ Next validation units:
 4. Gate supported model families and define an unsupported-data fallback before
    considering physics enabled by default.
 
-Coverage includes known gaps for triangle/quad constraints, hinge limits, axial
+Coverage includes known gaps for triangle/quad constraints, axial
 edges, follow links, collider priorities/flags/vertex scopes, jiggle bones, and
 approximate fit matrices. Scalar constraints take precedence over padded SIMD
 copies in these counts. The list is not exhaustive: world collision has no

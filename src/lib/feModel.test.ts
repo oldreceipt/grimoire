@@ -44,7 +44,7 @@ describe('parseFeModel', () => {
   it('reports missing constraint families without counting SIMD copies twice or unscoped colliders', () => {
     const model = parseFeModel({
       ...raw,
-      m_Tris: [{}, {}], m_SimdTris: [{}], m_HingeLimits: [{}, {}, {}],
+      m_Tris: [{}, {}], m_SimdTris: [{}],
       m_TaperedCapsuleRigids: [
         { nNode: 0, vSphere: [], nFlags: 0, nVertexMapIndex: 0xffff },
         { nNode: 0, vSphere: [], nFlags: 1, nVertexMapIndex: 0 },
@@ -52,11 +52,23 @@ describe('parseFeModel', () => {
     })!;
     expect(model.featureGaps).toEqual([
       { field: 'm_Tris', label: 'Triangle constraints', count: 2, status: 'not-implemented' },
-      { field: 'm_HingeLimits', label: 'Hinge limits', count: 3, status: 'not-implemented' },
       { field: 'm_TaperedCapsuleRigids.nFlags', label: 'Collider flags', count: 1, status: 'not-implemented' },
       { field: 'm_TaperedCapsuleRigids.nVertexMapIndex', label: 'Vertex-scoped colliders', count: 1, status: 'not-implemented' },
     ]);
     expect(model.decodeIssues).toEqual([]);
+  });
+
+  it('validates hinge nodes, weights, flags and angular bounds before solving', () => {
+    const hinge = { nNode: [0, 1, 2, 1, 2, 1], flWeight4: 0.3, flWeight5: 0.4, flAngleCenter: 1.6, flAngleExtents: 0.5 };
+    const model = parseFeModel({ ...raw, m_HingeLimits: [
+      hinge,
+      { ...hinge, nNode: [0, 1, 2, 99, 2, 1] },
+      { ...hinge, flWeight4: 1.1 },
+      { ...hinge, flAngleExtents: -1 },
+      { ...hinge, nFlags: 1 },
+    ] })!;
+    expect(model.hingeLimits).toEqual([{ node: [0, 1, 2, 1, 2, 1], weight4: 0.3, weight5: 0.4, center: 1.6, extents: 0.5 }]);
+    expect(model.decodeIssues.map((issue) => issue.reason)).toEqual(['invalid-nodes', 'invalid-weights', 'invalid-limits', 'unsupported-flags']);
   });
 
   it('preserves packed fixed-rod order and padding independently from the scalar list', () => {
