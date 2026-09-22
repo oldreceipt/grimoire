@@ -12,6 +12,7 @@ import {
 import type {
   ClothBox,
   ClothCapsule,
+  ClothColliderFilter,
   ClothCollisionPlane,
   ClothModel,
   ClothReverseOffset,
@@ -528,17 +529,21 @@ interface NodeRuntime {
   targetRot: THREE.Quaternion;
 }
 
-interface RigidRuntime {
-  node: number;
+interface ColliderFilterRuntime {
   mask: number;
+  priority: number;
+  vertexNodes: ReadonlySet<number> | null;
+}
+
+interface RigidRuntime extends ColliderFilterRuntime {
+  node: number;
   sphere0: Vec4;
   sphere1: Vec4;
   dbgName: string;
 }
 
-interface BoxRuntime {
+interface BoxRuntime extends ColliderFilterRuntime {
   node: number;
-  mask: number;
   pos: Vec3;
   rot: Vec4;
   halfSize: Vec3;
@@ -546,12 +551,18 @@ interface BoxRuntime {
 }
 
 interface CollisionPlaneRuntime {
+  priority?: number;
   ctrlParent: number;
   childNode: number;
   normal: Vec3;
   offset: number;
   strength: number;
 }
+
+type ColliderRuntime =
+  | { kind: 'capsule'; shape: RigidRuntime }
+  | { kind: 'box'; shape: BoxRuntime }
+  | { kind: 'plane'; shape: CollisionPlaneRuntime };
 
 interface OffsetRuntime {
   parent: number;
@@ -594,7 +605,7 @@ interface ClothRuntime {
   rotationNodes: Set<number>;
   capsules: RigidRuntime[];
   boxes: BoxRuntime[];
-  collisionPlanes: CollisionPlaneRuntime[];
+  colliders: ColliderRuntime[];
   colliderTransforms: Map<number, THREE.Matrix4>;
   ctrlOffsets: OffsetRuntime[];
   reverseOffsets: ReverseOffsetRuntime[];
@@ -727,8 +738,9 @@ function writeBoneQuaternion(root: THREE.Object3D, rt: ClothRuntime, bone: THREE
   setBoneWorldQuaternion(bone, modelToWorldQuat(root, rt, q));
 }
 
-function canCollide(nodeMask: number, rigidMask: number): boolean {
-  return rigidMask === 0 || (nodeMask & rigidMask) !== 0;
+function canCollide(node: Pick<NodeRuntime, 'index' | 'collisionMask'>, rigid: ColliderFilterRuntime): boolean {
+  if (rigid.vertexNodes !== null) return rigid.vertexNodes.has(node.index);
+  return rigid.mask === 0 || (node.collisionMask & rigid.mask) !== 0;
 }
 
 type CollisionPlaneNode = {
@@ -864,10 +876,18 @@ function rigidToBox(rt: ClothRuntime, rigid: BoxRuntime, out: Box): Box {
   return out;
 }
 
+function colliderFilter(collider: ClothColliderFilter): ColliderFilterRuntime {
+  return {
+    mask: collider.mask,
+    priority: collider.priority ?? 0,
+    vertexNodes: collider.vertexNodes === undefined ? null : new Set(collider.vertexNodes),
+  };
+}
+
 function fromCapsule(c: ClothCapsule): RigidRuntime {
   return {
+    ...colliderFilter(c),
     node: c.node,
-    mask: c.mask,
     sphere0: c.sphere0,
     sphere1: c.sphere1,
     dbgName: `node:${c.node}`,
@@ -876,8 +896,8 @@ function fromCapsule(c: ClothCapsule): RigidRuntime {
 
 function fromSphere(s: ClothSphere): RigidRuntime {
   return {
+    ...colliderFilter(s),
     node: s.node,
-    mask: s.mask,
     sphere0: s.sphere,
     sphere1: s.sphere,
     dbgName: `node:${s.node}`,
@@ -886,8 +906,8 @@ function fromSphere(s: ClothSphere): RigidRuntime {
 
 function fromBox(b: ClothBox): BoxRuntime {
   return {
+    ...colliderFilter(b),
     node: b.node,
-    mask: b.mask,
     pos: b.pos,
     rot: b.rot,
     halfSize: b.halfSize,
@@ -897,6 +917,7 @@ function fromBox(b: ClothBox): BoxRuntime {
 
 function fromCollisionPlane(p: ClothCollisionPlane): CollisionPlaneRuntime {
   return {
+    priority: p.priority,
     ctrlParent: p.ctrlParent,
     childNode: p.childNode,
     normal: p.normal,
@@ -1014,6 +1035,21 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
     };
   });
 
+  const capsules = [...model.capsules.map(fromCapsule).reverse(), ...model.spheres.map(fromSphere).reverse()].filter(
+    (rigid) => rigid.node >= 0 && rigid.node < nodes.length,
+  );
+  const boxes = model.boxes.map(fromBox).reverse().filter((rigid) => rigid.node >= 0 && rigid.node < nodes.length);
+  const collisionPlanes = model.collisionPlanes.map(fromCollisionPlane).filter((plane) => (
+    plane.ctrlParent >= 0 && plane.ctrlParent < nodes.length && plane.childNode >= 0 && plane.childNode < nodes.length
+  ));
+  const colliders: ColliderRuntime[] = [
+    ...capsules.map((shape) => ({ kind: 'capsule' as const, shape })),
+    ...boxes.map((shape) => ({ kind: 'box' as const, shape })),
+    ...collisionPlanes.map((shape) => ({ kind: 'plane' as const, shape })),
+  ];
+  // Stable sorting preserves each type's compiled traversal within a priority.
+  colliders.sort((a, b) => (b.shape.priority ?? 0) - (a.shape.priority ?? 0));
+
   return {
     model,
     nodes,
@@ -1025,17 +1061,10 @@ function buildRuntime(root: THREE.Object3D, model: ClothModel): ClothRuntime | n
     rotationNodes: new Set([...model.twists.map((link) => link.nodeOrient), ...model.ropeChains.flat()].filter((index) => (
       index >= model.rotLockStaticNodeCount && index < nodes.length && !nodes[index].jiggleDriven
     ))),
-    capsules: [...model.capsules.map(fromCapsule).reverse(), ...model.spheres.map(fromSphere).reverse()].filter(
-      (rigid) => rigid.node >= 0 && rigid.node < nodes.length,
-    ),
-    boxes: model.boxes.map(fromBox).reverse().filter((rigid) => rigid.node >= 0 && rigid.node < nodes.length),
+    capsules,
+    boxes,
+    colliders,
     colliderTransforms: new Map(),
-    collisionPlanes: model.collisionPlanes.map(fromCollisionPlane).filter((plane) => (
-      plane.ctrlParent >= 0
-      && plane.ctrlParent < nodes.length
-      && plane.childNode >= 0
-      && plane.childNode < nodes.length
-    )),
     ctrlOffsets,
     reverseOffsets,
     fitReconstructions: buildFitMatrixReconstructions(model),
@@ -1239,29 +1268,22 @@ function solveCollisions(rt: ClothRuntime): void {
     motions.set(index, delta);
     return delta;
   };
-  // Each type visits its serialized colliders in reverse order. Priority groups
-  // and inverted/vertex-scoped shapes need separate support.
-  for (const rigid of rt.capsules) {
-    rigidToCapsule(rt, rigid, cap);
-    const colliderMotion = motion(rigid.node);
+  for (const collider of rt.colliders) {
+    if (collider.kind === 'plane') {
+      projectCollisionPlane(rt.nodes, collider.shape);
+      continue;
+    }
+    if (collider.kind === 'capsule') rigidToCapsule(rt, collider.shape, cap);
+    else rigidToBox(rt, collider.shape, box);
+    const colliderMotion = motion(collider.shape.node);
     for (const node of rt.nodes) {
       if (node.kinematic) continue;
-      if (!canCollide(node.collisionMask, rigid.mask)) continue;
-      const depth = capsuleDepth(node.pos, cap, Math.max(0, node.collideRadius), normal);
+      if (!canCollide(node, collider.shape)) continue;
+      const radius = Math.max(0, node.collideRadius);
+      const depth = collider.kind === 'capsule' ? capsuleDepth(node.pos, cap, radius, normal) : boxDepth(node.pos, box, radius, normal);
       projectClothContact(node.pos, node.prev, normal, depth, node.friction, colliderMotion);
     }
   }
-  for (const rigid of rt.boxes) {
-    rigidToBox(rt, rigid, box);
-    const colliderMotion = motion(rigid.node);
-    for (const node of rt.nodes) {
-      if (node.kinematic) continue;
-      if (!canCollide(node.collisionMask, rigid.mask)) continue;
-      const depth = boxDepth(node.pos, box, Math.max(0, node.collideRadius), normal);
-      projectClothContact(node.pos, node.prev, normal, depth, node.friction, colliderMotion);
-    }
-  }
-  for (const plane of rt.collisionPlanes) projectCollisionPlane(rt.nodes, plane);
   for (const [index, transform] of transforms) rt.colliderTransforms.set(index, transform);
 }
 
@@ -1615,12 +1637,12 @@ export function createClothSimHarness(
       for (const node of rt.nodes) {
         if (node.kinematic) continue;
         rt.capsules.forEach((rigid, index) => {
-          if (!canCollide(node.collisionMask, rigid.mask)) return;
+          if (!canCollide(node, rigid)) return;
           const depth = capsuleDepth(node.pos, rigidToCapsule(rt, rigid, cap), Math.max(0, node.collideRadius), normal);
           if (depth > 1e-6) contacts.push({ node: node.index, shape: `capsule:${index}`, depth });
         });
         rt.boxes.forEach((rigid, index) => {
-          if (!canCollide(node.collisionMask, rigid.mask)) return;
+          if (!canCollide(node, rigid)) return;
           const depth = boxDepth(node.pos, rigidToBox(rt, rigid, box), Math.max(0, node.collideRadius), normal);
           if (depth > 1e-6) contacts.push({ node: node.index, shape: `box:${index}`, depth });
         });

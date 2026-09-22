@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import type { ClothModel, ClothNode } from './feModel';
+import { parseFeModel } from './feModel';
+import collisionReference from './__fixtures__/cloth/source2_collision_reference.json';
 import { CLOTH_TIMESTEP, createClothSimHarness } from './useClothSim';
 
 const Q: [number, number, number, number] = [0, 0, 0, 1];
@@ -94,6 +96,44 @@ function syntheticRoot(): { root: THREE.Group; anchor: THREE.Bone } {
   root.updateWorldMatrix(true, true);
   return { root, anchor };
 }
+
+describe('compiled collision selections and priority groups', () => {
+  it.each(collisionReference.cases)('matches the complete runtime contact pass: $name', ({ model: raw, expected, name }) => {
+    const model = parseFeModel(raw)!;
+    expect(model.decodeIssues).toEqual([]);
+    expect(model.featureGaps).toEqual([]);
+    const root = new THREE.Group();
+    for (const node of model.nodes) {
+      const bone = new THREE.Bone();
+      bone.name = node.name;
+      bone.position.fromArray(node.initPos);
+      root.add(bone);
+    }
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    const snapshot = harness.snapshot();
+    snapshot.nodes.forEach((node, index) => {
+      expect(new THREE.Vector3().fromArray(node.position).distanceTo(new THREE.Vector3().fromArray(expected[index]))).toBeLessThan(2e-6);
+    });
+    if (name.includes('empty scope')) expect(snapshot.contacts).toEqual([]);
+    harness.dispose();
+  });
+
+  it('uses selection membership independently of collision layers', () => {
+    const model = syntheticClothModel();
+    model.nodes.forEach((node) => { node.gravity = 0; node.animForce = 0; node.animVertex = 0; node.collisionMask = 0; });
+    model.rods = [];
+    model.spheres = [{ node: 0, sphere: [0, 0, 0, 2], mask: 1, vertexNodes: [1] }];
+    const { root } = syntheticRoot();
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    const snapshot = harness.snapshot();
+    expect(new THREE.Vector3().fromArray(snapshot.nodes[1].position).length()).toBeCloseTo(2, 8);
+    expect(snapshot.nodes[2].position).toEqual(model.nodes[2].initPos);
+    expect(snapshot.contacts).toEqual([]);
+    harness.dispose();
+  });
+});
 
 describe('compiled triangle integration', () => {
   it('projects dynamic triangle vertices while retaining both animated anchors', () => {

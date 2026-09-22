@@ -14,6 +14,7 @@ const cases = {
   yamato: { label: 'Yamato', hero: 'yamato', clips: ['primary_stand_idle', 'primary_run275_n', 'primary_run275_e'] },
   necro: { label: 'Necro', hero: 'necro', clips: ['weapon_stand_idle', 'run_n', 'respawn_countdown_idle'] },
   dynamo: { label: 'Dynamo', hero: 'dynamo', clips: ['primary_stand_idle', 'primary_run_250_n', 'primary_run_250_e'] },
+  bebop: { label: 'Bebop', hero: 'bebop' },
 };
 const caseArgument = process.argv.indexOf('--case');
 const selected = (caseArgument >= 0 ? process.argv[caseArgument + 1] || '' : 'seven').split(',');

@@ -3,7 +3,7 @@
 The preview now uses compiled raw/goal-damped attraction, fixed and animated rod
 batches, triangle elements, animation stray limits, Kelager bends, hinge limits,
 directed twist/swing links, and rope bone reconstruction.
-The rendered validation cases include Seven, Vindicta, Yamato, Necro and Dynamo's current
+The rendered validation cases include Seven, Vindicta, Yamato, Necro, Dynamo and Bebop's current
 base models with three animations each.
 Physics remains behind
 the existing developer toggle and is disabled by default. This is a tested
@@ -17,10 +17,10 @@ The script uses the bundled vpkmerge, exports fresh assets from the base VPK, an
 serves `http://127.0.0.1:5176/cloth-preview.html`. `VPKMERGE_PATH` can select another
 exporter. Linux/macOS users can provide `--game` explicitly.
 
-For all five cases and the S2V reference, build S2V's CLI in Release, then run:
+For all six cases and the S2V reference, build S2V's CLI in Release, then run:
 
 ```powershell
-pnpm dev:cloth --case "seven,vindicta,yamato,necro,dynamo" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
+pnpm dev:cloth --case "seven,vindicta,yamato,necro,dynamo,bebop" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
 ```
 
 `S2V_CLI` also accepts the CLI path. The script resolves each current model through
@@ -89,6 +89,10 @@ Inspected on 2026-09-22:
 - Its [box reconstruction](https://github.com/w1tcherrr/ValveResourceFormat/blob/c22f897342e53f999bd7c466d648f5bbbe85bafa/ValveResourceFormat/IO/Extract/ModelExtract.Cloth.Physics.cs)
   identifies compiled `vSize` as half-extents. The preview previously halved
   these again. `ClothBox.halfSize` now preserves the compiled dimensions.
+- Its [collider reconstruction](https://github.com/w1tcherrr/ValveResourceFormat/blob/c22f897342e53f999bd7c466d648f5bbbe85bafa/ValveResourceFormat/Resource/ResourceTypes/RubikonPhysics/Softbody/FeModel.Collisions.cs)
+  identifies priority boundaries and vertex selections. The runtime confirms
+  that groups run from last to first, and a positive selection byte includes
+  that node at full contact strength. Selected nodes replace layer filtering.
 - Current master's [animation exporter](https://github.com/ValveResourceFormat/ValveResourceFormat/blob/67da658c2/ValveResourceFormat/IO/Gltf/GltfModelExporter.Anim.cs)
   documents both cloth-root following and baked locomotion. Vindicta's run clips
   exposed the latter difference directly in the comparison.
@@ -132,7 +136,8 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Local contact data | `0x131b9b`, `0x229f70` | The compiled per-node radii feed local body contacts as well as world collision. The additional world margin is not added here. |
 | Tapered capsule contact | `0x2d8770`, `0x22c500`, `0x235920` | Shift the sampled sphere along the axis by radius slope times radial distance, including the short-capsule endpoint case. |
 | Moving-body friction | `0x229ec0`, `0x22a060` | Transform the previous particle through the collider's relative motion, then limit the tangential correction to friction times penetration. Contact changes the current position only. |
-| Contact scheduling | `0x244f0b`, `0x24538f`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Each collider type is visited in reverse serialized order. |
+| Contact scheduling | `0x244f0b`, `0x24538f`, `0x234a20`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Priority groups run last to first; each group visits capsules, spheres and boxes in reverse order, then planes in forward order. SDF remains unsupported. |
+| Collider vertex selections | `0x10c34b`, `0x2302a0`, `0x2309c0` | Build node membership from positive byte weights within each map's node span. Empty selections affect no nodes; out-of-range map indices use layer filtering. |
 | Fixed rod batches | `0x111bc0` | Visit `m_SimdRods` in compiled order, gathering all four lanes before scattering endpoints. Padding copies within a batch do not add stiffness; repeated constraints in subsequent batches remain. |
 | Animated rod batches | `0x10d330`, `0x111ef0` | Derive target lengths from the clean animated controls every tick, then solve `m_SimdRodsAnim` with its compiled weight, relaxation and batch order. |
 | Reverse-offset writeback | `0x105b40`, `0x109b91` | Place the output bone from the solved target particle and bone orientation. This updates rendered transforms, without replacing particle positions or integration history. |
@@ -366,7 +371,29 @@ The node-basis audit agrees with S2V's Y-first Gram-Schmidt construction. It add
 the runtime's collapsed-edge fallback; Yamato's sampled spans exceed its
 threshold, and the updated formula still passes all 12 regression cases.
 
-On Windows, 258 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
+Bebop uses `models/heroes_staging/bebop/bebop.vmdl_c`: 264 controls, 150 rendered
+and 114 generated, with all 81 required animation inputs present. It exercises
+seven scoped capsules and three collision priority groups. Fourteen synthetic
+complete runtime contact passes independently verify binary selection weights,
+empty/overlapping selections, particle radii, static-node exclusion, mixed shape
+order and priority traversal within `2e-6` Source units. Their previous-position
+buffers remain unchanged. All 35 inventoried FeModels decode selection and
+priority metadata without new issues; malformed selections are reported and
+remain empty instead of silently affecting every node.
+
+At 02:57 UTC, Bebop passes 12/12 input, anchor and frame-rate checks. The largest
+sampled contact depth is 0.549 Source units, rod residual 3.305 Source units and
+triangle correction 0.290 Source units. After ten frozen seconds, the next
+second moves the full rig by 10.601 mm and the damped subset by 8.092 mm, with
+0.08115 radians maximum rotation. Front idle and side/back run inspection shows
+attached garment geometry, but ankle contact residuals and continued motion
+remain. Two quad constraints are missing and five fit matrices remain
+approximate. These are fidelity issues, despite passing the pose checks.
+Seven's repeated 12/12 regression retains exactly the preceding sampled rod and
+contact measurements (2.915117 and 0.538154 Source units), with unchanged frozen
+motion. Side run inspection shows no new cable attachment issue.
+
+On Windows, 283 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -391,8 +418,9 @@ Next validation units:
 1. Isolate generated target shape and node-basis reconstruction against Yamato's
    larger garment. Capture matching Deadlock animation poses to compare
    garment fit, cable curvature, contact and settling.
-2. Continue validating overlapping contacts, priority groups, inverted and
-   vertex-scoped shapes, and engine instance overrides. A scan of the current VPK's
+2. Continue validating overlapping contacts, inverted shapes, SDF collision and
+   engine instance overrides. Priority groups and vertex selections now have
+   independent runtime regressions. A scan of the current VPK's
    40 selectable hero entries found 35 with FeModel data; all examined dynamic
    nodes selected goal-damped integration and had zero authored point damping.
    Raw integration and nonzero damping still need a different reference asset.
@@ -403,7 +431,7 @@ Next validation units:
    considering physics enabled by default.
 
 Coverage includes known gaps for quad constraints, axial
-edges, follow links, collider priorities/flags/vertex scopes, jiggle bones, and
+edges, follow links, collider flags, SDF collision, jiggle bones, and
 approximate fit matrices. Scalar constraints take precedence over padded SIMD
 copies in these counts. The list is not exhaustive: world collision has no
 scene geometry in this preview, and external forces and instance overrides

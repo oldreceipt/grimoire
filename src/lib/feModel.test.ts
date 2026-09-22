@@ -41,6 +41,63 @@ const raw: RawFeModel = {
 };
 
 describe('parseFeModel', () => {
+  it('decodes binary collider selections from byte weights and respects map offsets', () => {
+    const model = parseFeModel({ ...raw,
+      m_VertexMaps: [{ nVertexBase: 0, nVertexCount: 3, nMapOffset: 1 }],
+      m_VertexMapValues: [255, 0, 1, 255],
+      m_SphereRigids: [{ nNode: 0, vSphere: [0, 0, 0, 1], nVertexMapIndex: 0 }],
+    })!;
+    expect(model.spheres[0].vertexNodes).toEqual([1, 2]);
+    expect(model.decodeIssues).toEqual([]);
+  });
+
+  it.each([0xffff, 10, -1, undefined])('treats an out-of-range vertex map as unscoped (%s)', (index) => {
+    const model = parseFeModel({ ...raw,
+      m_VertexMaps: [{ nVertexBase: 0, nVertexCount: 0, nMapOffset: 0 }],
+      m_SphereRigids: [{ nNode: 0, vSphere: [0, 0, 0, 1], nVertexMapIndex: index }],
+    })!;
+    expect(model.spheres[0].vertexNodes).toBeUndefined();
+  });
+
+  it.each([
+    { map: { nVertexBase: 1, nVertexCount: 3, nMapOffset: 0 }, values: [255, 255], reason: 'invalid-offsets' },
+    { map: { nVertexBase: 0, nVertexCount: 1, nMapOffset: -1 }, values: [255], reason: 'invalid-offsets' },
+    { map: { nVertexBase: 0, nVertexCount: 1, nMapOffset: 0 }, values: [256], reason: 'invalid-weights' },
+  ])('reports a malformed referenced selection without broadening it: $reason', ({ map, values, reason }) => {
+    const model = parseFeModel({ ...raw, m_VertexMaps: [map], m_VertexMapValues: values,
+      m_SphereRigids: [{ nNode: 0, vSphere: [0, 0, 0, 1], nVertexMapIndex: 0 }],
+    })!;
+    expect(model.spheres[0].vertexNodes).toEqual([]);
+    expect(model.decodeIssues).toContainEqual({ array: 'm_VertexMaps', record: 0, reason });
+  });
+
+  it('accepts empty named selections with a sentinel vertex base', () => {
+    const model = parseFeModel({ ...raw, m_VertexMaps: [{ nVertexBase: 0xffff, nVertexCount: 0, nMapOffset: 0 }],
+      m_SphereRigids: [{ nNode: 0, vSphere: [0, 0, 0, 1], nVertexMapIndex: 0 }],
+    })!;
+    expect(model.spheres[0].vertexNodes).toEqual([]);
+    expect(model.decodeIssues).toEqual([]);
+  });
+
+  it('requires a complete monotone priority partition and retains SDF coverage gaps', () => {
+    const zero = { m_nTaperedCapsuleRigidIndex: 0, m_nSphereRigidIndex: 0, m_nBoxRigidIndex: 0, m_nSDFRigidIndex: 0, m_nCollisionPlaneIndex: 0 };
+    const end = { ...zero, m_nTaperedCapsuleRigidIndex: 1, m_nBoxRigidIndex: 1 };
+    const valid = [zero, { ...zero, m_nTaperedCapsuleRigidIndex: 1 }, end];
+    const model = parseFeModel({ ...raw, m_RigidColliderPriorities: valid })!;
+    expect(model.capsules[0].priority).toBe(0);
+    expect(model.boxes[0].priority).toBe(1);
+    expect(model.decodeIssues).toEqual([]);
+    for (const rows of [[zero], [zero, zero], [zero, end, zero, end]]) {
+      const fallback = parseFeModel({ ...raw, m_RigidColliderPriorities: rows })!;
+      expect(fallback.decodeIssues.some((issue) => issue.array === 'm_RigidColliderPriorities')).toBe(true);
+      expect(fallback.capsules[0].priority).toBe(0);
+      expect(fallback.boxes[0].priority).toBe(0);
+    }
+    expect(parseFeModel({ ...raw, m_SDFRigids: [{}] })!.featureGaps).toContainEqual({
+      field: 'm_SDFRigids', label: 'SDF colliders', count: 1, status: 'not-implemented',
+    });
+  });
+
   it('preserves stray-limit target/particle indices and packed repeats without duplicating coverage', () => {
     const limit = { nNode: [[0, 0, 0, 0], [2, 2, 2, 2]], flMaxDist: [1, 1, 1, 1], flRelaxationFactor: [0.5, 0.5, 0.5, 0.5] };
     const model = parseFeModel({ ...raw, m_AnimStrayRadii: [], m_SimdAnimStrayRadii: [limit, limit] })!;
@@ -101,7 +158,6 @@ describe('parseFeModel', () => {
     expect(model.featureGaps).toEqual([
       { field: 'm_Quads', label: 'Quad constraints', count: 2, status: 'not-implemented' },
       { field: 'm_TaperedCapsuleRigids.nFlags', label: 'Collider flags', count: 1, status: 'not-implemented' },
-      { field: 'm_TaperedCapsuleRigids.nVertexMapIndex', label: 'Vertex-scoped colliders', count: 1, status: 'not-implemented' },
     ]);
     expect(model.decodeIssues).toEqual([]);
   });
@@ -291,8 +347,8 @@ describe('parseFeModel', () => {
     })!;
 
     expect(m.collisionPlanes).toEqual([
-      { ctrlParent: 2, childNode: 1, normal: [0, 1, 0], offset: 3.5, strength: 0.25 },
-      { ctrlParent: 0, childNode: 0, normal: [0, 0, 0], offset: 0, strength: 1 },
+      { ctrlParent: 2, childNode: 1, normal: [0, 1, 0], offset: 3.5, strength: 0.25, priority: 0 },
+      { ctrlParent: 0, childNode: 0, normal: [0, 0, 0], offset: 0, strength: 1, priority: 0 },
     ]);
   });
 

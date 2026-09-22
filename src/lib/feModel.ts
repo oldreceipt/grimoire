@@ -138,7 +138,10 @@ export interface RawFeModel {
   m_SimdQuads?: unknown[];
   m_AxialEdges?: unknown[];
   m_FollowNodes?: unknown[];
-  m_RigidColliderPriorities?: unknown[];
+  m_RigidColliderPriorities?: RawColliderPriority[];
+  m_SDFRigids?: unknown[];
+  m_VertexMaps?: Array<{ nVertexBase?: number; nVertexCount?: number; nMapOffset?: number }>;
+  m_VertexMapValues?: number[];
   m_nFirstPositionDrivenNode?: number;
   m_flRodVelocitySmoothRate?: number;
   m_nRodVelocitySmoothIterations?: number;
@@ -151,6 +154,14 @@ export interface RawClothTriangle {
   w2?: number;
   v1x?: number;
   v2?: number[];
+}
+
+interface RawColliderPriority {
+  m_nTaperedCapsuleRigidIndex?: number;
+  m_nSphereRigidIndex?: number;
+  m_nBoxRigidIndex?: number;
+  m_nSDFRigidIndex?: number;
+  m_nCollisionPlaneIndex?: number;
 }
 
 export interface RawJiggleBoneParams {
@@ -227,25 +238,28 @@ export interface ClothAnimatedRod {
   relax: number;
 }
 
-export interface ClothCapsule {
+export interface ClothColliderFilter {
+  mask: number;
+  priority?: number;
+  vertexNodes?: number[]; // absent: layer filtering; empty: explicitly selects no nodes
+}
+
+export interface ClothCapsule extends ClothColliderFilter {
   sphere0: Vec4; // [x,y,z,r] local to `node`
   sphere1: Vec4;
   node: number;
-  mask: number;
 }
 
-export interface ClothSphere {
+export interface ClothSphere extends ClothColliderFilter {
   sphere: Vec4; // [x,y,z,r] local to `node`
   node: number;
-  mask: number;
 }
 
-export interface ClothBox {
+export interface ClothBox extends ClothColliderFilter {
   pos: Vec3; // box center, local to `node`
   rot: Vec4;
   halfSize: Vec3; // compiled vSize is half-extents
   node: number;
-  mask: number;
 }
 
 export interface ClothNodeBase {
@@ -304,6 +318,7 @@ export interface ClothFitWeight {
 }
 
 export interface ClothCollisionPlane {
+  priority?: number;
   ctrlParent: number; // anim-anchored ctrl whose frame holds the plane
   childNode: number; // the node pushed out of the half-space
   normal: Vec3; // plane normal in ctrlParent's frame
@@ -380,7 +395,7 @@ export interface ClothTriangle {
 }
 
 export interface ClothDecodeIssue {
-  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_Tris' | 'm_SimdTris' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_AnimStrayRadii' | 'm_SimdAnimStrayRadii' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
+  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_Tris' | 'm_SimdTris' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_AnimStrayRadii' | 'm_SimdAnimStrayRadii' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes' | 'm_RigidColliderPriorities' | 'm_VertexMaps';
   record: number;
   reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-limits' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets' | 'unsupported-flags';
 }
@@ -500,18 +515,65 @@ function clothFeatureGaps(fe: RawFeModel): ClothFeatureGap[] {
   add(fe.m_Quads?.length ? 'm_Quads' : 'm_SimdQuads', fe.m_Quads?.length ? 'Quad constraints' : 'Quad batches');
   add('m_AxialEdges', 'Axial edges');
   add('m_FollowNodes', 'Follow links');
-  add('m_RigidColliderPriorities', 'Collider priority groups');
+  add('m_SDFRigids', 'SDF colliders');
   add('m_JiggleBones', 'Jiggle bones');
   add('m_FitMatrices', 'Fit matrices', 'approximate');
   for (const field of ['m_TaperedCapsuleRigids', 'm_SphereRigids', 'm_BoxRigids'] as const) {
     const colliders = fe[field] ?? [];
     const flags = colliders.filter((entry) => entry.nFlags !== undefined && entry.nFlags !== 0).length;
-    const scoped = colliders.filter((entry) => entry.nVertexMapIndex !== undefined
-      && entry.nVertexMapIndex >= 0 && entry.nVertexMapIndex !== 0xffff).length;
     if (flags) gaps.push({ field: `${field}.nFlags`, label: 'Collider flags', count: flags, status: 'not-implemented' });
-    if (scoped) gaps.push({ field: `${field}.nVertexMapIndex`, label: 'Vertex-scoped colliders', count: scoped, status: 'not-implemented' });
   }
   return gaps;
+}
+
+function parseColliderPriorities(fe: RawFeModel, issues: ClothDecodeIssue[]): RawColliderPriority[] {
+  const rows = fe.m_RigidColliderPriorities ?? [];
+  if (rows.length === 0) return [];
+  const counts: Required<RawColliderPriority> = {
+    m_nTaperedCapsuleRigidIndex: fe.m_TaperedCapsuleRigids?.length ?? 0,
+    m_nSphereRigidIndex: fe.m_SphereRigids?.length ?? 0,
+    m_nBoxRigidIndex: fe.m_BoxRigids?.length ?? 0,
+    m_nSDFRigidIndex: fe.m_SDFRigids?.length ?? 0,
+    m_nCollisionPlaneIndex: fe.m_CollisionPlanes?.length ?? 0,
+  };
+  const fields = Object.keys(counts) as Array<keyof RawColliderPriority>;
+  for (let record = 0; record < rows.length; record++) {
+    const valid = rows.length >= 2 && fields.every((field) => {
+      const value = rows[record][field];
+      return value !== undefined && Number.isInteger(value) && value >= 0 && value <= counts[field]
+        && (record > 0 ? value >= rows[record - 1][field]! : value === 0)
+        && (record < rows.length - 1 || value === counts[field]);
+    });
+    if (!valid) {
+      issues.push({ array: 'm_RigidColliderPriorities', record, reason: 'invalid-offsets' });
+      return [];
+    }
+  }
+  return rows;
+}
+
+function parseCollisionVertexMaps(fe: RawFeModel, issues: ClothDecodeIssue[]): number[][] {
+  const values = fe.m_VertexMapValues ?? [];
+  return (fe.m_VertexMaps ?? []).map((map, record) => {
+    const { nVertexBase: base, nVertexCount: count, nMapOffset: offset } = map;
+    if (base === undefined || count === undefined || offset === undefined
+      || !Number.isInteger(base) || !Number.isInteger(count) || !Number.isInteger(offset)
+      || base < 0 || count < 0 || offset < 0 || offset + count > values.length
+      || (count > 0 && base + count > fe.m_CtrlName!.length)) {
+      issues.push({ array: 'm_VertexMaps', record, reason: 'invalid-offsets' });
+      return [];
+    }
+    const nodes: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const weight = values[offset + i];
+      if (!Number.isInteger(weight) || weight < 0 || weight > 255) {
+        issues.push({ array: 'm_VertexMaps', record, reason: 'invalid-weights' });
+        return [];
+      }
+      if (weight > 0) nodes.push(base + i);
+    }
+    return nodes;
+  });
 }
 
 export function clothIntegratorMode(model: Pick<ClothModel,
@@ -888,25 +950,41 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     weight: num(r.flWeight0),
   }));
 
-  const capsules: ClothCapsule[] = (fe.m_TaperedCapsuleRigids ?? []).map((c) => ({
+  const priorities = parseColliderPriorities(fe, decodeIssues);
+  const vertexMaps = parseCollisionVertexMaps(fe, decodeIssues);
+  const priority = (field: keyof RawColliderPriority, index: number): number => {
+    let rank = 0;
+    for (let group = 1; group < priorities.length && index >= priorities[group][field]!; group++) rank = group;
+    return rank;
+  };
+  const vertexNodes = (index: number | undefined): number[] | undefined => (
+    index !== undefined && Number.isInteger(index) && index >= 0 && index < vertexMaps.length ? vertexMaps[index] : undefined
+  );
+  const capsules: ClothCapsule[] = (fe.m_TaperedCapsuleRigids ?? []).map((c, index) => ({
     sphere0: sphere4(c.vSphere?.[0]),
     sphere1: sphere4(c.vSphere?.[1]),
     node: num(c.nNode),
     mask: num(c.nCollisionMask),
+    priority: priority('m_nTaperedCapsuleRigidIndex', index),
+    vertexNodes: vertexNodes(c.nVertexMapIndex),
   }));
 
-  const spheres: ClothSphere[] = (fe.m_SphereRigids ?? []).map((s) => ({
+  const spheres: ClothSphere[] = (fe.m_SphereRigids ?? []).map((s, index) => ({
     sphere: sphere4(s.vSphere),
     node: num(s.nNode),
     mask: num(s.nCollisionMask),
+    priority: priority('m_nSphereRigidIndex', index),
+    vertexNodes: vertexNodes(s.nVertexMapIndex),
   }));
 
-  const boxes: ClothBox[] = (fe.m_BoxRigids ?? []).map((b) => ({
+  const boxes: ClothBox[] = (fe.m_BoxRigids ?? []).map((b, index) => ({
     pos: vec3(b.tmFrame2),
     rot: [num(b.tmFrame2?.[4]), num(b.tmFrame2?.[5]), num(b.tmFrame2?.[6]), num(b.tmFrame2?.[7], 1)],
     halfSize: vec3(b.vSize),
     node: num(b.nNode),
     mask: num(b.nCollisionMask),
+    priority: priority('m_nBoxRigidIndex', index),
+    vertexNodes: vertexNodes(b.nVertexMapIndex),
   }));
 
   const nodeBases: ClothNodeBase[] = (fe.m_NodeBases ?? []).map((b) => ({
@@ -975,7 +1053,8 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     child: num(l.nCtrlChild),
   }));
 
-  const collisionPlanes: ClothCollisionPlane[] = (fe.m_CollisionPlanes ?? []).map((p) => ({
+  const collisionPlanes: ClothCollisionPlane[] = (fe.m_CollisionPlanes ?? []).map((p, index) => ({
+    priority: priority('m_nCollisionPlaneIndex', index),
     ctrlParent: num(p.nCtrlParent),
     childNode: num(p.nChildNode),
     normal: vec3(p.m_Plane?.m_vNormal),
