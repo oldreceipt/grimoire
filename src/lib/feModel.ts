@@ -60,6 +60,11 @@ export interface RawFeModel {
   m_TaperedCapsuleRigids?: Array<{ nNode: number; vSphere: number[][]; nCollisionMask?: number; nFlags?: number; nVertexMapIndex?: number }>;
   m_SphereRigids?: Array<{ nNode: number; vSphere: number[]; nCollisionMask?: number; nFlags?: number; nVertexMapIndex?: number }>;
   m_AnimStrayRadii?: Array<{ nNode: [number, number]; flMaxDist?: number; flRelaxationFactor?: number }>;
+  m_SimdAnimStrayRadii?: Array<{
+    nNode?: number[] | number[][];
+    flMaxDist?: number[];
+    flRelaxationFactor?: number[];
+  }>;
   m_BoxRigids?: Array<{
     nNode: number;
     tmFrame2: number[]; // [x,y,z,1, qx,qy,qz,qw]
@@ -269,7 +274,7 @@ export interface ClothSoftOffset {
   alpha: number;
 }
 export interface ClothStrayRadius {
-  node: [number, number];
+  node: [number, number]; // animation target, simulated particle
   maxDist: number;
   relax: number;
 }
@@ -375,7 +380,7 @@ export interface ClothTriangle {
 }
 
 export interface ClothDecodeIssue {
-  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_Tris' | 'm_SimdTris' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
+  array: 'm_KelagerBends' | 'm_HingeLimits' | 'm_Tris' | 'm_SimdTris' | 'm_SimdRods' | 'm_SimdRodsAnim' | 'm_AnimStrayRadii' | 'm_SimdAnimStrayRadii' | 'm_GoalDampedSpringIntegrators' | 'm_Twists' | 'm_Ropes';
   record: number;
   reason: 'invalid-nodes' | 'invalid-weights' | 'invalid-limits' | 'invalid-height' | 'invalid-bitset' | 'invalid-count' | 'invalid-offsets' | 'unsupported-flags';
 }
@@ -401,6 +406,7 @@ export interface ClothModel {
   reverseOffsets: ClothReverseOffset[];
   softOffsets: ClothSoftOffset[];
   strayRadii: ClothStrayRadius[];
+  strayRadiusBatches: ClothStrayRadius[][];
   skelParents: number[];
   staticNodeCount: number;
   staticNodeFlags: number | null;
@@ -599,6 +605,53 @@ function parseRodBatches(fe: RawFeModel, issues: ClothDecodeIssue[]): ClothRod[]
   // Keep a complete scalar fallback if any packed record is malformed. Never
   // deduplicate valid batches: repeated rods can encode authored extra passes.
   return invalid ? [] : batches;
+}
+
+function parseStrayRadii(fe: RawFeModel, issues: ClothDecodeIssue[]): { radii: ClothStrayRadius[]; batches: ClothStrayRadius[][] } {
+  const decode = (indices: number[], maxDist: number | undefined, relax: number | undefined,
+    array: 'm_AnimStrayRadii' | 'm_SimdAnimStrayRadii', record: number): ClothStrayRadius | null => {
+    if (indices.length !== 2 || !indices.every((index) => isNodeIndex(index, fe.m_CtrlName.length))) {
+      issues.push({ array, record, reason: 'invalid-nodes' });
+      return null;
+    }
+    if (!isFiniteNumber(maxDist) || maxDist < 0 || !isFiniteNumber(relax) || relax < 0 || relax > 1) {
+      issues.push({ array, record, reason: 'invalid-limits' });
+      return null;
+    }
+    return { node: [indices[0], indices[1]], maxDist, relax };
+  };
+  const radii: ClothStrayRadius[] = [];
+  for (const [record, entry] of (fe.m_AnimStrayRadii ?? []).entries()) {
+    const radius = decode(entry.nNode ?? [], entry.flMaxDist, entry.flRelaxationFactor, 'm_AnimStrayRadii', record);
+    if (radius) radii.push(radius);
+  }
+  const batches: ClothStrayRadius[][] = [];
+  let invalid = false;
+  for (const [record, entry] of (fe.m_SimdAnimStrayRadii ?? []).entries()) {
+    const indices = Array.isArray(entry.nNode) ? entry.nNode.flat() : [];
+    if (indices.length !== 8) {
+      issues.push({ array: 'm_SimdAnimStrayRadii', record, reason: 'invalid-nodes' });
+      invalid = true;
+      continue;
+    }
+    const batch: ClothStrayRadius[] = [];
+    for (let lane = 0; lane < 4; lane++) {
+      const radius = decode([indices[lane], indices[lane + 4]], entry.flMaxDist?.[lane], entry.flRelaxationFactor?.[lane], 'm_SimdAnimStrayRadii', record);
+      if (radius) batch.push(radius);
+      else invalid = true;
+    }
+    batches.push(batch);
+  }
+  if (invalid || batches.length === 0) return { radii, batches: radii.map((radius) => [radius]) };
+  if (radii.length === 0) {
+    const seen = new Set<string>();
+    for (const radius of batches.flat()) {
+      const key = JSON.stringify(radius);
+      if (!seen.has(key)) radii.push(radius);
+      seen.add(key);
+    }
+  }
+  return { radii, batches };
 }
 
 function parseTriangles(fe: RawFeModel, issues: ClothDecodeIssue[]): { triangles: ClothTriangle[]; batches: ClothTriangle[][] } {
@@ -884,11 +937,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     alpha: num(c.flAlpha),
   }));
 
-  const strayRadii: ClothStrayRadius[] = (fe.m_AnimStrayRadii ?? []).map((s) => ({
-    node: [num(s.nNode?.[0]), num(s.nNode?.[1])],
-    maxDist: num(s.flMaxDist),
-    relax: num(s.flRelaxationFactor, 1),
-  }));
+  const { radii: strayRadii, batches: strayRadiusBatches } = parseStrayRadii(fe, decodeIssues);
 
   const twists: ClothTwist[] = [];
   for (const [record, t] of (fe.m_Twists ?? []).entries()) {
@@ -973,6 +1022,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     reverseOffsets,
     softOffsets,
     strayRadii,
+    strayRadiusBatches,
     skelParents: (fe.m_SkelParents ?? []).map((v) => num(v, -1)),
     staticNodeCount: num(fe.m_nStaticNodes),
     addWorldCollisionRadius: num(fe.m_flAddWorldCollisionRadius),

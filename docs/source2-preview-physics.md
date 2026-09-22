@@ -196,6 +196,20 @@ imports. The preview's maximum difference is `1.77e-6` Source units, within the
 inventory (Bebop, Doorman, Nano, Necro and Werewolf) decode without triangle
 issues. Other missing features on those models remain separately reported.
 
+Animation stray limits use the compiled target/particle pair direction and SIMD
+batches. A self-pair bounds a particle against its own clean animated target;
+distinct indices use the first node's animated target and constrain the second
+particle. S2V also documents the compiled relaxation factor as already including
+the model's thread stretch. The preview applies it directly and keeps particle
+history unchanged, matching `0x10f780`, instead of translating both buffers.
+The radius pass runs after rods in each constraint iteration, before surface
+elements and final goal attraction (`0x24515b`). Fifteen synthetic runtime cases
+cover distinct targets, shared particles, partial relaxation, small distances
+and repeated batches, within `2e-6` Source units. A harness regression exercises
+its order relative to goal attraction. Seven, Vindicta and Necro retain all 36
+rendered pose/anchor checks and their preceding sampled metrics; their current
+clips do not demonstrate a measurable fidelity improvement from this correction.
+
 The shared 1/120-second clock advances animation before targets/colliders and
 simulation. Physics-written local transforms are restored before each clean
 animation sample. Rotation-free static cloth bases can rotate, while the body's
@@ -329,7 +343,7 @@ The node-basis audit agrees with S2V's Y-first Gram-Schmidt construction. It add
 the runtime's collapsed-edge fallback; Yamato's sampled spans exceed its
 threshold, and the updated formula still passes all 12 regression cases.
 
-On Windows, 224 focused physics tests, ESLint, TypeScript, i18n key/manifest
+On Windows, 242 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -337,6 +351,8 @@ fixed-step animation, render-FPS equivalence, moving-body friction, contact
 scheduling, particle radii, and the complete real-data fixture. The numerical
 rest-pose check allows twenty seconds to settle before measuring late motion;
 its original 0.005 Source-unit per-tick bound is unchanged.
+Use `pnpm typecheck` (`tsc -b`) for this repository: the root config has no files,
+so running `tsc --noEmit` against it alone does not check the referenced projects.
 Four tests that enforced the old reverse-offset kinematic/history assumption
 were removed. Their replacement exercises an animated rod and reverse-offset
 bone together, checking that the particle keeps moving, the rendered bone uses

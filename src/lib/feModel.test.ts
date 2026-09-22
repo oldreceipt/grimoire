@@ -41,6 +41,24 @@ const raw: RawFeModel = {
 };
 
 describe('parseFeModel', () => {
+  it('preserves stray-limit target/particle indices and packed repeats without duplicating coverage', () => {
+    const limit = { nNode: [[0, 0, 0, 0], [2, 2, 2, 2]], flMaxDist: [1, 1, 1, 1], flRelaxationFactor: [0.5, 0.5, 0.5, 0.5] };
+    const model = parseFeModel({ ...raw, m_AnimStrayRadii: [], m_SimdAnimStrayRadii: [limit, limit] })!;
+    expect(model.strayRadii).toEqual([{ node: [0, 2], maxDist: 1, relax: 0.5 }]);
+    expect(model.strayRadiusBatches).toHaveLength(2);
+    expect(model.strayRadiusBatches[0]).toHaveLength(4);
+  });
+
+  it('reports invalid stray radii and falls back from malformed packing', () => {
+    const model = parseFeModel({ ...raw, m_AnimStrayRadii: [
+      { nNode: [0, 2], flMaxDist: 1, flRelaxationFactor: 1 },
+      { nNode: [99, 1], flMaxDist: 1, flRelaxationFactor: 1 },
+      { nNode: [1, 2], flMaxDist: -1, flRelaxationFactor: 1 },
+    ], m_SimdAnimStrayRadii: [{ nNode: [0, 1] }] })!;
+    expect(model.strayRadiusBatches).toEqual([[{ node: [0, 2], maxDist: 1, relax: 1 }]]);
+    expect(model.decodeIssues.map((issue) => issue.reason)).toEqual(['invalid-nodes', 'invalid-limits', 'invalid-nodes']);
+  });
+
   it('decodes scalar triangle partitions and falls back when a packed block is incomplete', () => {
     const triangle = { nNode: [0, 1, 2], w1: 0, w2: 1, v1x: 2, v2: [1, 0.6] };
     const model = parseFeModel({ ...raw, m_Tris: [triangle], m_nTriCount1: 1, m_nTriCount2: 1,

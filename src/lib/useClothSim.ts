@@ -454,39 +454,47 @@ type AnimStrayRadiusNode = {
   positionDriven?: boolean;
   lockToGoal?: boolean;
   jiggleDriven?: boolean;
+  kinematic?: boolean;
 };
 
 const _strayDelta = new THREE.Vector3();
-const _strayCorrection = new THREE.Vector3();
-// m_AnimStrayRadii is Source 2's anti-stray / anti-explosion clamp: it bounds how far
-// a node may drift from its animated goal (the bind/clip target), keeping cloth on the
-// body. The shipped data is self-referential -- nNode == [n, n] -- i.e. "clamp node n
-// to its OWN target", which is why the earlier node-vs-node reading was a no-op: it
-// measured a node against itself (distance 0, never fired). We clamp pos to within
-// maxDist of node.target and move prev by the same delta, so the clamp pulls a strayed
-// node back without injecting velocity. This is the high-stray-count mechanism on hair
-// heroes (Celeste authors 384) and the data-driven leash against "flies off into the
-// distance". Reverse-engineered from the shipped FeModel data (no reference impl);
-// honored only as a one-sided pull-in, never a push-out, so it cannot add energy.
+const _strayOutput = Array.from({ length: 4 }, () => new THREE.Vector3());
+const _strayWrite = [false, false, false, false];
+
+export function projectAnimStrayRadiusBatch(
+  nodes: readonly (AnimStrayRadiusNode | undefined)[],
+  radii: readonly ClothStrayRadius[],
+  scale = 1,
+): boolean {
+  let changed = false;
+  for (let lane = 0; lane < radii.length; lane++) {
+    const stray = radii[lane];
+    const goal = nodes[stray.node[0]];
+    const node = nodes[stray.node[1]];
+    _strayWrite[lane] = false;
+    if (!goal || !node || isKinematicNode(node) || node.kinematic) continue;
+    const { maxDist, relax } = stray;
+    if (!Number.isFinite(maxDist) || maxDist < 0 || !Number.isFinite(relax) || relax <= 0) continue;
+    _strayDelta.subVectors(node.pos, goal.target);
+    const distance = Math.sqrt(Math.max(_strayDelta.lengthSq(), 2 ** -30));
+    const correction = (Math.min(distance, maxDist * scale) / distance - 1) * relax;
+    _strayOutput[lane].copy(node.pos).addScaledVector(_strayDelta, correction);
+    _strayWrite[lane] = true;
+    changed ||= correction !== 0 && _strayDelta.lengthSq() !== 0;
+  }
+  // Every lane reads the original positions, including padding and shared
+  // particles. The compiled routine changes positions only, never history.
+  for (let lane = 0; lane < radii.length; lane++) {
+    if (_strayWrite[lane]) nodes[radii[lane].node[1]]!.pos.copy(_strayOutput[lane]);
+  }
+  return changed;
+}
+
 export function projectAnimStrayRadius(
   nodes: readonly (AnimStrayRadiusNode | undefined)[],
   stray: ClothStrayRadius,
 ): boolean {
-  const node = nodes[stray.node[0]];
-  if (!node || isKinematicNode(node)) return false;
-
-  const maxDist = stray.maxDist;
-  const relax = stray.relax;
-  if (!Number.isFinite(maxDist) || maxDist < 0 || !Number.isFinite(relax) || relax <= 0) return false;
-
-  _strayDelta.copy(node.pos).sub(node.target);
-  const distance = _strayDelta.length();
-  if (distance <= maxDist || distance < 1e-6) return false;
-
-  _strayCorrection.copy(_strayDelta).multiplyScalar(-((distance - maxDist) / distance) * relax);
-  node.pos.add(_strayCorrection);
-  node.prev?.add(_strayCorrection);
-  return true;
+  return projectAnimStrayRadiusBatch(nodes, [stray]);
 }
 
 interface NodeRuntime {
@@ -1282,7 +1290,7 @@ function solveCollisions(rt: ClothRuntime): void {
 }
 
 function solveAnimStrayRadii(rt: ClothRuntime): void {
-  for (const stray of rt.model.strayRadii) projectAnimStrayRadius(rt.nodes, stray);
+  for (const batch of rt.model.strayRadiusBatches) projectAnimStrayRadiusBatch(rt.nodes, batch);
 }
 
 function updateSolvedRotations(rt: ClothRuntime): void {
@@ -1489,7 +1497,7 @@ function stepClothRuntime(
     .applyQuaternion(rt.rootToModelRot);
 
   const { constraintIterations, goalIterations } = solverIterationPhases(rt.model, clothTuning.iterationOverride);
-  const collideAfterConstraints = (rt.model.dynamicNodeFlags & 0x2000) !== 0;
+  const collideAfterConstraints = ((rt.model.dynamicNodeFlags ?? 0) & 0x2000) !== 0;
   for (let step = 0; step < count; step++) {
     restoreAnimationPose(rt);
     animate?.(CLOTH_TIMESTEP);
@@ -1516,12 +1524,12 @@ function stepClothRuntime(
       for (const bend of rt.model.kelagerBends) projectKelagerBend(rt.nodes, bend);
       for (const hinge of rt.model.hingeLimits) projectHingeLimit(rt.nodes, hinge);
       solveRods(rt);
+      solveAnimStrayRadii(rt);
       for (const batch of rt.model.triangleBatches) projectTriangleBatch(rt.nodes, batch);
       if (i >= constraintIterations - goalIterations) solveGoalDampedNodes(rt);
       restorePinnedSolverNodes(rt.nodes);
     }
     if (collideAfterConstraints) solveCollisions(rt);
-    solveAnimStrayRadii(rt);
     restorePinnedSolverNodes(rt.nodes);
     applyRuntimeSettledReconstructions(rt);
     writeBack(root, rt);

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
+import strayReference from './__fixtures__/cloth/source2_stray_reference.json';
 import type { ClothModel } from './feModel';
 import {
   applyFitMatrixReconstructions,
@@ -17,6 +18,7 @@ import {
   projectCollisionPlane,
   projectClothContact,
   projectAnimStrayRadius,
+  projectAnimStrayRadiusBatch,
   pushOutsideBox,
   pushOutsideCapsule,
   reconstructReverseOffsetPosition,
@@ -331,9 +333,18 @@ describe('rodCorrectionShares', () => {
 });
 
 describe('projectAnimStrayRadius', () => {
-  // Faithful semantics: clamp node[0] to within maxDist of its OWN animated target
-  // (shipped data is self-referential, nNode == [n, n]). Target sits at the origin
-  // in these cases, so the numbers match a clamp toward (0,0,0).
+  it.each(strayReference.cases)('matches the compiled SIMD routine: $name', ({ positions, targets, batches, scale, expected }) => {
+    const nodes = positions.map((p, i) => ({ pos: new THREE.Vector3().fromArray(p),
+      prev: new THREE.Vector3().fromArray(p), target: new THREE.Vector3().fromArray(targets[i]) }));
+    for (const batch of batches) projectAnimStrayRadiusBatch(nodes, batch.map((limit) => ({
+      node: [limit.nNode[0], limit.nNode[1]], maxDist: limit.flMaxDist, relax: limit.flRelaxationFactor,
+    })), scale);
+    nodes.forEach((node, i) => {
+      expect(node.pos.distanceTo(new THREE.Vector3().fromArray(expected[i]))).toBeLessThan(2e-6);
+      expect(node.prev.toArray()).toEqual(positions[i]);
+    });
+  });
+
   it('leaves the node unchanged inside the authored radius', () => {
     const nodes = [{ pos: V(3, 0, 0), target: V(0, 0, 0) }];
 
@@ -362,22 +373,15 @@ describe('projectAnimStrayRadius', () => {
     expect(nodes[0].pos.x).toBeCloseTo(4, 6);
   });
 
-  it('applies the same clamp delta to prev to preserve existing velocity', () => {
+  it('leaves history unchanged when applying a compiled position correction', () => {
     const node = { pos: V(10, 0, 0), prev: V(9.5, 1, 0), target: V(0, 0, 0) };
-    const beforePos = node.pos.clone();
     const beforePrev = node.prev.clone();
-    const beforeVelocity = beforePos.clone().sub(beforePrev);
 
     const changed = projectAnimStrayRadius([node], { node: [0, 0], maxDist: 4, relax: 1 });
 
-    const posDelta = node.pos.clone().sub(beforePos);
-    const prevDelta = node.prev.clone().sub(beforePrev);
-    const afterVelocity = node.pos.clone().sub(node.prev);
     expect(changed).toBe(true);
-    expect(posDelta.distanceTo(prevDelta)).toBeLessThan(1e-9);
-    expect(afterVelocity.distanceTo(beforeVelocity)).toBeLessThan(1e-9);
     expect(node.pos.x).toBeCloseTo(4, 6);
-    expect(node.prev.equals(V(3.5, 1, 0))).toBe(true);
+    expect(node.prev.equals(beforePrev)).toBe(true);
   });
 
   it('scales the projection by the authored relaxation factor', () => {

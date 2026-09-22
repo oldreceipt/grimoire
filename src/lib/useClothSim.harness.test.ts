@@ -53,6 +53,7 @@ function syntheticClothModel(): ClothModel {
     reverseOffsets: [],
     softOffsets: [],
     strayRadii: [],
+    strayRadiusBatches: [],
     skelParents: [-1, 0, 1],
     staticNodeCount: 1,
     addWorldCollisionRadius: 0,
@@ -112,6 +113,29 @@ describe('compiled triangle integration', () => {
     expect(snapshot.triangles[0].correction).toBeLessThan(1e-10);
     expect(harness.metrics().maxAnchorError).toBe(0);
     expect(snapshot.nodes[2].position).not.toEqual(model.nodes[2].initPos);
+    harness.dispose();
+  });
+});
+
+describe('compiled stray-limit scheduling', () => {
+  it('applies each constraint iteration before the final goal attraction', () => {
+    const model = syntheticClothModel();
+    model.rods = [];
+    model.extraIterations = 1;
+    model.extraGoalIterations = 0;
+    model.dynamicNodeFlags = 0;
+    model.nodes.forEach((node) => { node.gravity = 0; node.animForce = 0.5; node.animVertex = 0; });
+    const radius: ClothModel['strayRadii'][number] = { node: [1, 1], maxDist: 0, relax: 0.5 };
+    model.strayRadii = [radius];
+    model.strayRadiusBatches = [[radius]];
+    const { root } = syntheticRoot();
+    const harness = createClothSimHarness(root, model);
+    harness.step(CLOTH_TIMESTEP);
+    const before = harness.snapshot().nodes[1].position[0];
+    harness.step(CLOTH_TIMESTEP, () => { root.getObjectByName('cloth_mid')!.position.x += 10; });
+    // Two half-strength radius projections, then one half-strength attraction.
+    // An end-of-step clamp would leave a quarter of the original displacement.
+    expect(harness.snapshot().nodes[1].position[0] - before).toBeCloseTo(8.75, 8);
     harness.dispose();
   });
 });
@@ -225,7 +249,8 @@ function syntheticStrayClothModel(): ClothModel {
     rods: [
       { a: 1, b: 2, min: 0.2, max: 0.2, relax: 1, weight: 0.5 },
     ],
-    strayRadii: [{ node: [1, 0], maxDist: 0.35, relax: 1 }],
+    strayRadii: [{ node: [0, 1], maxDist: 0.35, relax: 1 }],
+    strayRadiusBatches: [[{ node: [0, 1], maxDist: 0.35, relax: 1 }]],
     skelParents: [-1, 0, 1],
     staticNodeCount: 1,
     firstPositionDrivenNode: 3,
