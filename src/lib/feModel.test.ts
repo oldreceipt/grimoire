@@ -41,6 +41,24 @@ const raw: RawFeModel = {
 };
 
 describe('parseFeModel', () => {
+  it('reports missing constraint families without counting SIMD copies twice or unscoped colliders', () => {
+    const model = parseFeModel({
+      ...raw,
+      m_Tris: [{}, {}], m_SimdTris: [{}], m_HingeLimits: [{}, {}, {}],
+      m_TaperedCapsuleRigids: [
+        { nNode: 0, vSphere: [], nFlags: 0, nVertexMapIndex: 0xffff },
+        { nNode: 0, vSphere: [], nFlags: 1, nVertexMapIndex: 0 },
+      ],
+    })!;
+    expect(model.featureGaps).toEqual([
+      { field: 'm_Tris', label: 'Triangle constraints', count: 2, status: 'not-implemented' },
+      { field: 'm_HingeLimits', label: 'Hinge limits', count: 3, status: 'not-implemented' },
+      { field: 'm_TaperedCapsuleRigids.nFlags', label: 'Collider flags', count: 1, status: 'not-implemented' },
+      { field: 'm_TaperedCapsuleRigids.nVertexMapIndex', label: 'Vertex-scoped colliders', count: 1, status: 'not-implemented' },
+    ]);
+    expect(model.decodeIssues).toEqual([]);
+  });
+
   it('preserves packed fixed-rod order and padding independently from the scalar list', () => {
     const model = parseFeModel(gigawattRaw)!;
     expect(model.rods).toHaveLength(157);

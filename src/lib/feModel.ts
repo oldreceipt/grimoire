@@ -57,14 +57,16 @@ export interface RawFeModel {
     nCtrlChild: number;
     flAlpha?: number;
   }>;
-  m_TaperedCapsuleRigids?: Array<{ nNode: number; vSphere: number[][]; nCollisionMask?: number }>;
-  m_SphereRigids?: Array<{ nNode: number; vSphere: number[]; nCollisionMask?: number }>;
+  m_TaperedCapsuleRigids?: Array<{ nNode: number; vSphere: number[][]; nCollisionMask?: number; nFlags?: number; nVertexMapIndex?: number }>;
+  m_SphereRigids?: Array<{ nNode: number; vSphere: number[]; nCollisionMask?: number; nFlags?: number; nVertexMapIndex?: number }>;
   m_AnimStrayRadii?: Array<{ nNode: [number, number]; flMaxDist?: number; flRelaxationFactor?: number }>;
   m_BoxRigids?: Array<{
     nNode: number;
     tmFrame2: number[]; // [x,y,z,1, qx,qy,qz,qw]
     vSize: number[]; // half-extents
     nCollisionMask?: number;
+    nFlags?: number;
+    nVertexMapIndex?: number;
   }>;
   m_NodeCollisionRadii?: number[]; // dyn-slot indexed
   m_DynNodeFriction?: number[]; // dyn-slot indexed
@@ -108,6 +110,13 @@ export interface RawFeModel {
   m_JiggleBones?: Array<{ m_nNode?: number; m_nJiggleParent?: number; m_jiggleBone?: RawJiggleBoneParams }>;
   m_KelagerBends?: Array<{ flHeight0?: number; nNode?: number[]; flWeight?: number[] }>;
   m_HingeLimits?: unknown[];
+  m_Tris?: unknown[];
+  m_SimdTris?: unknown[];
+  m_Quads?: unknown[];
+  m_SimdQuads?: unknown[];
+  m_AxialEdges?: unknown[];
+  m_FollowNodes?: unknown[];
+  m_RigidColliderPriorities?: unknown[];
   m_nFirstPositionDrivenNode?: number;
   m_flRodVelocitySmoothRate?: number;
   m_nRodVelocitySmoothIterations?: number;
@@ -337,6 +346,7 @@ export interface ClothModel {
   animatedRods: ClothAnimatedRod[];
   animatedRodBatches: ClothAnimatedRod[][];
   decodeIssues: ClothDecodeIssue[];
+  featureGaps: ClothFeatureGap[];
   capsules: ClothCapsule[];
   spheres: ClothSphere[];
   boxes: ClothBox[];
@@ -420,6 +430,38 @@ function parseRopeChains(fe: RawFeModel, issues: ClothDecodeIssue[]): number[][]
     begin = end;
   }
   return chains;
+}
+
+export interface ClothFeatureGap {
+  field: string;
+  label: string;
+  count: number;
+  status: 'not-implemented' | 'approximate';
+}
+
+function clothFeatureGaps(fe: RawFeModel): ClothFeatureGap[] {
+  const gaps: ClothFeatureGap[] = [];
+  const add = (field: keyof RawFeModel, label: string, status: ClothFeatureGap['status'] = 'not-implemented') => {
+    const entries = fe[field];
+    if (Array.isArray(entries) && entries.length > 0) gaps.push({ field, label, count: entries.length, status });
+  };
+  add(fe.m_Tris?.length ? 'm_Tris' : 'm_SimdTris', fe.m_Tris?.length ? 'Triangle constraints' : 'Triangle batches');
+  add(fe.m_Quads?.length ? 'm_Quads' : 'm_SimdQuads', fe.m_Quads?.length ? 'Quad constraints' : 'Quad batches');
+  add('m_HingeLimits', 'Hinge limits');
+  add('m_AxialEdges', 'Axial edges');
+  add('m_FollowNodes', 'Follow links');
+  add('m_RigidColliderPriorities', 'Collider priority groups');
+  add('m_JiggleBones', 'Jiggle bones');
+  add('m_FitMatrices', 'Fit matrices', 'approximate');
+  for (const field of ['m_TaperedCapsuleRigids', 'm_SphereRigids', 'm_BoxRigids'] as const) {
+    const colliders = fe[field] ?? [];
+    const flags = colliders.filter((entry) => entry.nFlags !== undefined && entry.nFlags !== 0).length;
+    const scoped = colliders.filter((entry) => entry.nVertexMapIndex !== undefined
+      && entry.nVertexMapIndex >= 0 && entry.nVertexMapIndex !== 0xffff).length;
+    if (flags) gaps.push({ field: `${field}.nFlags`, label: 'Collider flags', count: flags, status: 'not-implemented' });
+    if (scoped) gaps.push({ field: `${field}.nVertexMapIndex`, label: 'Vertex-scoped colliders', count: scoped, status: 'not-implemented' });
+  }
+  return gaps;
 }
 
 export function clothIntegratorMode(model: Pick<ClothModel,
@@ -771,6 +813,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     animatedRods,
     animatedRodBatches,
     decodeIssues,
+    featureGaps: clothFeatureGaps(fe),
     staticNodeFlags: isUint32(fe.m_nStaticNodeFlags) ? fe.m_nStaticNodeFlags : null,
     dynamicNodeFlags: isUint32(fe.m_nDynamicNodeFlags) ? fe.m_nDynamicNodeFlags : null,
     goalDampedSpringIntegrators: validBitset ? bitset : [],

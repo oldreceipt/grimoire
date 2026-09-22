@@ -38,6 +38,9 @@ snapshot under `.codex-run/source2-physics/reports`. It shows the saved path.
 Step 1 tick advances exactly 1/120 second. Replay to time resets and simulates
 from the start, so scrubbing does not reuse stale cloth history. Bind pose lets
 the solver run without an animation, separating rest-shape and posed-target errors.
+The model's known missing constraint families and approximate fit matrices are
+listed beside Physics and included in saved coverage. The same notice reports
+unknown integrators and decode issues. This is independent of the pose checks.
 
 The reference uses the same camera, clip clock and lighting. Neutral material
 removes material differences. Align reference motion removes the shared rigid
@@ -275,13 +278,15 @@ After a ten-second frozen settle, the next second changes positions by less
 than `4e-16` meters and orientations by 0.000140 radians. Front/back idle and side
 run inspection shows attached hair and tag geometry without mesh explosions;
 there is still no matched in-game capture.
+Its two triangle constraints and three hinge limits remain unimplemented and
+are now explicitly reported by the testbed and saved metrics.
 The reverse-offset correction also retains Yamato's 12/12 checks and the same
 sampled residuals and frozen motion. Its side-view skirt folds are unchanged.
 The node-basis audit agrees with S2V's Y-first Gram-Schmidt construction. It adds
 the runtime's collapsed-edge fallback; Yamato's sampled spans exceed its
 threshold, and the updated formula still passes all 12 regression cases.
 
-On Windows, 161 focused physics tests, ESLint, TypeScript, i18n key/manifest
+On Windows, 162 focused physics tests, ESLint, TypeScript, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -315,6 +320,9 @@ Next validation units:
 4. Gate supported model families and define an unsupported-data fallback before
    considering physics enabled by default.
 
-Coverage counts describe the listed constraint families only. Zero pending
-counts for Seven do not mean that every FeModel field or engine behavior has
-been implemented.
+Coverage includes known gaps for triangle/quad constraints, hinge limits, axial
+edges, follow links, collider priorities/flags/vertex scopes, jiggle bones, and
+approximate fit matrices. Scalar constraints take precedence over padded SIMD
+copies in these counts. The list is not exhaustive: world collision has no
+scene geometry in this preview, and external forces and instance overrides
+remain outside the comparison. No listed gaps is not a claim of visual parity.

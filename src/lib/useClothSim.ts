@@ -619,6 +619,7 @@ export interface ClothSimulationCoverage {
   };
   integrators: Record<ReturnType<typeof clothIntegratorMode>, number>;
   decodeIssues: number;
+  featureGaps: ClothModel['featureGaps'];
 }
 
 export interface ClothHarnessMetrics {
@@ -671,6 +672,7 @@ export function clothSimulationCoverage(model: ClothModel): ClothSimulationCover
     },
     integrators,
     decodeIssues: model.decodeIssues.length,
+    featureGaps: model.featureGaps.map((gap) => ({ ...gap })),
   };
 }
 

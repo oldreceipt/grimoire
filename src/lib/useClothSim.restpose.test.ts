@@ -45,6 +45,7 @@ describe('cloth solver real-data rest-pose stability', () => {
       pending: { ropeChains: 0, jiggleBones: 0 },
       integrators: { 'goal-damped': 74, raw: 0, unknown: 0 },
       decodeIssues: 0,
+      featureGaps: [],
     });
   });
 

@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { clone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { parseFeModel } from '../lib/feModel';
-import { CLOTH_TIMESTEP, createClothSimHarness, type ClothSimHarness } from '../lib/useClothSim';
+import { CLOTH_TIMESTEP, clothSimulationCoverage, createClothSimHarness, type ClothSimHarness } from '../lib/useClothSim';
 import { ClothOverlay } from './clothOverlay';
 
 function element<T extends HTMLElement>(id: string, ctor: { new(): T }): T {
@@ -54,6 +54,16 @@ async function main() {
   ]);
   const model = parseFeModel(raw);
   if (!model) throw new Error('Export did not contain a FeModel.');
+  const coverage = clothSimulationCoverage(model);
+  const gaps = (status: 'not-implemented' | 'approximate') => coverage.featureGaps
+    .filter((gap) => gap.status === status).map((gap) => `${gap.label.toLowerCase()} (${gap.count})`).join(', ');
+  element('coverage-note', HTMLParagraphElement).textContent = [
+    gaps('not-implemented') && `Not simulated: ${gaps('not-implemented')}.`,
+    gaps('approximate') && `Approximate: ${gaps('approximate')}.`,
+    coverage.integrators.unknown > 0 && `Unrecognized integrators: ${coverage.integrators.unknown}.`,
+    coverage.decodeIssues > 0 && `Decode issues: ${coverage.decodeIssues}.`,
+    'In-game visual match is unverified.',
+  ].filter(Boolean).join(' ');
   const generatedNodes = new Set([...model.ctrlOffsets, ...model.softOffsets].map((offset) => offset.child));
   const inputIndices = model.nodes.map((_, index) => index).filter((index) => !generatedNodes.has(index));
   const root = gltf.scene;

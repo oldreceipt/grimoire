@@ -39,6 +39,7 @@ function syntheticClothModel(): ClothModel {
     animatedRodBatches: [],
     rodBatches: [],
     decodeIssues: [],
+    featureGaps: [],
     staticNodeFlags: null,
     dynamicNodeFlags: null,
     goalDampedSpringIntegrators: [],
