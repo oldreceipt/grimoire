@@ -139,7 +139,7 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Moving-body friction | `0x229ec0`, `0x22a060` | Transform the previous particle through the collider's relative motion, then limit the tangential correction to friction times penetration. Contact changes the current position only. |
 | Capsule center fallback | `0x22f810`, `0x22f8f0` | A nonempty friction array selects a full-radius Source Z correction when squared distance is below the compiled float `0.01`. Without that array, squared distance at most `2^-23` places the particle at the sampled sphere's Source Z pole. Zero-valued friction arrays still select the friction kernel. |
 | Contact scheduling | `0x244f0b`, `0x24538f`, `0x234a20`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Priority groups run last to first; each group visits capsules, spheres and boxes in reverse order, then planes in forward order. SDF remains unsupported. |
-| Collider vertex selections | `0x10c34b`, `0x2302a0`, `0x2309c0` | Build node membership from positive byte weights within each map's node span. Empty selections affect no nodes; out-of-range map indices use layer filtering. |
+| Collider vertex selections | `0x10c34b`, `0x2302a0`, `0x2309c0` | Build node membership from positive byte weights within each map's node span. Empty selections affect no nodes; out-of-range map indices use layer filtering. Unscoped masks require a nonzero intersection; mask zero affects no nodes. Explicit selections override layer masks. |
 | Quad elements | `0x111a40`, `0x111380`, `0x110900`, `0x10fa00` | Dispatch by fixed-node count. Two fixed corners define an axis fit. Free and one-fixed elements use a diagonal frame and one linearized angular correction from the live inertia tensor. Preserve packed gather/scatter, weighted center or fixed anchor, and collapsed-basis fallback. Run after rods/stray limits and before triangles. |
 | Fixed rod batches | `0x111bc0` | Visit `m_SimdRods` in compiled order, gathering all four lanes before scattering endpoints. Padding copies within a batch do not add stiffness; repeated constraints in subsequent batches remain. |
 | Animated rod batches | `0x10d330`, `0x111ef0` | Derive target lengths from the clean animated controls every tick, then solve `m_SimdRodsAnim` with its compiled weight, relaxation and batch order. |
@@ -478,13 +478,20 @@ These edge-case corrections do not establish better garment shape or settling.
 Seven's 04:12 UTC repeat retains 12/12 checks, exactly the saved particle state,
 and unchanged rod/contact residuals and frozen motion; front idle was inspected.
 
+The selection fixture now includes 30 complete runtime passes. Sixteen new cases
+check unscoped masks `0`, `1`, `2`, `3` and `65535` on all three rigid shape
+families, plus explicit selection overriding zero masks. This corrects the
+preview's former treatment of mask zero as unrestricted. No collider in the 35
+inventoried hero FeModels uses a zero mask, so this correction does not change
+those hero runs.
+
 A separate startup experiment compared rigid-anchor rest seeding with generated
 animation-target seeding on Yamato. Idle and sideways running converge toward the
 same frozen particle state; forward running retains about three Source units of
 maximum difference after settling. Neither result provides an engine reference
 for initialization, so the production startup policy remains unchanged.
 
-On Windows, 452 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
+On Windows, 468 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,

@@ -130,7 +130,7 @@ describe('compiled collision selections and priority groups', () => {
     const model = parseFeModel({ m_CtrlName: ['body', 'anchor', 'cloth'], m_nStaticNodes: 2,
       m_nRotLockStaticNodes: 2, m_nDynamicNodeFlags: 0x2080, m_NodeInvMasses: [0, 0, 1],
       m_InitPose: positions.map((position) => [...position, 1, ...Q]), m_DynNodeFriction: friction,
-      m_TaperedCapsuleRigids: [{ nNode: 0, vSphere: [[0, 0, 0, 1], [0, 0, 4, 1]] }],
+      m_TaperedCapsuleRigids: [{ nNode: 0, nCollisionMask: 0xffff, vSphere: [[0, 0, 0, 1], [0, 0, 4, 1]] }],
     })!;
     const root = new THREE.Group();
     model.nodes.forEach((node) => {

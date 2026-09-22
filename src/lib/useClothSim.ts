@@ -757,7 +757,7 @@ function writeBoneQuaternion(root: THREE.Object3D, rt: ClothRuntime, bone: THREE
 
 function canCollide(node: Pick<NodeRuntime, 'index' | 'collisionMask'>, rigid: ColliderFilterRuntime): boolean {
   if (rigid.vertexNodes !== null) return rigid.vertexNodes.has(node.index);
-  return rigid.mask === 0 || (node.collisionMask & rigid.mask) !== 0;
+  return (node.collisionMask & rigid.mask) !== 0;
 }
 
 type CollisionPlaneNode = {
