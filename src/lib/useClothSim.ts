@@ -691,7 +691,7 @@ export function clothSimulationCoverage(model: ClothModel): ClothSimulationCover
     kelagerBends: model.kelagerBends.length,
     hingeLimits: model.hingeLimits.length,
     triangles: model.triangles.length,
-    quads: model.quads.filter((quad) => quad.staticCount === 2).length,
+    quads: model.quads.length,
     ropeChains: model.ropeChains.length,
     pending: {
       ropeChains: Math.max(0, model.ropeCount - model.ropeChains.length),
@@ -1662,7 +1662,7 @@ export function createClothSimHarness(
         }),
         hinges: rt.model.hingeLimits.map((hinge) => ({ node: [...hinge.node], excess: hingeLimitExcess(rt.nodes, hinge) })),
         triangles: rt.model.triangles.map((triangle) => ({ node: [...triangle.node], correction: triangleProjectionError(rt.nodes, triangle) })),
-        quads: rt.model.quads.filter((quad) => quad.staticCount === 2).map((quad) => ({ node: [...quad.node], correction: quadProjectionError(rt.nodes, quad) })),
+        quads: rt.model.quads.map((quad) => ({ node: [...quad.node], correction: quadProjectionError(rt.nodes, quad) })),
       };
     },
     dispose(): void {

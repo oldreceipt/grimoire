@@ -184,7 +184,6 @@ describe('parseFeModel', () => {
       ],
     })!;
     expect(model.featureGaps).toEqual([
-      { field: 'm_Quads', label: 'Quads with fewer than two fixed nodes', count: 2, status: 'not-implemented' },
       { field: 'm_TaperedCapsuleRigids.nFlags', label: 'Collider flags', count: 1, status: 'not-implemented' },
     ]);
     expect(model.decodeIssues).toEqual([]);

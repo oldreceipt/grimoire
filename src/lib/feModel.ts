@@ -530,14 +530,12 @@ export interface ClothFeatureGap {
   status: 'not-implemented' | 'approximate';
 }
 
-function clothFeatureGaps(fe: RawFeModel, quads: ClothQuad[]): ClothFeatureGap[] {
+function clothFeatureGaps(fe: RawFeModel): ClothFeatureGap[] {
   const gaps: ClothFeatureGap[] = [];
   const add = (field: keyof RawFeModel, label: string, status: ClothFeatureGap['status'] = 'not-implemented') => {
     const entries = fe[field];
     if (Array.isArray(entries) && entries.length > 0) gaps.push({ field, label, count: entries.length, status });
   };
-  const unsupportedQuads = quads.filter((quad) => quad.staticCount !== 2).length;
-  if (unsupportedQuads) gaps.push({ field: fe.m_Quads?.length ? 'm_Quads' : 'm_SimdQuads', label: 'Quads with fewer than two fixed nodes', count: unsupportedQuads, status: 'not-implemented' });
   add('m_AxialEdges', 'Axial edges');
   add('m_FollowNodes', 'Follow links');
   add('m_SDFRigids', 'SDF colliders');
@@ -1186,7 +1184,7 @@ export function parseFeModel(raw: unknown): ClothModel | null {
     animatedRods,
     animatedRodBatches,
     decodeIssues,
-    featureGaps: clothFeatureGaps(fe, quads),
+    featureGaps: clothFeatureGaps(fe),
     hingeLimits: parseHingeLimits(fe, decodeIssues),
     triangles,
     triangleBatches,

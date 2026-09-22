@@ -168,7 +168,23 @@ const _quadY = new THREE.Vector3();
 const _quadZ = new THREE.Vector3();
 const _quadCenter = new THREE.Vector3();
 const _quadOffset = new THREE.Vector3();
-const _quadOutput = Array.from({ length: 4 }, () => Array.from({ length: 2 }, () => new THREE.Vector3()));
+const _quadLive = Array.from({ length: 4 }, () => new THREE.Vector3());
+const _quadShape = Array.from({ length: 4 }, () => new THREE.Vector3());
+const _quadTorque = new THREE.Vector3();
+const _quadRotation = new THREE.Vector3();
+const _quadOutput = Array.from({ length: 4 }, () => Array.from({ length: 4 }, () => new THREE.Vector3()));
+
+function orthonormalizeQuadBasis(): void {
+  if (_quadX.lengthSq() >= 2 ** -23) _quadX.normalize();
+  else _quadX.set(1, 0, 0);
+  _quadY.addScaledVector(_quadX, -_quadY.dot(_quadX));
+  if (_quadY.lengthSq() < 2 ** -23) {
+    if (Math.abs(_quadX.x) > Math.abs(_quadX.z)) _quadY.set(-_quadX.y, _quadX.x, 0);
+    else _quadY.set(0, -_quadX.z, _quadX.y);
+  }
+  _quadY.normalize();
+  _quadZ.crossVectors(_quadX, _quadY);
+}
 
 function anchoredQuadProjection(nodes: readonly BendNode[], quad: ClothQuad, output: THREE.Vector3[], scale: number): void {
   const a = nodes[quad.node[0]].pos;
@@ -177,16 +193,8 @@ function anchoredQuadProjection(nodes: readonly BendNode[], quad: ClothQuad, out
   const d = nodes[quad.node[3]].pos;
   _quadCenter.addVectors(a, b).multiplyScalar(0.5);
   _quadX.subVectors(b, a);
-  if (_quadX.lengthSq() >= 2 ** -23) _quadX.normalize();
-  else _quadX.set(1, 0, 0);
   _quadY.addVectors(c, d).addScaledVector(_quadCenter, -2);
-  _quadY.addScaledVector(_quadX, -_quadY.dot(_quadX));
-  if (_quadY.lengthSq() < 2 ** -23) {
-    if (Math.abs(_quadX.x) > Math.abs(_quadX.z)) _quadY.set(-_quadX.y, _quadX.x, 0);
-    else _quadY.set(0, -_quadX.z, _quadX.y);
-  }
-  _quadY.normalize();
-  _quadZ.crossVectors(_quadX, _quadY);
+  orthonormalizeQuadBasis();
 
   // The two fixed corners define the axis and midpoint. Fit the movable
   // corners' compiled Y/Z shape about that axis using their mass shares.
@@ -211,32 +219,83 @@ function anchoredQuadProjection(nodes: readonly BendNode[], quad: ClothQuad, out
   }
   for (let vertex = 2; vertex < 4; vertex++) {
     const [x, y, z] = quad.shape[vertex];
-    output[vertex - 2].copy(_quadCenter).addScaledVector(_quadX, x * scale)
+    output[vertex].copy(_quadCenter).addScaledVector(_quadX, x * scale)
       .addScaledVector(_quadY, (y * cosine + z * sine) * scale)
       .addScaledVector(_quadZ, (z * cosine - y * sine) * scale);
   }
 }
 
-export function projectQuadBatch(nodes: readonly BendNode[], quads: readonly ClothQuad[], scale = 1): void {
+function movableQuadProjection(nodes: readonly BendNode[], quad: ClothQuad, output: THREE.Vector3[], scale: number, relaxation: number): void {
+  const fixed = quad.staticCount;
+  _quadX.subVectors(nodes[quad.node[2]].pos, nodes[quad.node[0]].pos);
+  _quadY.subVectors(nodes[quad.node[3]].pos, nodes[quad.node[1]].pos);
+  orthonormalizeQuadBasis();
+  _quadCenter.set(0, 0, 0);
+  if (fixed === 1) _quadCenter.copy(nodes[quad.node[0]].pos);
+  else for (let i = 0; i < 4; i++) _quadCenter.addScaledVector(nodes[quad.node[i]].pos, quad.shape[i][3]);
+
+  let xx = 0, yy = 0, zz = 0, xy = 0, xz = 0, yz = 0;
+  _quadTorque.set(0, 0, 0);
+  for (let i = fixed; i < 4; i++) {
+    const [sx, sy, sz, weight] = quad.shape[i];
+    const live = _quadLive[i].subVectors(nodes[quad.node[i]].pos, _quadCenter);
+    const shape = _quadShape[i].copy(_quadX).multiplyScalar(sx * scale)
+      .addScaledVector(_quadY, sy * scale).addScaledVector(_quadZ, sz * scale);
+    const { x, y, z } = live;
+    xx += weight * (y * y + z * z);
+    yy += weight * (x * x + z * z);
+    zz += weight * (x * x + y * y);
+    xy -= weight * x * y;
+    xz -= weight * x * z;
+    yz -= weight * y * z;
+    _quadTorque.addScaledVector(_quadOffset.crossVectors(live, shape), weight);
+  }
+
+  // One linearized angular fit, using the live inertia tensor. The compiled
+  // kernel masks singular Cholesky solves to zero angular correction.
+  const inverseX = 1 / Math.sqrt(xx);
+  const l10 = xy * inverseX;
+  const l20 = xz * inverseX;
+  const inverseY = 1 / Math.sqrt(yy - l10 * l10);
+  const l21 = (yz - l10 * l20) * inverseY;
+  const inverseZ = 1 / Math.sqrt(zz - l20 * l20 - l21 * l21);
+  _quadRotation.set(0, 0, 0);
+  if (inverseX + inverseY + inverseZ < 1e7) {
+    let x = _quadTorque.x * inverseX;
+    let y = (_quadTorque.y - l10 * x) * inverseY;
+    const z = (_quadTorque.z - l20 * x - l21 * y) * inverseZ * inverseZ;
+    y = (y - l21 * z) * inverseY;
+    x = (x - l20 * z - l10 * y) * inverseX;
+    _quadRotation.set(x, y, z);
+  }
+  for (let i = fixed; i < 4; i++) {
+    const projected = output[i].copy(_quadShape[i]).sub(_quadOffset.crossVectors(_quadRotation, _quadShape[i]));
+    if (fixed === 0) projected.multiplyScalar(relaxation).addScaledVector(_quadLive[i], 1 - relaxation);
+    projected.add(_quadCenter);
+  }
+}
+
+export function projectQuadBatch(nodes: readonly BendNode[], quads: readonly ClothQuad[], scale = 1, relaxation = 1): void {
   for (let lane = 0; lane < quads.length; lane++) {
     if (quads[lane].staticCount === 2) anchoredQuadProjection(nodes, quads[lane], _quadOutput[lane], scale);
+    else movableQuadProjection(nodes, quads[lane], _quadOutput[lane], scale, relaxation);
   }
-  for (let vertex = 2; vertex < 4; vertex++) {
+  for (let vertex = 0; vertex < 4; vertex++) {
     for (let lane = 0; lane < quads.length; lane++) {
       const quad = quads[lane];
       const node = nodes[quad.node[vertex]];
-      if (quad.staticCount === 2 && !node.kinematic) node.pos.copy(_quadOutput[lane][vertex - 2]);
+      if (vertex >= quad.staticCount && !node.kinematic) node.pos.copy(_quadOutput[lane][vertex]);
     }
   }
 }
 
 export function quadProjectionError(nodes: readonly BendNode[], quad: ClothQuad): number {
-  if (quad.staticCount !== 2) return 0;
-  anchoredQuadProjection(nodes, quad, _quadOutput[0], 1);
+  if (quad.staticCount === 2) anchoredQuadProjection(nodes, quad, _quadOutput[0], 1);
+  else movableQuadProjection(nodes, quad, _quadOutput[0], 1, 1);
   let error = 0;
-  for (let vertex = 2; vertex < 4; vertex++) {
+  for (let vertex = quad.staticCount; vertex < 4; vertex++) {
     const node = nodes[quad.node[vertex]];
-    if (!node.kinematic) error = Math.max(error, node.pos.distanceTo(_quadOutput[0][vertex - 2]));
+    if (!node.kinematic) error = Math.max(error, node.pos.distanceTo(_quadOutput[0][vertex]));
   }
   return error;
 }

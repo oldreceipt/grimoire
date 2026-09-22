@@ -7,8 +7,8 @@ import triangleReference from './__fixtures__/cloth/source2_triangle_reference.j
 import quadReference from './__fixtures__/cloth/source2_quad_reference.json';
 import type { ClothKelagerBend, ClothQuad, ClothRod, ClothTriangle, ClothTwist } from './feModel';
 
-describe('compiled quads with two fixed nodes', () => {
-  it.each(quadReference.cases)('matches the runtime reference: $name', ({ positions, batches, scale, expected }) => {
+describe('compiled quad elements', () => {
+  it.each(quadReference.cases)('matches the runtime reference: $name', ({ positions, batches, staticCounts, scale, relaxation, expected }) => {
     const packed = batches.map((batch) => ({
       nNode: [0, 1, 2, 3].map((vertex) => batch.map((quad) => quad.nNode[vertex])),
       f4Slack: batch.map((quad) => quad.flSlack),
@@ -16,11 +16,12 @@ describe('compiled quads with two fixed nodes', () => {
       f4Weights: [0, 1, 2, 3].map((vertex) => batch.map((quad) => quad.vShape[vertex][3])),
     }));
     const model = parseFeModel({ m_CtrlName: positions.map((_, i) => String(i)), m_SimdQuads: packed,
-      m_nSimdQuadCount1: batches.length, m_nSimdQuadCount2: batches.length })!;
+      m_nSimdQuadCount1: staticCounts.filter((count) => count >= 1).length,
+      m_nSimdQuadCount2: staticCounts.filter((count) => count === 2).length })!;
     expect(model.decodeIssues).toEqual([]);
     expect(model.featureGaps).toEqual([]);
     const nodes = positions.map((position) => ({ pos: new THREE.Vector3().fromArray(position), kinematic: false }));
-    for (const batch of model.quadBatches) projectQuadBatch(nodes, batch, scale);
+    for (const batch of model.quadBatches) projectQuadBatch(nodes, batch, scale, relaxation);
     nodes.forEach((node, i) => expect(node.pos.distanceTo(new THREE.Vector3().fromArray(expected[i]))).toBeLessThan(1e-5));
   });
 
@@ -34,8 +35,19 @@ describe('compiled quads with two fixed nodes', () => {
     projectQuadBatch(nodes, [quad]);
     expect(nodes.slice(0, 3).map((node) => node.pos)).toEqual(before.slice(0, 3));
     expect(nodes[3].pos.toArray()).toEqual([1, 2, 0]);
-    projectQuadBatch(nodes, [{ ...quad, staticCount: 0 }]);
-    expect(nodes[3].pos.toArray()).toEqual([1, 2, 0]);
+  });
+
+  it.each([0, 1] as const)('preserves animation-owned nodes and measures partition %i without mutation', (staticCount) => {
+    const nodes = [[0, 0, 0], [1, 0, 0], [1, 3, 1], [2, 2, -2]].map((p, i) => ({ pos: new THREE.Vector3().fromArray(p), kinematic: i === 2 }));
+    const quad: ClothQuad = { node: [0, 1, 2, 3], staticCount, slack: 0,
+      shape: [[0, 0, 0, 0], [-0.7, 2, 0.3, 0.2], [1.2, 1.6, -0.2, 0.3], [0.3, -0.2, 0.8, 0.5]] };
+    const before = nodes.map((node) => node.pos.clone());
+    expect(quadProjectionError(nodes, quad)).toBeGreaterThan(0);
+    expect(nodes.map((node) => node.pos)).toEqual(before);
+    projectQuadBatch(nodes, [quad]);
+    expect(nodes[2].pos).toEqual(before[2]);
+    if (staticCount === 1) expect(nodes[0].pos).toEqual(before[0]);
+    expect(nodes[3].pos.distanceTo(before[3])).toBeGreaterThan(0.1);
   });
 });
 

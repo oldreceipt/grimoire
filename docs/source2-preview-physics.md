@@ -1,10 +1,10 @@
 # Source 2 preview physics
 
 The preview now uses compiled raw/goal-damped attraction, fixed and animated rod
-batches, triangle elements, quads with two fixed nodes, animation stray limits,
+batches, triangle and quad elements, animation stray limits,
 Kelager bends, hinge limits,
 directed twist/swing links, and rope bone reconstruction.
-The rendered validation cases include Seven, Vindicta, Yamato, Necro, Dynamo and Bebop's current
+The rendered validation cases include Seven, Vindicta, Yamato, Necro, Dynamo, Bebop and Doorman's current
 base models with three animations each.
 Physics remains behind
 the existing developer toggle and is disabled by default. This is a tested
@@ -18,10 +18,10 @@ The script uses the bundled vpkmerge, exports fresh assets from the base VPK, an
 serves `http://127.0.0.1:5176/cloth-preview.html`. `VPKMERGE_PATH` can select another
 exporter. Linux/macOS users can provide `--game` explicitly.
 
-For all six cases and the S2V reference, build S2V's CLI in Release, then run:
+For all seven cases and the S2V reference, build S2V's CLI in Release, then run:
 
 ```powershell
-pnpm dev:cloth --case "seven,vindicta,yamato,necro,dynamo,bebop" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
+pnpm dev:cloth --case "seven,vindicta,yamato,necro,dynamo,bebop,doorman" --s2v "C:\path\to\ValveResourceFormat\CLI\bin\Release\Source2Viewer-CLI.dll"
 ```
 
 `S2V_CLI` also accepts the CLI path. The script resolves each current model through
@@ -139,7 +139,7 @@ Addresses below are RVAs for that exact binary, not stable API entry points.
 | Moving-body friction | `0x229ec0`, `0x22a060` | Transform the previous particle through the collider's relative motion, then limit the tangential correction to friction times penetration. Contact changes the current position only. |
 | Contact scheduling | `0x244f0b`, `0x24538f`, `0x234a20`, `0x234dd0` | Compiled flag `0x2000` selects contact after relaxation; otherwise it runs before. Priority groups run last to first; each group visits capsules, spheres and boxes in reverse order, then planes in forward order. SDF remains unsupported. |
 | Collider vertex selections | `0x10c34b`, `0x2302a0`, `0x2309c0` | Build node membership from positive byte weights within each map's node span. Empty selections affect no nodes; out-of-range map indices use layer filtering. |
-| Quads with two fixed nodes | `0x111a40`, `0x111380`, `0x102cf0` | Build the fixed-edge frame, fit the two movable corners about that axis using compiled mass shares, then scatter the packed lanes. Run after rods/stray limits and before triangles. Preserve the midpoint and runtime's collapsed-edge fallback. Free and one-fixed-node quads remain unsupported. |
+| Quad elements | `0x111a40`, `0x111380`, `0x110900`, `0x10fa00` | Dispatch by fixed-node count. Two fixed corners define an axis fit. Free and one-fixed elements use a diagonal frame and one linearized angular correction from the live inertia tensor. Preserve packed gather/scatter, weighted center or fixed anchor, and collapsed-basis fallback. Run after rods/stray limits and before triangles. |
 | Fixed rod batches | `0x111bc0` | Visit `m_SimdRods` in compiled order, gathering all four lanes before scattering endpoints. Padding copies within a batch do not add stiffness; repeated constraints in subsequent batches remain. |
 | Animated rod batches | `0x10d330`, `0x111ef0` | Derive target lengths from the clean animated controls every tick, then solve `m_SimdRodsAnim` with its compiled weight, relaxation and batch order. |
 | Reverse-offset writeback | `0x105b40`, `0x109b91` | Place the output bone from the solved target particle and bone orientation. This updates rendered transforms, without replacing particle positions or integration history. |
@@ -399,9 +399,9 @@ motion. Side run inspection shows no new cable attachment issue.
 The subsequent anchored-quad implementation is independently checked against
 21 synthetic compiled passes, including different mass shares, scale, collapsed
 geometry and overlapping packed lanes. Maximum numerical difference is
-`1.36e-6` Source units. The parser retains unsupported free and one-fixed-node
-partitions as visible gaps. The current inventory decodes without quad issues:
-Bebop has two supported quads, Werewolf one, and Doorman five supported/four free.
+`1.36e-6` Source units. At that checkpoint the parser retained free and
+one-fixed-node partitions as visible gaps. The current inventory decodes without
+quad issues: Bebop has two quads, Werewolf one, and Doorman nine.
 
 Bebop's repeated 03:13 UTC report retains 12/12 pose checks. Frozen quad correction
 drops from 0.962048 to 0.410683 Source units. The largest sampled triangle
@@ -410,7 +410,42 @@ attraction still conflict. Maximum rod/contact residuals and frozen motion are
 unchanged. Front idle and back run inspection shows no obvious attachment
 regression. This change does not establish improved settling or in-game parity.
 
-On Windows, 308 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
+The free and one-fixed-node kernels complete quad coverage. Free quads preserve
+the compiled mass-weighted center; one-fixed quads preserve corner A. Both form
+their frame from diagonals C-A and D-B, then apply one angular fit using the live
+inertia tensor. Only the free kernel applies the supplied relaxation factor;
+none of these kernels uses the stored slack. All packed lanes gather before
+corner-major scatter. The fixture now contains 58 compiled-runtime passes,
+including zero/partial relaxation, mixed partitions, singular axis-aligned
+geometry, scaling and shared endpoints. Maximum difference is `2.81e-6` Source
+units against the unchanged `1e-5` bound.
+
+An additional off-axis, single-weight synthetic case exposes a precision limit:
+the exact inertia tensor is singular, but float rounding lets the engine's
+Cholesky solve accept it and produce an arbitrary angular correction. The
+preview's double arithmetic rejects that solve instead. This case is not part
+of the numerical agreement claim; bit-identical behavior near singular tensors
+is unverified. This does not justify overriding the finite fallback.
+
+Doorman uses `models/heroes_wip/doorman_v2/doorman.vmdl_c`, with 47 controls,
+23 rendered controls, 24 generated controls, 55 rods, eight triangles and nine
+quads. All 23 animation inputs match the S2V export within `5.03e-7` meters.
+Its 03:33 UTC report passes 12/12 pose checks. Measuring all nine quads in the
+saved frozen snapshots reduces maximum quad correction from
+8.657891 to 0.212326 Source units. Motion in the measured second after ten
+frozen seconds drops from 1.466813 to 0.059828 mm, and rotation from 0.015647 to
+0.000292 radians. Sampled contact penetration remains zero, but maximum rod
+error rises from 0.171680 to 0.697545 Source units and triangle correction from
+0.006945 to 0.273456. Front idle and side/back run views preserve attached keys.
+The S2V export also includes door geometry absent in the Grimoire export, so
+the panes are not identical mesh baselines. In-game motion remains unverified.
+
+Yamato's per-node collision-plane math was also checked independently against
+100 compiled passes with rotated/translated parents, signed plane offsets and
+fractional strengths. Maximum difference is `1.35e-6` Source units; this audit
+does not identify the cause of its folded garment shape.
+
+On Windows, 347 focused physics tests, ESLint, `pnpm typecheck`, i18n key/manifest
 checks, and the production build passed. The build uses the public CI value for
 `GRIMOIRE_SOCIAL_BASE_URL`. Tests cover coefficient roles, bends, twist/rope
 orientation, malformed data, locked anchors, descendant compensation, cleanup,
@@ -447,8 +482,8 @@ Next validation units:
 4. Gate supported model families and define an unsupported-data fallback before
    considering physics enabled by default.
 
-Coverage includes known gaps for free/one-fixed-node quad constraints, axial
-edges, follow links, collider flags, SDF collision, jiggle bones, and
+Coverage includes known gaps for axial edges, follow links, collider flags,
+SDF collision, jiggle bones, and
 approximate fit matrices. Scalar constraints take precedence over padded SIMD
 copies in these counts. The list is not exhaustive: world collision has no
 scene geometry in this preview, and external forces and instance overrides
